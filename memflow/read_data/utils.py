@@ -28,6 +28,14 @@ struct_partons = ak.zip({"pt": np.float32(0),
                          "prov": -1},
                         with_name='Momentum4D')
 
+struct_gluon = ak.zip({"pt": np.float32(1e-7),
+                         "eta": np.float32(0.),
+                         "phi": np.float32(0.),
+                         "mass": np.float64(1e-7),
+                         "pdgId": bool(0),
+                         "prov": -1},
+                        with_name='Momentum4D')
+
 
 
 @njit

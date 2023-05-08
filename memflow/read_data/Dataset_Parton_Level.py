@@ -15,7 +15,8 @@ torch.set_default_dtype(torch.double)
 
 class Dataset_PartonLevel(Dataset):
     def __init__(self, root, object_types=["partons", "lepton_partons", "boost",
-                                           "H_thad_tlep_ISR", "H_thad_tlep_ISR_cartesian"], transform=None):
+                                           "H_thad_tlep_ISR", "H_thad_tlep_ISR_cartesian"], dev=None, debug=False,
+                 dtype=None, parton_list=[]):
 
         self.fields = {
             "partons": ["pt", "eta", "phi", "mass", "pdgId", "prov"],
@@ -25,10 +26,12 @@ class Dataset_PartonLevel(Dataset):
             "H_thad_tlep_ISR": ["pt", "eta", "phi", "mass"],
             "H_thad_tlep_ISR_cartesian": ["E", "px", "py", "pz"]
         }
-
+        
+        
+        self.debug = debug
         self.root = root
+        self.parton_list = parton_list
         os.makedirs(self.root + "/processed_partons", exist_ok=True)
-        self.transform = transform
         self.object_types = object_types
 
         (self.partons_boosted, self.leptons_boosted,
@@ -63,6 +66,45 @@ class Dataset_PartonLevel(Dataset):
             self.processed_file_names("phasespace_intermediateParticles"))
         self.phasespace_rambo_detjacobian = torch.load(
             self.processed_file_names("phasespace_rambo_detjacobian"))
+                
+        if not os.path.isfile(self.processed_file_names('Log_H_thad_tlep_ISR_cartesian')):
+            print("Create new file for Log_H_thad_tlep_ISR_cartesian")
+            self.ProcessCartesianScaled()
+        else:
+            print("Log_H_thad_tlep_ISR_cartesian file already exists")
+            
+        self.log_data_higgs_t_tbar_ISR_cartesian = torch.load(
+            self.processed_file_names("Log_H_thad_tlep_ISR_cartesian"))
+        self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian = torch.load(
+            self.processed_file_names("Log_mean_std_H_thad_tlep_ISR_cartesian"))
+        self.logScaled_data_higgs_t_tbar_ISR_cartesian = torch.load(
+            self.processed_file_names("LogScaled_H_thad_tlep_ISR_cartesian"))
+        
+        if dev==torch.device('cuda') and torch.cuda.is_available():
+            self.mask_partons, self.data_partons = self.mask_partons.to(dev), self.data_partons.to(dev)
+            self.mask_lepton_partons, self.data_lepton_partons = self.mask_lepton_partons.to(dev), self.data_lepton_partons.to(dev)
+            self.mask_boost, self.data_boost = self.mask_boost.to(dev), self.data_boost.to(dev)
+            self.data_higgs_t_tbar_ISR = self.data_higgs_t_tbar_ISR.to(dev)
+            self.data_higgs_t_tbar_ISR_cartesian = self.data_higgs_t_tbar_ISR_cartesian.to(dev)
+            self.phasespace_intermediateParticles = self.phasespace_intermediateParticles.to(dev)
+            self.phasespace_rambo_detjacobian = self.phasespace_rambo_detjacobian.to(dev)
+            self.log_data_higgs_t_tbar_ISR_cartesian = self.log_data_higgs_t_tbar_ISR_cartesian.to(dev)
+            self.mean_log_data_higgs_t_tbar_ISR_cartesian  = self.mean_log_data_higgs_t_tbar_ISR_cartesian.to(dev)
+            self.std_log_data_higgs_t_tbar_ISR_cartesian = self.std_log_data_higgs_t_tbar_ISR_cartesian.to(dev)
+            self.logScaled_data_higgs_t_tbar_ISR_cartesian = self.logScaled_data_higgs_t_tbar_ISR_cartesian.to(dev)
+            
+        if dtype != None:
+            self.mask_partons, self.data_partons = self.mask_partons.to(dtype), self.data_partons.to(dtype)
+            self.mask_lepton_partons, self.data_lepton_partons = self.mask_lepton_partons.to(dtype), self.data_lepton_partons.to(dtype)
+            self.mask_boost, self.data_boost = self.mask_boost.to(dtype), self.data_boost.to(dtype)
+            self.data_higgs_t_tbar_ISR = self.data_higgs_t_tbar_ISR.to(dtype)
+            self.data_higgs_t_tbar_ISR_cartesian = self.data_higgs_t_tbar_ISR_cartesian.to(dtype)
+            self.phasespace_intermediateParticles = self.phasespace_intermediateParticles.to(dtype)
+            self.phasespace_rambo_detjacobian = self.phasespace_rambo_detjacobian.to(dtype)
+            self.log_data_higgs_t_tbar_ISR_cartesian = self.log_data_higgs_t_tbar_ISR_cartesian.to(dtype)
+            self.mean_log_data_higgs_t_tbar_ISR_cartesian  = self.mean_log_data_higgs_t_tbar_ISR_cartesian.to(dtype)
+            self.std_log_data_higgs_t_tbar_ISR_cartesian = self.std_log_data_higgs_t_tbar_ISR_cartesian.to(dtype)
+            self.logScaled_data_higgs_t_tbar_ISR_cartesian = self.logScaled_data_higgs_t_tbar_ISR_cartesian.to(dtype)
 
     @property
     def raw_file_names(self):
@@ -86,7 +128,7 @@ class Dataset_PartonLevel(Dataset):
             partons = ak.with_name(partons, name="Momentum4D")
 
             gluon = partons[partons.prov == 4]
-            gluon = self.Reshape(gluon, utils.struct_partons, 1)[:, 0]
+            gluon = self.Reshape(gluon, utils.struct_gluon, 1)[:, 0]
 
             leptons = df["lepton_partons"]
             leptons = ak.with_name(leptons, name="Momentum4D")
@@ -274,6 +316,25 @@ class Dataset_PartonLevel(Dataset):
             objects_cartesian, name="Momentum4D")
 
         return objects_cartesian
+    
+    def ProcessCartesianScaled(self):
+        intermediateParticles = self.data_higgs_t_tbar_ISR_cartesian        
+        log_intermediateParticles = torch.sign(intermediateParticles)*torch.log(1+torch.abs(intermediateParticles))
+        
+        mean_LogIntermediateParticles = torch.mean(log_intermediateParticles, dim=(0,1))
+        std_LogIntermediateParticles = torch.std(log_intermediateParticles, dim=(0,1))
+        
+        scaledIntermediateParticles = \
+            (log_intermediateParticles - mean_LogIntermediateParticles[None,None,:])/std_LogIntermediateParticles[None,None,:]
+        
+        torch.save(log_intermediateParticles, self.processed_file_names(
+            "Log_H_thad_tlep_ISR_cartesian"))
+        torch.save((mean_LogIntermediateParticles, std_LogIntermediateParticles), self.processed_file_names(
+            "Log_mean_std_H_thad_tlep_ISR_cartesian"))
+        torch.save(scaledIntermediateParticles, self.processed_file_names(
+            "LogScaled_H_thad_tlep_ISR_cartesian"))
+        
+        
 
     def get_Higgs(self):
         partons = self.partons_boosted
@@ -325,13 +386,24 @@ class Dataset_PartonLevel(Dataset):
         return top_leptonic
 
     def __getitem__(self, index):
+                    
 
-        return (self.mask_partons[index], self.data_partons[index],
-                self.mask_lepton_partons[index], self.data_lepton_partons[index],
-                self.mask_boost[index], self.data_boost[index],
-                self.data_higgs_t_tbar_ISR[index], self.data_higgs_t_tbar_ISR_cartesian[index],
-                self.phasespace_intermediateParticles[index],
-                self.phasespace_rambo_detjacobian[index])
+        if self.debug == True:
+            return (self.mask_partons[index], self.data_partons[index],
+                    self.mask_lepton_partons[index], self.data_lepton_partons[index],
+                    self.mask_boost[index], self.data_boost[index],
+                    self.data_higgs_t_tbar_ISR[index], self.data_higgs_t_tbar_ISR_cartesian[index],
+                    self.phasespace_intermediateParticles[index],
+                    self.phasespace_rambo_detjacobian[index],
+                    self.log_data_higgs_t_tbar_ISR_cartesian[index],
+                    # no index for mean/std because size is [4]
+                    self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian,
+                    self.logScaled_data_higgs_t_tbar_ISR_cartesian[index])
+        
+        
+        return [getattr(self, field)[index] if field != 'mean_log_data_higgs_t_tbar_ISR_cartesian' \
+                    and field != 'std_log_data_higgs_t_tbar_ISR_cartesian' \
+                    else getattr(self, field) for field in self.parton_list]
 
     def __len__(self):
         size = len(self.mask_partons)
