@@ -23,29 +23,44 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--config-directory', type=str, required=True, help='path to config.yaml directory')
+    parser.add_argument('--output-dir', type=str, required=True, help='Output directory')
+    parser.add_argument('--log-dir', type=str, required=True, help='Log directory')
     parser.add_argument('--on-GPU', action="store_true",  help='run on GPU boolean')
+    parser.add_argument('--preTraining', action="store_true",  help='run the preTraining script (by default: run `run_model.py`)')
     args = parser.parse_args()
     
     conf_dir = args.config_directory
+    outputDir = os.path.abspath(args.output_dir)
+    logDir = os.path.abspath(args.log_dir)
+
     on_GPU = args.on_GPU # by default run on CPU
     if on_GPU:
         on_GPU = '--on-GPU'
     else:
         on_GPU = ''
     
-    # get path of 'run_model' script
-    scriptPath = str(pathlib.Path(__file__).parent.resolve()) + "/run_model.py"
+    # get path of the script used
+    if args.preTraining:
+        scriptPath = str(pathlib.Path(__file__).parent.resolve()) + "/run_pretraining.py"
+        jobName = 'preTraining'
+    else:
+        scriptPath = str(pathlib.Path(__file__).parent.resolve()) + "/run_model.py"
+        jobName = 'Training'
     
+    print(scriptPath)
     # get absolute paths of all config files in conf_dir
     confFiles = absoluteFilePaths(conf_dir)
-    
-    model_results = f"{os.getcwd()}/results/logs"
-    mkdir_p(model_results)
-    
+        
     job_directory = f"{os.getcwd()}/jobs"
     
     # create job directory (where job config files are kept)
     mkdir_p(job_directory)
+
+    # create output directory
+    mkdir_p(outputDir)
+
+    # create log directory
+    mkdir_p(logDir)
         
         
     for i, conf_path in enumerate(confFiles):
@@ -56,14 +71,16 @@ if __name__ == '__main__':
         with open(job_file, 'w') as fh:
             
             fh.writelines("#!/bin/bash\n")
-            fh.writelines(f"#SBATCH --job-name=training_{i}.job\n")
+            fh.writelines(f"#SBATCH --job-name={jobName}_v{i}.job\n")
             fh.writelines("#SBATCH --account=gpu_gres\n")
             fh.writelines("#SBATCH --partition=gpu\n")
             fh.writelines("#SBATCH --nodes=1        # request to run job on single node\n")
-            fh.writelines("#SBATCH --ntasks=5       # request 5 CPU's\n")
+            fh.writelines("#SBATCH --ntasks=10       # request 10 CPU's\n")
             fh.writelines("#SBATCH --gres=gpu:1     # request 1 GPU's on machine\n")
-            fh.writelines("#SBATCH --mem=4000M      # memory (per job)\n")
-            fh.writelines("#SBATCH --time=0-00:30   # time  in format DD-HH:MM\n")    
+            fh.writelines("#SBATCH --mem=5000M      # memory (per job)\n")
+            fh.writelines("#SBATCH --time=2-00:00   # time  in format DD-HH:MM\n")
+            fh.writelines(f"#SBATCH --output={logDir}/slurm-%x.%j.out # set output name  \n")
+            fh.writelines(f"#SBATCH --error={logDir}/slurm-%x.%j.err # set error output name  \n")    
             
             fh.writelines("\n\n")
             fh.writelines("# Activate environment:\n")
@@ -80,7 +97,8 @@ if __name__ == '__main__':
             fh.writelines("\n\n")
             fh.writelines("echo CUDA_VISIBLE_DEVICES : $CUDA_VISIBLE_DEVICES\n")
             fh.writelines("# python program script.py should use CUDA_VISIBLE_DEVICES variable (*NOT* hardcoded GPU's numbers)\n")
-            fh.writelines(f"/work/adpetre/miniconda3/envs/dizertatie/bin/python {scriptPath} --path-config={conf_path} {on_GPU}\n")
+            fh.writelines(f"/work/adpetre/miniconda3/envs/dizertatie/bin/python {scriptPath} --path-config={conf_path} \
+                            --output-dir={outputDir} {on_GPU}\n")
             
             fh.writelines("\n\n")
             fh.writelines("# cleaning of temporal working dir when job was completed:\n")

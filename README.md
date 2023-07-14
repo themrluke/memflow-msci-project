@@ -63,35 +63,40 @@ python -m ipykernel install --user --name=myenv
 
 # How to run the scripts:
 
-## memflow/unfolding\_flow/generate\_config.py
-- Create yaml file which keeps: input dataset, input shape, model and training parameters. The yaml files are created in `scripts/configs`
-
-To run it with a minimum number of arguments:
-```
-python memflow/unfolding_flow/generate_config.py --path_to_dataset=<path-to-Dataset>
-```
-For a full list of arguments, run:
-```
-python memflow/unfolding_flow/generate_config.py -h
-```
-
 ## scripts/run\_generate\_config.py
-- Create multiple config files. All the possible configurations will be generated (as an example iterate over learning-rate list, hidden-layers list etc.).
+- Create multiple config files. All the possible configurations will be generated (as an example iterate over learning-rate list, hidden-layers list etc.). The config file keeps: input dataset, input shape, model and training parameters.
 
 To run it:
 ```
-python scripts/run_generate_config.py --path_to_dataset=<path-to-Dataset> --maxFiles=-1
+python scripts/run_generate_config.py --input_dataset=<path-to-Dataset> --maxFiles=-1 <--preTraining>
 ```
 
-The argument maxFiles represent the maximum number of config files generated. By default, it is -1 (generate all possible config files).
+The argument maxFiles represent the maximum number of config files generated. By default, it is -1 (generate all possible config files). The preTraining flag makes the script iterate only on the condTransformer hyperparameters (unfolding flow parameters are set to the default value).
 
 ## scripts/run\_model.py
 - Run the model (training and validate loops) for a specific config files. 
 
 To run it:
 ```
-python scripts/run_model.py --path_config=<path-configFile> --on_CPU 0
+python scripts/run_model.py --model-dir=<path> <--on-GPU>
 ```
 
-By default, on\_CPU argument is set to 0 (run on GPU). If it set to 1, the code will run on CPU
+--model-dir: path to directory where the config file and ConditionalTransformer weights (from pretraining) are saved.
+
+If `--on-GPU` flag is added, the script will run on GPU.
+
+## scripts/sendJobs.py
+- Send jobs:
+
+To run it:
+```
+python scripts/sendJobs.py --config-directory=<configDir> <--on-GPU> <--preTraining>
+```
+
+By default, the script is running on CPU. If `--on-GPU` flag is added, the script will run on GPU.
+The script will iterate over `config-Directory` and will send a job for every config file.
+If `--preTraining` flag is set, the script will send jobs for `run_pretraining.py`, otherwise it will send jobs
+for `run_model.py`
+
+CAREFUL! Some paths are already set in the script, so modify them before using!!
 

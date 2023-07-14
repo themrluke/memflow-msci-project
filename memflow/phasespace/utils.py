@@ -23,8 +23,8 @@ def set_square_t(inputt, square, negative=False):
 
 def rho2_t(inputt):
     """Compute the radius squared. Vectorized."""
-
-    return torch.sum(inputt[:, 1:] * inputt[:, 1:], -1)
+    output = inputt.clone()
+    return torch.sum(output[:, 1:] * output[:, 1:], -1)
 
 
 def rho2_tt(inputt):
@@ -38,15 +38,17 @@ def boostVector_t(inputt):
     if torch.min(inputt[:, 0]) <= 0.0 or torch.min(square_t(inputt)) < 0.0:
         print("Invalid boost")
 
-    return inputt[:, 1:] / inputt[:, 0].unsqueeze(1)
+    output = inputt.clone()
+    return output[:, 1:] / output[:, 0].unsqueeze(1)
 
 
 def square_t(inputt):
+    output = inputt.clone()
     if inputt.shape[1] == 4 or inputt.shape[0] == 4:
-        return dot_t(inputt, inputt)
+        return dot_t(output, output)
     else:
 
-        return torch.sum(inputt * inputt, -1)
+        return torch.sum(output * output, -1)
 
 
 def mass_t(inputt):
@@ -55,6 +57,8 @@ def mass_t(inputt):
 
 def dot_t(inputa, inputb):
     """Dot product for four vectors"""
+    #outputa = inputa.clone()
+    #outputb = inputb.clone()
     return (
         inputa[:, 0] * inputb[:, 0]
         - inputa[:, 1] * inputb[:, 1]
@@ -90,21 +94,28 @@ def boost_t(inputt, boost_vector, gamma=-1.0):
     """
 
     b2 = square_t(boost_vector)
+
     if gamma < 0.0:
         gamma = 1.0 / torch.sqrt(1.0 - b2)
-    inputt_space = inputt[:, 1:]
+    inputt_space = inputt[:, 1:].clone()
+
+    output = inputt.clone()
+    E_inputt = inputt[:, 0].clone()
 
     bp = torch.sum(inputt_space * boost_vector, -1)
 
-    gamma2 = torch.where(b2 > 0, (gamma - 1.0) / b2, torch.zeros_like(b2))
+    #gamma2 = torch.where(b2 > 1e-7, (gamma - 1.0) / b2, torch.zeros_like(b2))
+    gamma2 = torch.zeros_like(b2)
+    mask = b2 > 0
+    gamma2[mask] = (gamma[mask] - 1.0) / b2[mask]
 
-    factor = gamma2 * bp + gamma * inputt[:, 0]
+    factor = gamma2 * bp + gamma * E_inputt
 
-    inputt_space += factor.unsqueeze(1) * boost_vector
+    output[:,1:] += factor.unsqueeze(1) * boost_vector
 
-    inputt[:, 0] = gamma * (inputt[:, 0] + bp)
+    output[:, 0] = gamma * (E_inputt + bp)
 
-    return inputt
+    return output
 
 
 def boost_tt(inputt, boost_vector, gamma=-1.0):
@@ -119,18 +130,21 @@ def boost_tt(inputt, boost_vector, gamma=-1.0):
     if gamma < 0.0:
         gamma = 1.0 / torch.sqrt(1.0 - b2)
     inputt_space = inputt[:, :, 1:]
+    
+    output = inputt.clone()
 
     bp = torch.sum(inputt_space * boost_vector, -1)
 
+    
     gamma2 = torch.where(b2 > 0, (gamma - 1.0) / b2, torch.zeros_like(b2))
 
     factor = gamma2 * bp + gamma * inputt[:, :, 0]
 
-    inputt_space += factor.unsqueeze(-1) * boost_vector
+    output[:, :, 1:] += factor.unsqueeze(-1) * boost_vector
 
-    inputt[:, :, 0] = gamma * (inputt[:, :, 0] + bp)
+    output[:, :, 0] = gamma * (inputt[:, :, 0] + bp)
 
-    return inputt
+    return output
 
 
 def cosTheta_t(inputt):
