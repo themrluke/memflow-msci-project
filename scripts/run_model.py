@@ -32,7 +32,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     N_train = len(trainingLoader)
     N_valid = len(validLoader)
     
-    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_SamplingTr:{config.training_params.sampling_Forward}'
+    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}'
     modelName = f"{name_dir}/model_flow.pt"
     writer = SummaryWriter(name_dir)
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
@@ -140,9 +140,9 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
 
         if sampling_Forward:
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir", loss.item(), i)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir", loss.item(), e)
         else:
-            writer.add_scalar(f"Loss_epoch_train_NormalizingDir", loss.item(), i)
+            writer.add_scalar(f"Loss_epoch_train_NormalizingDir", loss.item(), e)
         valid_loss = 0
 
         # validation loop (don't update weights and gradients)
@@ -226,9 +226,9 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                         writer.add_figure(f"Validation_ramboentry_Diff_{x}", fig, e)
 
         if sampling_Forward:
-            writer.add_scalar(f"Loss_epoch_val_SamplingDir", loss.item(), i)
+            writer.add_scalar(f"Loss_epoch_val_SamplingDir", loss.item(), e)
         else:
-            writer.add_scalar(f"Loss_epoch_val_NormalizingDir", loss.item(), i)
+            writer.add_scalar(f"Loss_epoch_val_NormalizingDir", loss.item(), e)
 
         if early_stopper.early_stop(valid_loss, model.state_dict(), optimizer.state_dict(), modelName):
             print(f"Model converges at epoch {e} !!!")         
@@ -313,6 +313,7 @@ if __name__ == '__main__':
     
     # Initialize model
     model = UnfoldingFlow(model_path=path_to_model,
+                    read_CondTransf=True,
                     log_mean = conf.scaling_params.log_mean,
                     log_std = conf.scaling_params.log_std,
                     no_jets=conf.input_shape.number_jets,
