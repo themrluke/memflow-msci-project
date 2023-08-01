@@ -4,7 +4,7 @@ import torch
 from particle import Particle
 
 
-#def get_pdfxQ2(pdf, pdg, x, scale2):
+# def get_pdfxQ2(pdf, pdg, x, scale2):
 #     """Call the PDF and return the corresponding density."""
 #     if pdf is None:
 #         return torch.ones_like(x)
@@ -29,13 +29,21 @@ from particle import Particle
 
 
 class PhaseSpace:
-    def __init__(self, collider_energy, initial_pdgs, final_pdgs, pdf=None):
+    def __init__(self, collider_energy, initial_pdgs, final_pdgs, pdf=None, dev=None):
+        if dev == None:
+            self.dev = (
+                torch.device("cuda:" + str(0))
+                if torch.cuda.is_available()
+                else torch.device("cpu")
+            )
+        else:
+            self.dev = dev
         self.collider_energy = collider_energy
         self.initial_pdgs = initial_pdgs
         self.final_pdgs = final_pdgs
         self.final_masses = torch.tensor(
             [Particle.from_pdgid(pdg).mass / 1e3 for pdg in self.final_pdgs]
-        )
+        ).to(self.dev)
         self.final_state_mass = torch.sum(self.final_masses)
         self.pdf = pdf
         # init the generatoer
@@ -46,6 +54,7 @@ class PhaseSpace:
             pdf=pdf,
             pdf_active=True,
             uniform_x1x2=True,
+            dev=self.dev
         )
 
     def generate_random_phase_space_points(self, N,
@@ -57,7 +66,7 @@ class PhaseSpace:
         representing n final state particles with final_masses mass.
 
         '''
-        ps_rand = torch.rand(N, self.generator.nDimPhaseSpace + 2)
+        ps_rand = torch.rand(N, self.generator.nDimPhaseSpace + 2, device=self.dev)
         # for the output we return the [0,1] uniform x1x2 representation
         momenta, weight, x1, x2 = self.generator.generateKinematics_batch(
             ps_rand, pdgs=self.initial_pdgs,
@@ -87,8 +96,8 @@ class PhaseSpace:
         )
         return momenta, weight, x1, x2
 
-    def get_ps_from_momenta(self, momenta, x1, x2):
+    def get_ps_from_momenta(self, momenta, x1, x2, ensure_CM=True):
         ''' Momenta contains the two incoming particle 1 and 2 and the
         final state particles in the correct order'''
-        return self.generator.getPSpoint_batch(momenta, x1, x2)
-
+        ps, detjacinv = self.generator.getPSpoint_batch(momenta, x1, x2)
+        return ps, detjacinv

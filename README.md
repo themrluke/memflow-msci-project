@@ -33,7 +33,70 @@
 
 
 # Installation
+
+# Environment on lxplus-gpu
+
+```
+source /cvmfs/sft.cern.ch/lcg/views/LCG_103cuda/x86_64-centos9-gcc11-opt/setup.sh
+python -m venv myenv
+source myenv/bin/activate
+git clone git@github.com:valsdav/MEMFlow.git
+cd MEMFlow
+pip install -e .
+cd ..
+git clone git@github.com:valsdav/zuko.git
+cd zuko
+pip install -e .
+
+cd ..
+pip install jupyterlab
+jupyter lab build
+# register the environment in jupyter lab
+python -m ipykernel install --user --name=myenv
+
+```
+
+# Matrix Element evaluation
 - Start apptainer image with madgraph and LHAPDF
 - Generate the process
 - Compile it for python with https://cp3.irmp.ucl.ac.be/projects/madgraph/wiki/FAQ-General-4
+
+# How to run the scripts:
+
+## scripts/run\_generate\_config.py
+- Create multiple config files. All the possible configurations will be generated (as an example iterate over learning-rate list, hidden-layers list etc.). The config file keeps: input dataset, input shape, model and training parameters.
+
+To run it:
+```
+python scripts/run_generate_config.py --input_dataset=<path-to-Dataset> --maxFiles=-1 <--preTraining>
+```
+
+The argument maxFiles represent the maximum number of config files generated. By default, it is -1 (generate all possible config files). The preTraining flag makes the script iterate only on the condTransformer hyperparameters (unfolding flow parameters are set to the default value).
+
+## scripts/run\_model.py
+- Run the model (training and validate loops) for a specific config files. 
+
+To run it:
+```
+python scripts/run_model.py --model-dir=<path> <--on-GPU>
+```
+
+--model-dir: path to directory where the config file and ConditionalTransformer weights (from pretraining) are saved.
+
+If `--on-GPU` flag is added, the script will run on GPU.
+
+## scripts/sendJobs.py
+- Send jobs:
+
+To run it:
+```
+python scripts/sendJobs.py --config-directory=<configDir> <--on-GPU> <--preTraining>
+```
+
+By default, the script is running on CPU. If `--on-GPU` flag is added, the script will run on GPU.
+The script will iterate over `config-Directory` and will send a job for every config file.
+If `--preTraining` flag is set, the script will send jobs for `run_pretraining.py`, otherwise it will send jobs
+for `run_model.py`
+
+CAREFUL! Some paths are already set in the script, so modify them before using!!
 
