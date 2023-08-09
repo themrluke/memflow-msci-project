@@ -289,14 +289,14 @@ if __name__ == '__main__':
         
     # READ data
     if (conf.cartesian):
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, build=True,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
                                 parton_list=['phasespace_intermediateParticles_onShell',
                                             'phasespace_rambo_detjacobian_onShell'])
     else:
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, build=True,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
@@ -382,3 +382,4 @@ if __name__ == '__main__':
     
     
     
+

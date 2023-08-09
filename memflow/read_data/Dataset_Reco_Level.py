@@ -63,7 +63,7 @@ class Dataset_RecoLevel(Dataset):
             self.mask_lepton, self.data_lepton = torch.load(self.processed_file_names("lepton_reco"))
             self.mask_met, self.data_met = torch.load(self.processed_file_names("met"))
             self.mask_boost, self.data_boost = torch.load(self.processed_file_names("boost"))
-            self.mask_boost_objBoosted, self.data_boost_objBoosted = torch.load(self.processed_file_names("boost_objBoosted"))
+            #self.mask_boost_objBoosted, self.data_boost_objBoosted = torch.load(self.processed_file_names("boost_objBoosted"))
         
         print("Reading reco_level Files")
 
