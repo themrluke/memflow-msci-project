@@ -280,7 +280,8 @@ def get_x1x2_from_uniform(unif, final_state_mass, E_cm):
     x2 = torch.exp(-minus_logx2)
 
     detjacinv = 1/(A*x1*x2)  # det jac of inverse function to get p(x1)
-    weight = 1 / detjacinv
+    #determinant of the uniform->x1x2 transformation == 1/det(x1x2->uniform)
+    weight = 1 / detjacinv 
     return x1, x2, weight
 
 

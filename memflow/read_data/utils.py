@@ -37,7 +37,6 @@ struct_gluon = ak.zip({"pt": np.float32(1e-7),
                         with_name='Momentum4D')
 
 
-
 @njit
 def sum_vectors_all(arrays):
     size = len(arrays)

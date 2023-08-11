@@ -700,6 +700,8 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
         rambo_jac[:] *= torch.pow(K_t[:, 0] / M[:, 0], 2 * self.n_final - 4)
 
         # The probability if |detJac Rambo^-1| = 1/ |detJac Rambo| = 1 / weight
+        # When we want to evaluate the probability of a ps point
+        # we need the determinant of the Rambo^-1 converion --> 1/detRambo
         prob = 1/rambo_jac
         # Adding the jac of the inverse x1x2 transformation
         prob *= jacinv_x1x2
