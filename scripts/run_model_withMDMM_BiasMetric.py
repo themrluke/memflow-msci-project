@@ -224,7 +224,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
         if sampling_Forward:
             writer.add_scalar(f"Loss_epoch_train_SamplingDir_MDMMLoss", sum_loss/N_train, e)
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", 2*bias_sum_loss/N_train, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", bias_sum_loss/N_train, e)
         else:
             writer.add_scalar(f"Loss_epoch_train_NormalizingDir", sum_loss/N_train, e)
 
@@ -331,7 +331,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
         valid_loss = valid_loss/N_valid
 
         if sampling_Forward:
-            bias_sum_valid = 2*bias_sum_valid/N_valid
+            bias_sum_valid = bias_sum_valid/N_valid
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_MDMMLoss", valid_loss, e)
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_BiasLoss", bias_sum_valid, e)
         else:
@@ -386,7 +386,7 @@ if __name__ == '__main__':
         
     # READ data
     if (conf.cartesian):
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, build=True,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
@@ -394,7 +394,7 @@ if __name__ == '__main__':
                                             'phasespace_intermediateParticles_onShell',
                                             'phasespace_rambo_detjacobian_onShell'])
     else:
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, build=True,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
