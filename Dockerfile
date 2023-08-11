@@ -21,4 +21,4 @@ ARG PSEUDO_VERSION=1
 RUN SETUPTOOLS_SCM_PRETEND_VERSION=${PSEUDO_VERSION} python -m pip install -e .
 
 RUN python -m pip install 'zuko @ git+https://github.com/valsdav/zuko@master'
-RUN python -m pip install 'mdmm @ git+https://github.com/the-moliver/mdmm/tree/master'
+RUN python -m pip install 'mdmm @ git+https://github.com/the-moliver/mdmm@master'
