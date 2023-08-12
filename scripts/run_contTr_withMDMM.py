@@ -144,10 +144,11 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                                             order=config.training_params.order, disableGradTransformer=disableGradTransformer)
 
                 detjac = PS_rambo_detjacobian.log()
-                flow_sample = model.flow(PS_regressed).sample()
                 flow_prob = model.flow(PS_regressed).log_prob(PS_target)
 
                 if sampling_Forward:
+
+                    flow_sample = model.flow(PS_regressed).rsample()
 
                     sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
                     sample_mask = torch.all(sample_mask_all, dim=1)
@@ -155,11 +156,8 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     flow_sample = flow_sample[sample_mask]
                     PS_target_masked = PS_target[sample_mask]
                     
-                    flow_sample_grad = flow_sample.clone().detach().requires_grad_(True)
-                    PS_target_grad = PS_target_masked.clone().detach().requires_grad_(True)
-
                     # kernel: kernel type such as "multiscale" or "rbf"
-                    flow_loss = MMD(x=flow_sample_grad, y=PS_target_grad, kernel='rbf', device=device)        
+                    flow_loss = MMD(x=flow_sample, y=PS_target_masked, kernel='rbf', device=device)        
                 else:
                     flow_loss = -flow_prob
 
@@ -221,11 +219,11 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                                             order=config.training_params.order, disableGradTransformer=disableGradTransformer)
 
                 detjac = PS_rambo_detjacobian.log()
-
-                flow_sample = model.flow(PS_regressed).sample()
                 flow_prob = model.flow(PS_regressed).log_prob(PS_target)
 
                 if sampling_Forward:
+
+                    flow_sample = model.flow(PS_regressed).sample()
 
                     sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
                     sample_mask = torch.all(sample_mask_all, dim=1)
@@ -233,11 +231,8 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     flow_sample = flow_sample[sample_mask]
                     PS_target_masked = PS_target[sample_mask]
                     
-                    flow_sample_grad = flow_sample.clone().detach().requires_grad_(True)
-                    PS_target_grad = PS_target_masked.clone().detach().requires_grad_(True)
-
                     # kernel: kernel type such as "multiscale" or "rbf"
-                    flow_loss = MMD(x=flow_sample_grad, y=PS_target_grad, kernel='rbf', device=device)        
+                    flow_loss = MMD(x=flow_sample, y=PS_target_masked, kernel='rbf', device=device)        
                 else:
                     flow_loss = -flow_prob
 

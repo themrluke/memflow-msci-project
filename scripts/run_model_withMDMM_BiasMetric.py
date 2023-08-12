@@ -179,11 +179,8 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     flow_sample = flow_sample[sample_mask]
                     PS_target_masked = PS_target[sample_mask]
                     
-                    flow_sample_grad = flow_sample.clone().detach().requires_grad_(True)
-                    PS_target_grad = PS_target_masked.clone().detach().requires_grad_(True)
-
-                    biasMeanLoss = BiasLoss_Mean(PS_target_grad, flow_sample_grad)
-                    mdmm_return = MDMM_module_bias(biasMeanLoss, [(PS_target_grad, flow_sample_grad)])
+                    biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
+                    mdmm_return = MDMM_module_bias(biasMeanLoss, [(PS_target_masked, flow_sample)])
 
                     flow_loss = mdmm_return.value
                     bias_sum_loss += biasMeanLoss
@@ -269,11 +266,8 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     flow_sample = flow_sample[sample_mask]
                     PS_target_masked = PS_target_expand[sample_mask]
                     
-                    flow_sample_grad = flow_sample.clone().detach()
-                    PS_target_grad = PS_target_masked.clone().detach()
-
-                    biasMeanLoss = BiasLoss_Mean(PS_target_grad, flow_sample_grad)
-                    mdmm_return = MDMM_module_bias(biasMeanLoss, [(PS_target_grad, flow_sample_grad)])
+                    biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
+                    mdmm_return = MDMM_module_bias(biasMeanLoss, [(PS_target_masked, flow_sample)])
 
                     flow_loss = mdmm_return.value
                     bias_sum_valid += biasMeanLoss
