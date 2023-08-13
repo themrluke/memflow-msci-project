@@ -206,10 +206,10 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
             mdmm_return = MDMM_module(loss, [(logScaled_partons, higgs, thad, tlep,
                                                 config.cartesian, loss_fn, device)])
 
-            loss.backward()
+            mdmm_return.value.backward()
             optimizer.step()
 
-            sum_loss += loss.item()
+            sum_loss += mdmm_return.value.item()
 
             writer.add_scalar(f"detJacOnly_epoch_step", detjac_mean.item(), i)
             if sampling_Forward:

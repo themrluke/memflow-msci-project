@@ -131,7 +131,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     PS_target_masked = PS_target[sample_mask]
                     
                     biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
-                    mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_grad, flow_sample)])
+                    mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_masked, flow_sample)])
 
                     flow_loss = mdmm_return.value
                     bias_sum_loss += biasMeanLoss
