@@ -388,6 +388,7 @@ if __name__ == '__main__':
                     flow_base_first_arg=conf.unfolding_flow.base_first_arg,
                     flow_base_second_arg=conf.unfolding_flow.base_second_arg,
                     flow_bound=conf.unfolding_flow.bound,
+                    use_latent=conf.conditioning_transformer.use_latent,
                     device=device,
                     dtype=torch.float64)
     

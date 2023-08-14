@@ -19,6 +19,7 @@ import sys
 import argparse
 import os
 from pynvml import *
+import glob
 
 def UnscaleTensor(config, model, dataLoader, outputDir):
             
@@ -79,9 +80,9 @@ if __name__ == '__main__':
     else:
         args.model_dir = args.model_dir[:len(args.model_dir)-1] # remove '/' from input 
 
-    dirName = os.path.basename(args.model_dir) # get 'directory name'
-    path_to_conf = f"{args.model_dir}/config_{dirName}.yaml"
-    model_path = f"{args.model_dir}/model_{dirName}.pt"
+    path_to_dir = args.model_dir
+    path_to_conf = glob.glob(f"{path_to_dir}/*.yaml")[0]
+    model_path = glob.glob(f"{path_to_dir}/model*.pt")[0]
     
     # Read config file in 'conf'
     with open(path_to_conf) as f:

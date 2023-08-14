@@ -16,7 +16,7 @@ class UnfoldingFlow(nn.Module):
                 flow_nfeatures=12, flow_ncond=34, flow_ntransforms=5, flow_hiddenMLP_NoLayers=16,
                 flow_hiddenMLP_LayerDim=128, flow_bins=16, flow_autoregressive=True, 
                 flow_base=BoxUniform, flow_base_first_arg=-1, flow_base_second_arg=1, flow_bound=1.,
-                device=torch.device('cpu'), dtype=torch.float64, model_path='', read_CondTransf=False):
+                device=torch.device('cpu'), dtype=torch.float64, model_path='', read_CondTransf=False, use_latent=False):
 
         super(UnfoldingFlow, self).__init__()
 
@@ -36,6 +36,7 @@ class UnfoldingFlow(nn.Module):
                                     no_layers_decoder=cond_NoLayersDecoder,
                                     no_decoders=cond_NoDecoders,
                                     aggregate=cond_aggregate,
+                                    use_latent=use_latent,
                                     dtype=dtype)
 
         if read_CondTransf:
