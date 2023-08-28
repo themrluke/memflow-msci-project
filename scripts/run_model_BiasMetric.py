@@ -232,7 +232,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                 if i == 0:
 
-                    N_samples = 100 # 100 x 1024 x 10
+                    N_samples = 500 # 100 x 1024 x 10
                     ps_new = model.flow(PS_regressed).sample((N_samples,))
 
                     data_ps_cpu = PS_target.detach().cpu()
@@ -252,6 +252,18 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                             (data_ps_cpu[:,x].tile(N_samples,1,1) - ps_new_cpu[:,:,x]).flatten().numpy(),
                             bins=100)
                         writer.add_figure(f"Validation_ramboentry_Diff_{x}", fig, e)
+
+                    
+                    flow_sample = torch.flatten(ps_new_cpu, start_dim=0, end_dim=1) # size[102400,10]
+                    PS_target = data_ps_cpu.unsqueeze(dim=0) # size [1,1024,10]
+                    PS_target = PS_target.expand(N_samples, -1, -1) # expand only the first dimension [100,1024,10]
+                    PS_target = torch.flatten(PS_target, start_dim=0, end_dim=1) # size[102400,10]
+                    
+                    biasMeanLoss = BiasLoss_Mean(PS_target, flow_sample)
+                    stdMeanLoss = BiasLoss_Std(PS_target, flow_sample)
+
+                    writer.add_scalar(f"Validation_Bias_Samples_Var", biasMeanLoss, e)
+                    writer.add_scalar(f"Validation_Std_Samples_Var", stdMeanLoss, e)
 
         valid_loss = valid_loss/N_valid
         
