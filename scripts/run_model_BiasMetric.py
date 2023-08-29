@@ -72,6 +72,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
         
         sum_loss = 0.
         bias_sum_loss = 0.
+        std_sum_loss = 0.
 
         if alternativeTr:
             if e % 2 == 0:
@@ -131,10 +132,13 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     PS_target_masked = PS_target[sample_mask]
                     
                     biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
+                    stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
+
                     mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_masked, flow_sample)])
 
                     flow_loss = mdmm_return.value
                     bias_sum_loss += biasMeanLoss
+                    std_sum_loss += stdMeanLoss
 
                 else:
                     flow_loss = -flow_prob
@@ -166,11 +170,13 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
         if sampling_Forward:
             writer.add_scalar(f"Loss_epoch_train_SamplingDir_MDMMLoss", sum_loss/N_train, e)
             writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", bias_sum_loss/N_train, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_StdMeanLoss", std_sum_loss/N_train, e)
         else:
             writer.add_scalar(f"Loss_epoch_train_NormalizingDir", sum_loss/N_train, e)
 
         valid_loss = 0.
         bias_sum_valid = 0.
+        std_sum_valid = 0.
 
         # validation loop (don't update weights and gradients)
         print("Before validation loop")
@@ -210,10 +216,13 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     PS_target_masked = PS_target_expand[sample_mask]
                     
                     biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
+                    stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
+
                     mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_grad, flow_sample)])
 
                     flow_loss = mdmm_return.value
                     bias_sum_valid += biasMeanLoss
+                    std_sum_valid += stdMeanLoss
 
                 else:
                     flow_loss = -flow_prob
@@ -270,8 +279,10 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
         if sampling_Forward:
             bias_sum_valid = bias_sum_valid/N_valid
+            std_sum_valid = std_sum_valid/N_valid
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_MDMMLoss", valid_loss, e)
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_BiasLoss", bias_sum_valid, e)
+            writer.add_scalar(f"Loss_epoch_val_SamplingDir_StdMeanLoss", std_sum_valid, e)
         else:
             writer.add_scalar(f"Loss_epoch_val_NormalizingDir", valid_loss, e)
 
