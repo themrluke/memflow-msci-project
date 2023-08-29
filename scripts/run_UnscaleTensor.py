@@ -21,7 +21,7 @@ import os
 from pynvml import *
 import glob
 
-def UnscaleTensor(config, model, dataLoader, outputDir):
+def UnscaleTensor(config, model, dataLoader, outputDir, batch_size):
             
     outputDir = os.path.abspath(outputDir)
             
@@ -32,7 +32,6 @@ def UnscaleTensor(config, model, dataLoader, outputDir):
     unscaledRegressedPartonsTensor = torch.empty((total_sample,
                                             config.conditioning_transformer.no_decoders,
                                             config.conditioning_transformer.out_features))
-    batch_size = 2048
 
     log_mean = torch.tensor(config.scaling_params.log_mean, device=device)
     log_std = torch.tensor(config.scaling_params.log_std, device=device)
@@ -55,7 +54,12 @@ def UnscaleTensor(config, model, dataLoader, outputDir):
 
             out = model(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
 
-            for particle in range(len(out)):
+            if config.conditioning_transformer.use_latent:
+                no_particles = len(out) - 1
+            else:
+                no_particles = len(out)
+
+            for particle in range(no_particles):
                 if out[particle].shape[0] == batch_size:
                     unscaledRegressedPartonsTensor[i*batch_size:(i+1)*batch_size,particle,:] = out[particle]
                 else:
@@ -127,7 +131,8 @@ if __name__ == '__main__':
                                             'mask_boost', 'data_boost'],
                                 parton_list=[])
     
-    data_loader = DataLoader(dataset=data, shuffle=False, batch_size=2048)
+    batch_size = 2048
+    data_loader = DataLoader(dataset=data, shuffle=False, batch_size=batch_size)
 
     if (device == torch.device('cuda')):
         nvmlInit()
@@ -157,6 +162,7 @@ if __name__ == '__main__':
                                     no_layers_decoder=conf.conditioning_transformer.no_layers_decoder,
                                     no_decoders=conf.conditioning_transformer.no_decoders,
                                     aggregate=conf.conditioning_transformer.aggregate,
+                                    use_latent=conf.conditioning_transformer.use_latent,
                                     dtype=torch.float64)
 
     state_dict = torch.load(model_path, map_location=device)
@@ -197,11 +203,11 @@ if __name__ == '__main__':
             #    nprocs=world_size,
             #    join=True,
             #)
-            UnscaleTensor(conf, model, data_loader, outputDir)
+            UnscaleTensor(conf, model, data_loader, outputDir, batch_size)
         else:
-            UnscaleTensor(conf, model, data_loader, outputDir)
+            UnscaleTensor(conf, model, data_loader, outputDir, batch_size)
     else:
-        UnscaleTensor(conf, model, data_loader, outputDir)
+        UnscaleTensor(conf, model, data_loader, outputDir, batch_size)
         
     
     print("Unscale tensor finished!")

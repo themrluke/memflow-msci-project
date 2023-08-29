@@ -64,7 +64,7 @@ def compute_losses(logScaled_partons, higgs, thad, tlep, cartesian, loss_fn, dev
     
     return lossH, lossThad, lossTlep
 
-def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss, latentSpace):
+def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss):
     
     if HuberLoss:
         loss_fn = torch.nn.HuberLoss(delta=1.0)
@@ -75,6 +75,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     scheduler = CosineAnnealingLR(optimizer, T_max=10)
     
     outputDir = os.path.abspath(outputDir)
+    latentSpace = config.conditioning_transformer.use_latent
     name_dir = f'{outputDir}/preTraining_noProv:{config.noProv}_cartesian:{config.cartesian}_HuberLoss:{HuberLoss}_latent_space:{latentSpace}_hiddenFeatures:{config.conditioning_transformer.hidden_features}_dimFeedForward:{config.conditioning_transformer.dim_feedforward_transformer}_nheadEnc:{config.conditioning_transformer.nhead_encoder}_LayersEnc:{config.conditioning_transformer.no_layers_encoder}_nheadDec:{config.conditioning_transformer.nhead_decoder}_LayersDec:{config.conditioning_transformer.no_layers_decoder}'
     
     writer = SummaryWriter(name_dir)
@@ -228,14 +229,12 @@ if __name__ == '__main__':
     parser.add_argument('--path-config', type=str, required=True, help='path to config.yaml File')
     parser.add_argument('--output-dir', type=str, required=True, help='Output directory')
     parser.add_argument('--on-GPU', action="store_true",  help='run on GPU boolean')
-    parser.add_argument('--use-latentSpace', action="store_true",  help='use latent Space')
     parser.add_argument('--huberLoss', action="store_true",  help='use Huber loss')
     args = parser.parse_args()
     
     path_to_conf = args.path_config
     on_GPU = args.on_GPU # by default run on CPU
     outputDir = args.output_dir
-    use_latentSpace = args.use_latentSpace
     use_huberLoss = args.huberLoss
 
     # Read config file in 'conf'
@@ -285,7 +284,7 @@ if __name__ == '__main__':
                                     no_layers_decoder=conf.conditioning_transformer.no_layers_decoder,
                                     no_decoders=conf.conditioning_transformer.no_decoders,
                                     aggregate=conf.conditioning_transformer.aggregate,
-                                    use_latent=use_latentSpace,
+                                    use_latent=conf.conditioning_transformer.use_latent,
                                     dtype=torch.float64)
 
     # Copy model on GPU memory
@@ -308,11 +307,11 @@ if __name__ == '__main__':
             #    nprocs=world_size,
             #    join=True,
             #)
-        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss, use_latentSpace)
+        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
         #else:
-        #    TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss, use_latentSpace)
+        #    TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
     else:
-        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss, use_latentSpace)
+        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
         
     
     print(f"Normal version: preTraining finished succesfully! Version: {conf.version}")
