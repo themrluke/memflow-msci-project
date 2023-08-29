@@ -461,7 +461,7 @@ def return_Interval(regressedVar, correctVar, targetVar, lim=(0,1), ratio=False)
       
 def plot_regressionFactor(regressedVar, correctVar, targetVar, matched, limTarget, bins, intervalTargetVar=0,
                             xerr_plot=False, ylim=[-10, 10],
-                            xname='x', yname='y', eta=False, ratio=False):
+                            xname='x', yname='y', eta=False, ratio=False, nameDir='', nameFig='1.png'):
     mean_result = []
     std_result = []
     std2_result = []
@@ -506,7 +506,9 @@ def plot_regressionFactor(regressedVar, correctVar, targetVar, matched, limTarge
     plt.ylabel(yname, fontsize=fontsize)
     plt.legend()
     plt.tick_params(axis='both', which='major', labelsize=labelsize)
-    plt.show()  
+    if nameDir != '':
+        plt.savefig(nameDir + '/' + nameFig)
+    plt.show()
     
 class FindMasks:
 
