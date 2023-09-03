@@ -84,58 +84,53 @@ class Dataset_PartonLevel(Dataset):
         print("Reading parton_level Files")
 
         self.mask_partons, self.data_partons = torch.load(
-            self.processed_file_names("partons"))
+            self.processed_file_names("partons"), map_location=dev)
         self.mask_lepton_partons, self.data_lepton_partons = torch.load(
-            self.processed_file_names("lepton_partons"))
+            self.processed_file_names("lepton_partons"), map_location=dev)
         self.mask_boost, self.data_boost = torch.load(
-            self.processed_file_names("boost"))
+            self.processed_file_names("boost"), map_location=dev)
         self.data_higgs_t_tbar_ISR = torch.load(
-            self.processed_file_names("H_thad_tlep_ISR"))
+            self.processed_file_names("H_thad_tlep_ISR"), map_location=dev)
         self.data_higgs_t_tbar_ISR_cartesian = torch.load(
-            self.processed_file_names("H_thad_tlep_ISR_cartesian"))
+            self.processed_file_names("H_thad_tlep_ISR_cartesian"), map_location=dev)
         self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
-            self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
+            self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"), map_location=dev)
         
         if 'phasespace_intermediateParticles' in self.parton_list:
             print("Load phasespace_intermediateParticles")
             self.phasespace_intermediateParticles = torch.load(
-                self.processed_file_names("phasespace_intermediateParticles"))
+                self.processed_file_names("phasespace_intermediateParticles"), map_location=dev)
 
         if 'phasespace_intermediateParticles_onShell' in self.parton_list:
             print("Load phasespace_intermediateParticles_onShell")
             self.phasespace_intermediateParticles_onShell = torch.load(
-                self.processed_file_names("phasespace_intermediateParticles_onShell"))
+                self.processed_file_names("phasespace_intermediateParticles_onShell"), map_location=dev)
             self.phasespace_rambo_detjacobian_onShell = torch.load(
-                self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
+                self.processed_file_names("phasespace_rambo_detjacobian_onShell"), map_location=dev)
 
         if 'phasespace_rambo_detjacobian' in self.parton_list:
             print("Load phasespace_rambo_detjacobian")
             self.phasespace_rambo_detjacobian = torch.load(
-                self.processed_file_names("phasespace_rambo_detjacobian"))
+                self.processed_file_names("phasespace_rambo_detjacobian"), map_location=dev)
         
         if 'log_data_higgs_t_tbar_ISR_cartesian' in self.parton_list:
             print("Load log_data_higgs_t_tbar_ISR_cartesian")
             self.log_data_higgs_t_tbar_ISR_cartesian = torch.load(
-                self.processed_file_names("Log_H_thad_tlep_ISR_cartesian"))
+                self.processed_file_names("Log_H_thad_tlep_ISR_cartesian"), map_location=dev)
         
         if 'logScaled_data_higgs_t_tbar_ISR_cartesian' in self.parton_list or 'mean_log_data_higgs_t_tbar_ISR_cartesian' in self.parton_list:
             print("Load logScaled_data_higgs_t_tbar_ISR_cartesian")
             self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian = torch.load(
-                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR_cartesian"))
+                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR_cartesian"), map_location=dev)
             self.logScaled_data_higgs_t_tbar_ISR_cartesian = torch.load(
-                self.processed_file_names("LogScaled_H_thad_tlep_ISR_cartesian"))
+                self.processed_file_names("LogScaled_H_thad_tlep_ISR_cartesian"), map_location=dev)
 
         if 'logScaled_data_higgs_t_tbar_ISR' in self.parton_list or 'mean_log_data_higgs_t_tbar_ISR' in self.parton_list:
             print("Load logScaled_data_higgs_t_tbar_ISR")
             self.mean_log_data_higgs_t_tbar_ISR, self.std_log_data_higgs_t_tbar_ISR = torch.load(
-                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR"))
+                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR"), map_location=dev)
             self.logScaled_data_higgs_t_tbar_ISR = torch.load(
-                self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
-        
-        if dev==torch.device('cuda') and torch.cuda.is_available():
-            print("Parton: Move tensors to GPU memory")
-            for field in self.parton_list:
-                setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
+                self.processed_file_names("LogScaled_H_thad_tlep_ISR"), map_location=dev)
             
         if dtype != None:
             for field in self.parton_list:
