@@ -131,7 +131,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                         flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
                         flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
 
-                        PS_target = PS_target.unsqueeze(dim=0) # size [1,1024,10]
+                        PS_target = PS_target[firstElem:lastElem].unsqueeze(dim=0) # size [1,1024,10]
                         PS_target = PS_target.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
                         PS_target = torch.flatten(PS_target, start_dim=0, end_dim=1) # size[102400,10]
 
@@ -226,7 +226,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                         flow_sample = model.flow(PS_regressed).sample((N_samplesLoss,)) # size [100,1024,10]
                         flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
 
-                        PS_target_expand = PS_target.unsqueeze(dim=0) # size [1,1024,10]
+                        PS_target_expand = PS_target[firstElem:lastElem].unsqueeze(dim=0) # size [1,1024,10]
                         PS_target_expand = PS_target_expand.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
                         PS_target_expand = torch.flatten(PS_target_expand, start_dim=0, end_dim=1) # size[102400,10]
 
