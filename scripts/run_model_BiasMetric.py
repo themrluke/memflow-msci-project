@@ -54,7 +54,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=10)
     
-    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_regression}'
+    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_stdMean}'
     modelName = f"{name_dir}/model_flow.pt"
     writer = SummaryWriter(name_dir)
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
@@ -64,7 +64,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     torch.autograd.set_detect_anomaly(True)
 
     sampling_Forward = config.training_params.sampling_Forward
-    N_samplesLoss = 1
+    N_samplesLoss = config.training_params.sampling_points_loss
     
     for e in range(config.training_params.nepochs):
         
@@ -78,7 +78,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                 no_iterations = 1
             else:
                 sampling_Forward = True
-                no_iterations = 8
+                no_iterations = config.training_params.subsplit
     
         # training loop    
         print("Before training loop")
@@ -128,6 +128,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                     if sampling_Forward:
 
+                        # rsample for sampling with grads
                         flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
                         flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
 
@@ -173,7 +174,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                 writer.add_scalar(f"detJacOnly_epoch_step", detjac_mean.item(), i)
                 if sampling_Forward:
                     writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_MDMMLoss", loss.item(), i)
-                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_BiasMeanLoss", biasMeanLoss, i)
+                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_BiasMeanLoss", biasMeanLoss.item(), i)
                 else:
                     writer.add_scalar(f"Loss_step_train_epoch_step_Normalizing_dir", loss.item(), i)
 
