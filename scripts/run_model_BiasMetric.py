@@ -106,9 +106,9 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
             # if the batch size is kept fixed (like in NormalizingDirection training))
             for ii in range(no_iterations):
 
-                NoElems = config.training_params.batch_size_validation/no_iterations
-                firstElem = int(ii*NoElems)
-                lastElem = int((ii+1)*NoElems - 1)
+                NoElems = config.training_params.batch_size_validation//no_iterations
+                firstElem = ii*NoElems
+                lastElem = (ii+1)*NoElems
 
                 if firstElem > PS_target.size(0):
                     break
@@ -204,9 +204,9 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                 for ii in range(no_iterations):
 
-                    NoElems = config.training_params.batch_size_validation/no_iterations
-                    firstElem = int(ii*NoElems)
-                    lastElem = int((ii+1)*NoElems - 1)
+                    NoElems = config.training_params.batch_size_validation//no_iterations
+                    firstElem = ii*NoElems
+                    lastElem = (ii+1)*NoElems
 
                     if firstElem > PS_target.size(0):
                         break
