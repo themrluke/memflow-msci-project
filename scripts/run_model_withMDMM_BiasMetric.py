@@ -82,18 +82,17 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     N_valid = len(validLoader)
 
     # Define the constraint
-    epsilon = config.MDMM.eps
     constraint = mdmm.MaxConstraint(
                     compute_losses,
                     max=1.27, # to be modified based on the regression
-                    scale=epsilon,
+                    scale=config.MDMM.eps_regression,
                     damping=5,
                     )
 
     constraint_bias = mdmm.MaxConstraint(
                     BiasLoss_Std,
                     max=0.01, # to be modified based on the regression
-                    scale=epsilon,
+                    scale=config.MDMM.eps_stdMean,
                     damping=5,
                     )
 
@@ -105,7 +104,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     scheduler = CosineAnnealingLR(optimizer, T_max=10)
     loss_fn = torch.nn.MSELoss() # compute_loss function receives loss_fn
     
-    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps}'
+    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_regression}'
     modelName = f"{name_dir}/model_flow.pt"
     writer = SummaryWriter(name_dir)
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:

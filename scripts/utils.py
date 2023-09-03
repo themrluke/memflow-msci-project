@@ -506,6 +506,7 @@ def plot_regressionFactor(regressedVar, correctVar, targetVar, matched, limTarge
     plt.ylabel(yname, fontsize=fontsize)
     plt.legend()
     plt.tick_params(axis='both', which='major', labelsize=labelsize)
+    plt.tight_layout()
     if nameDir != '':
         plt.savefig(nameDir + '/' + nameFig)
     plt.show()

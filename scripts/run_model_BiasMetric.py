@@ -42,11 +42,10 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     N_valid = len(validLoader)
 
     # Define the constraint
-    epsilon = config.MDMM.eps
     constraint = mdmm.MaxConstraint(
                     BiasLoss_Std,
                     max=0.01, # to be modified based on the regression
-                    scale=epsilon,
+                    scale=config.MDMM.eps_stdMean,
                     damping=5,
                     )
 
@@ -55,18 +54,17 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=10)
     
-    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps}'
+    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_regression}'
     modelName = f"{name_dir}/model_flow.pt"
     writer = SummaryWriter(name_dir)
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
         fo.write(OmegaConf.to_yaml(config))
 
-    ii = 0
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.001)
     torch.autograd.set_detect_anomaly(True)
 
     sampling_Forward = config.training_params.sampling_Forward
-    N_samplesLoss = 5
+    N_samplesLoss = 1
     
     for e in range(config.training_params.nepochs):
         
@@ -77,16 +75,16 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
         if alternativeTr:
             if e % 2 == 0:
                 sampling_Forward = False
+                no_iterations = 1
             else:
                 sampling_Forward = True
+                no_iterations = 8
     
         # training loop    
         print("Before training loop")
         model.train()
         for i, data in enumerate(trainingLoader):
             
-            ii += 1
-
             if (i % 100 == 0):
                 print(i)
 
@@ -104,75 +102,88 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                 print('PS target < 0 or > 1')
                 exit(0)
 
-            # Runs the forward pass with autocasting.
-            #with autocast(device_type='cuda', dtype=torch.float16):
-            if True:
-                cond_X, PS_regressed = model(mask_jets=mask_jets, mask_lepton_reco=mask_lepton_reco,
-                                            mask_met=mask_met, mask_boost_reco=mask_boost_reco,
-                                            logScaled_reco=logScaled_reco, data_boost_reco=data_boost_reco, 
-                                            device=device, noProv=config.noProv, eps=config.training_params.eps,
-                                            order=config.training_params.order, disableGradTransformer=disableGradTransformer)
+            # here i start to subsplit -> do this because too much memory is required to sample
+            # if the batch size is kept fixed (like in NormalizingDirection training))
+            for ii in range(no_iterations):
 
-                detjac = PS_rambo_detjacobian.log()
-                flow_prob = model.flow(PS_regressed).log_prob(PS_target)
+                NoElems = config.training_params.batch_size_validation/no_iterations
+                firstElem = int(ii*NoElems)
+                lastElem = int((ii+1)*NoElems - 1)
 
-                if sampling_Forward:
+                if firstElem > PS_target.size(0):
+                    break
+                elif lastElem > PS_target.size(0):
+                    lastElem = PS_target.size(0)
 
-                    flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
-                    flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
+                # Runs the forward pass with autocasting.
+                with autocast(device_type='cuda', dtype=torch.float16):
+                #if True:
+                    cond_X, PS_regressed = model(mask_jets=mask_jets[firstElem:lastElem], mask_lepton_reco=mask_lepton_reco[firstElem:lastElem],
+                                                mask_met=mask_met[firstElem:lastElem], mask_boost_reco=mask_boost_reco[firstElem:lastElem],
+                                                logScaled_reco=logScaled_reco[firstElem:lastElem], data_boost_reco=data_boost_reco[firstElem:lastElem], 
+                                                device=device, noProv=config.noProv, eps=config.training_params.eps,
+                                                order=config.training_params.order, disableGradTransformer=disableGradTransformer)                    
 
-                    PS_target = PS_target.unsqueeze(dim=0) # size [1,1024,10]
-                    PS_target = PS_target.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
-                    PS_target = torch.flatten(PS_target, start_dim=0, end_dim=1) # size[102400,10]
+                    detjac = PS_rambo_detjacobian[firstElem:lastElem].log()
 
-                    sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                    sample_mask = torch.all(sample_mask_all, dim=1)
+                    if sampling_Forward:
 
-                    flow_sample = flow_sample[sample_mask]
-                    PS_target_masked = PS_target[sample_mask]
+                        flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
+                        flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
+
+                        PS_target = PS_target.unsqueeze(dim=0) # size [1,1024,10]
+                        PS_target = PS_target.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
+                        PS_target = torch.flatten(PS_target, start_dim=0, end_dim=1) # size[102400,10]
+
+                        sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
+                        sample_mask = torch.all(sample_mask_all, dim=1)
+
+                        flow_sample = flow_sample[sample_mask]
+                        PS_target_masked = PS_target[sample_mask]
+
+                        biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
+                        stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
+
+                        mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_masked, flow_sample)])
+
+                        flow_loss = mdmm_return.value
+                        bias_sum_loss += biasMeanLoss.item()
+                        std_sum_loss += stdMeanLoss.item()
+
+                    else:
+                        flow_prob = model.flow(PS_regressed).log_prob(PS_target[firstElem:lastElem])
+                        flow_loss = -flow_prob
+
+                    inf_mask = torch.isinf(flow_loss)
+                    nonzeros = torch.count_nonzero(inf_mask)
+                    #writer.add_scalar(f"Number_INF_flow_{e}", nonzeros.item(), i)
+
+                    detjac_mean = -detjac.nanmean()
                     
-                    biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
-                    stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
+                    if sampling_Forward:
+                        loss = flow_loss
+                    else:
+                        loss = flow_loss[torch.logical_not(inf_mask)].mean() # dont take infinities into consideration
 
-                    mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_masked, flow_sample)])
+                loss.backward()
+                optimizer.step()
 
-                    flow_loss = mdmm_return.value
-                    bias_sum_loss += biasMeanLoss
-                    std_sum_loss += stdMeanLoss
+                sum_loss += loss.item()
 
-                else:
-                    flow_loss = -flow_prob
-
-                inf_mask = torch.isinf(flow_loss)
-                nonzeros = torch.count_nonzero(inf_mask)
-                #writer.add_scalar(f"Number_INF_flow_{e}", nonzeros.item(), i)
-
-                detjac_mean = -detjac.nanmean()
-                
+                writer.add_scalar(f"detJacOnly_epoch_step", detjac_mean.item(), i)
                 if sampling_Forward:
-                    loss = flow_loss
+                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_MDMMLoss", loss.item(), i)
+                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_BiasMeanLoss", biasMeanLoss, i)
                 else:
-                    loss = flow_loss[torch.logical_not(inf_mask)].mean() # dont take infinities into consideration
-
-            loss.backward()
-            optimizer.step()
-
-            sum_loss += loss.item()
-
-            writer.add_scalar(f"detJacOnly_epoch_step", detjac_mean.item(), i)
-            if sampling_Forward:
-                writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_MDMMLoss", loss.item(), i)
-                writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_BiasMeanLoss", biasMeanLoss, i)
-            else:
-                 writer.add_scalar(f"Loss_step_train_epoch_step_Normalizing_dir", loss.item(), i)
+                    writer.add_scalar(f"Loss_step_train_epoch_step_Normalizing_dir", loss.item(), i)
 
 
         if sampling_Forward:
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_MDMMLoss", sum_loss/N_train, e)
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", bias_sum_loss/N_train, e)
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_StdMeanLoss", std_sum_loss/N_train, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_MDMMLoss", sum_loss/N_train/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", bias_sum_loss/N_train/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_StdMeanLoss", std_sum_loss/N_train/no_iterations, e)
         else:
-            writer.add_scalar(f"Loss_epoch_train_NormalizingDir", sum_loss/N_train, e)
+            writer.add_scalar(f"Loss_epoch_train_NormalizingDir", sum_loss/N_train/no_iterations, e)
 
         valid_loss = 0.
         bias_sum_valid = 0.
@@ -191,60 +202,71 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
             with torch.no_grad():
 
-                cond_X, PS_regressed = model(mask_jets=mask_jets, mask_lepton_reco=mask_lepton_reco,
-                                            mask_met=mask_met, mask_boost_reco=mask_boost_reco,
-                                            logScaled_reco=logScaled_reco, data_boost_reco=data_boost_reco, 
-                                            device=device, noProv=config.noProv, eps=config.training_params.eps,
-                                            order=config.training_params.order, disableGradTransformer=disableGradTransformer)
+                for ii in range(no_iterations):
 
-                detjac = PS_rambo_detjacobian.log()
-                flow_prob = model.flow(PS_regressed).log_prob(PS_target)
+                    NoElems = config.training_params.batch_size_validation/no_iterations
+                    firstElem = int(ii*NoElems)
+                    lastElem = int((ii+1)*NoElems - 1)
 
-                if sampling_Forward:
+                    if firstElem > PS_target.size(0):
+                        break
+                    elif lastElem > PS_target.size(0):
+                        lastElem = PS_target.size(0)
 
-                    flow_sample = model.flow(PS_regressed).sample((N_samplesLoss,)) # size [100,1024,10]
-                    flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
+                    cond_X, PS_regressed = model(mask_jets=mask_jets[firstElem:lastElem], mask_lepton_reco=mask_lepton_reco[firstElem:lastElem],
+                                                mask_met=mask_met[firstElem:lastElem], mask_boost_reco=mask_boost_reco[firstElem:lastElem],
+                                                logScaled_reco=logScaled_reco[firstElem:lastElem], data_boost_reco=data_boost_reco[firstElem:lastElem], 
+                                                device=device, noProv=config.noProv, eps=config.training_params.eps,
+                                                order=config.training_params.order, disableGradTransformer=disableGradTransformer)
 
-                    PS_target_expand = PS_target.unsqueeze(dim=0) # size [1,1024,10]
-                    PS_target_expand = PS_target_expand.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
-                    PS_target_expand = torch.flatten(PS_target_expand, start_dim=0, end_dim=1) # size[102400,10]
+                    detjac = PS_rambo_detjacobian[firstElem:lastElem].log()
 
-                    sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                    sample_mask = torch.all(sample_mask_all, dim=1)
+                    if sampling_Forward:
 
-                    flow_sample = flow_sample[sample_mask]
-                    PS_target_masked = PS_target_expand[sample_mask]
+                        flow_sample = model.flow(PS_regressed).sample((N_samplesLoss,)) # size [100,1024,10]
+                        flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
+
+                        PS_target_expand = PS_target.unsqueeze(dim=0) # size [1,1024,10]
+                        PS_target_expand = PS_target_expand.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
+                        PS_target_expand = torch.flatten(PS_target_expand, start_dim=0, end_dim=1) # size[102400,10]
+
+                        sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
+                        sample_mask = torch.all(sample_mask_all, dim=1)
+
+                        flow_sample = flow_sample[sample_mask]
+                        PS_target_masked = PS_target_expand[sample_mask]
+                        
+                        biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
+                        stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
+
+                        mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_masked, flow_sample)])
+
+                        flow_loss = mdmm_return.value
+                        bias_sum_valid += biasMeanLoss.item()
+                        std_sum_valid += stdMeanLoss.item()
+
+                    else:
+                        flow_prob = model.flow(PS_regressed).log_prob(PS_target[firstElem:lastElem])
+                        flow_loss = -flow_prob
+
+                    inf_mask = torch.isinf(flow_loss)
+                    nonzeros = torch.count_nonzero(inf_mask)
+                    detjac_mean = -detjac.nanmean()
                     
-                    biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
-                    stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
-
-                    mdmm_return = MDMM_module(biasMeanLoss, [(PS_target_grad, flow_sample)])
-
-                    flow_loss = mdmm_return.value
-                    bias_sum_valid += biasMeanLoss
-                    std_sum_valid += stdMeanLoss
-
-                else:
-                    flow_loss = -flow_prob
-
-                inf_mask = torch.isinf(flow_loss)
-                nonzeros = torch.count_nonzero(inf_mask)
-                detjac_mean = -detjac.nanmean()
-                
-                if sampling_Forward:
-                    loss = flow_loss
-                else:
-                    loss = flow_loss[torch.logical_not(inf_mask)].mean() # dont take infinities into consideration
-                
-                valid_loss += loss.item()
+                    if sampling_Forward:
+                        loss = flow_loss
+                    else:
+                        loss = flow_loss[torch.logical_not(inf_mask)].mean() # dont take infinities into consideration
+                    
+                    valid_loss += loss.item()
                 
 
                 if i == 0:
 
-                    N_samples = 500 # 100 x 1024 x 10
+                    N_samples = 100 # 100 x 1024 x 10
                     ps_new = model.flow(PS_regressed).sample((N_samples,))
 
-                    data_ps_cpu = PS_target.detach().cpu()
+                    data_ps_cpu = PS_target[firstElem:lastElem].detach().cpu()
                     ps_new_cpu = ps_new.detach().cpu()
 
                     for x in range(data_ps_cpu.size(1)):
@@ -271,15 +293,15 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     biasMeanLoss = BiasLoss_Mean(PS_target, flow_sample)
                     stdMeanLoss = BiasLoss_Std(PS_target, flow_sample)
 
-                    writer.add_scalar(f"Validation_Bias_Samples_Var", biasMeanLoss, e)
-                    writer.add_scalar(f"Validation_Std_Samples_Var", stdMeanLoss, e)
+                    writer.add_scalar(f"Validation_Bias_Samples_Var", biasMeanLoss.item(), e)
+                    writer.add_scalar(f"Validation_Std_Samples_Var", stdMeanLoss.item(), e)
 
-        valid_loss = valid_loss/N_valid
+        valid_loss = valid_loss/N_valid/no_iterations
         
 
         if sampling_Forward:
-            bias_sum_valid = bias_sum_valid/N_valid
-            std_sum_valid = std_sum_valid/N_valid
+            bias_sum_valid = bias_sum_valid/N_valid/no_iterations
+            std_sum_valid = std_sum_valid/N_valid/no_iterations
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_MDMMLoss", valid_loss, e)
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_BiasLoss", bias_sum_valid, e)
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_StdMeanLoss", std_sum_valid, e)
