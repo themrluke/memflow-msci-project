@@ -28,15 +28,24 @@ import os
 
 PI = torch.pi
 
-def BiasLoss_Mean(PS_Target, Flow_Sample):
-    DiffSamplingTarget = PS_Target - Flow_Sample
-    biasDistrib = torch.abs(torch.mean(DiffSamplingTarget, dim=0))
-    return torch.mean(biasDistrib, dim=0)
+def BiasLoss(PS_Target, Flow_Sample):
 
-def BiasLoss_Std(PS_Target, Flow_Sample):
-    DiffSamplingTarget = PS_Target - Flow_Sample
-    biasDistrib = torch.mean(DiffSamplingTarget, dim=0)
-    return torch.std(biasDistrib, dim=0)
+    DiffSamplingTarget = PS_Target - Flow_Sample # [samples, events, Rambo]
+    DiffSamplingTarget_transposed = torch.transpose(DiffSamplingTarget, 0, 1) # [events, samples, Rambo]
+
+    mean_BiasOverSamples = torch.abs(torch.mean(DiffSamplingTarget_transposed, dim=1))  # [events, Rambo]
+
+    mean_BiasOverEvents = torch.mean(mean_BiasOverSamples, dim=0) # [Rambo]
+    std_BiasOverEvents = torch.std(mean_BiasOverSamples, dim=0) # [Rambo]
+
+    mean_BiasOverRambo = torch.mean(mean_BiasOverEvents, dim=0) # [1]
+    std_BiasOverRambo = torch.mean(std_BiasOverEvents, dim=0) # [1]
+
+    return mean_BiasOverRambo, std_BiasOverRambo
+
+def BiasLoss_Std(std_BiasOverRambo):
+
+    return std_BiasOverRambo
 
 def loss_fn_periodic(input, target, loss_fn, device):
 
@@ -108,6 +117,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     else:
         loss_fn = torch.nn.MSELoss()
     
+    outputDir = os.path.abspath(outputDir)
     name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_regression}'
     modelName = f"{name_dir}/model_flow.pt"
     writer = SummaryWriter(name_dir)
@@ -141,6 +151,9 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
             
             if (i % 100 == 0):
                 print(i)
+
+            if (sampling_Forward and i > N_train*config.training_params.percentage_sampling_epoch):
+                break
 
             optimizer.zero_grad()
 
@@ -185,26 +198,24 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                         # rsample for sampling with grads
                         flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
-                        flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
-
-                        PS_target = PS_target[firstElem:lastElem].unsqueeze(dim=0) # size [1,1024,10]
-                        PS_target = PS_target.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
-                        PS_target = torch.flatten(PS_target, start_dim=0, end_dim=1) # size[102400,10]
+                        PS_target_expanded = PS_target[firstElem:lastElem] # size [1,1024,10]
 
                         sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                        sample_mask = torch.all(sample_mask_all, dim=1)
+                        sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
 
-                        flow_sample = flow_sample[sample_mask]
-                        PS_target_masked = PS_target[sample_mask]
+                        sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
+                        sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
+
+                        flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
+                        PS_target_masked = PS_target_expanded[sample_mask_events] # remove the events with bad samples
+
+                        mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
                         
-                        biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
-                        stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
-
-                        mdmm_return = MDMM_module_bias(biasMeanLoss, [(PS_target_masked, flow_sample)])
+                        mdmm_return = MDMM_module_bias(mean_BiasOverRambo, [(std_BiasOverRambo)])
 
                         flow_loss = mdmm_return.value
-                        bias_sum_loss += biasMeanLoss.item()
-                        std_sum_loss += stdMeanLoss.item()
+                        bias_sum_loss += mean_BiasOverRambo.item()
+                        std_sum_loss += std_BiasOverRambo.item()
 
                     else:
                         flow_prob = model.flow(PS_regressed).log_prob(PS_target[firstElem:lastElem])
@@ -236,17 +247,18 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                 writer.add_scalar(f"detJacOnly_epoch_step", detjac_mean.item(), i)
                 if sampling_Forward:
                     writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_MDMMLoss", loss.item(), i)
-                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_BiasMeanLoss", biasMeanLoss.item(), i)
+                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_BiasMeanLoss", mean_BiasOverRambo.item(), i)
+                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_StdMeanLoss", std_BiasOverRambo.item(), i)
                 else:
                     writer.add_scalar(f"Loss_step_train_epoch_step_Normalizing_dir", loss.item(), i)
 
 
         if sampling_Forward:
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_MDMMLoss", sum_loss/N_train/no_iterations, e)
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", bias_sum_loss/N_train/no_iterations, e)
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_StdMeanLoss", std_sum_loss/N_train/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_MDMMLoss", sum_loss/i/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", bias_sum_loss/i/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_train_SamplingDir_StdMeanLoss", std_sum_loss/i/no_iterations, e)
         else:
-            writer.add_scalar(f"Loss_epoch_train_NormalizingDir", sum_loss/N_train/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_train_NormalizingDir", sum_loss/i/no_iterations, e)
 
         valid_loss = 0.
         bias_sum_valid = 0.
@@ -288,26 +300,24 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     if sampling_Forward:
 
                         flow_sample = model.flow(PS_regressed).sample((N_samplesLoss,)) # size [100,1024,10]
-                        flow_sample = torch.flatten(flow_sample, start_dim=0, end_dim=1) # size[102400,10]
-
-                        PS_target_expand = PS_target[firstElem:lastElem].unsqueeze(dim=0) # size [1,1024,10]
-                        PS_target_expand = PS_target_expand.expand(N_samplesLoss, -1, -1) # expand only the first dimension [100,1024,10]
-                        PS_target_expand = torch.flatten(PS_target_expand, start_dim=0, end_dim=1) # size[102400,10]
+                        PS_target_expanded = PS_target[firstElem:lastElem] # size [1,1024,10]
 
                         sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                        sample_mask = torch.all(sample_mask_all, dim=1)
+                        sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
 
-                        flow_sample = flow_sample[sample_mask]
-                        PS_target_masked = PS_target_expand[sample_mask]
+                        sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
+                        sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
+
+                        flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
+                        PS_target_masked = PS_target_expanded[sample_mask_events] # remove the events with bad samples
+
+                        mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
                         
-                        biasMeanLoss = BiasLoss_Mean(PS_target_masked, flow_sample)
-                        stdMeanLoss = BiasLoss_Std(PS_target_masked, flow_sample)
-
-                        mdmm_return = MDMM_module_bias(biasMeanLoss, [(PS_target_masked, flow_sample)])
+                        mdmm_return = MDMM_module_bias(mean_BiasOverRambo, [(std_BiasOverRambo)])
 
                         flow_loss = mdmm_return.value
-                        bias_sum_valid += biasMeanLoss.item()
-                        std_sum_valid += stdMeanLoss.item()
+                        bias_sum_loss += mean_BiasOverRambo.item()
+                        std_sum_loss += std_BiasOverRambo.item()
 
                     else:
                         flow_prob = model.flow(PS_regressed).log_prob(PS_target[firstElem:lastElem])
@@ -339,6 +349,11 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     data_ps_cpu = PS_target[firstElem:lastElem].detach().cpu()
                     ps_new_cpu = ps_new.detach().cpu()
 
+                    mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(data_ps_cpu, ps_new_cpu)
+
+                    writer.add_scalar(f"Validation_Bias_Samples_Var", mean_BiasOverRambo.item(), e)
+                    writer.add_scalar(f"Validation_Std_Samples_Var", std_BiasOverRambo.item(), e)
+
                     for x in range(data_ps_cpu.size(1)):
                         fig, ax = plt.subplots()
                         h = ax.hist2d(data_ps_cpu[:,x].tile(N_samples,1,1).flatten().numpy(),
@@ -360,22 +375,11 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                             bins=100)
                         writer.add_figure(f"Validation_ramboentry_Diff_{x}", fig, e)
 
-                    flow_sample = torch.flatten(ps_new_cpu, start_dim=0, end_dim=1) # size[102400,10]
-                    PS_target = data_ps_cpu.unsqueeze(dim=0) # size [1,1024,10]
-                    PS_target = PS_target.expand(N_samples, -1, -1) # expand only the first dimension [100,1024,10]
-                    PS_target = torch.flatten(PS_target, start_dim=0, end_dim=1) # size[102400,10]
-                        
-                    biasMeanLoss = BiasLoss_Mean(PS_target, flow_sample)
-                    stdMeanLoss = BiasLoss_Std(PS_target, flow_sample)
-
-                    writer.add_scalar(f"Validation_Bias_Samples_Var", biasMeanLoss.item(), e)
-                    writer.add_scalar(f"Validation_Std_Samples_Var", stdMeanLoss.item(), e)
-
-        valid_loss = valid_loss/N_valid
+        valid_loss = valid_loss/i/no_iterations
 
         if sampling_Forward:
-            bias_sum_valid = bias_sum_valid/N_valid/no_iterations
-            std_sum_valid = std_sum_valid/N_valid/no_iterations
+            bias_sum_valid = bias_sum_valid/i/no_iterations
+            std_sum_valid = std_sum_valid/i/no_iterations
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_MDMMLoss", valid_loss, e)
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_BiasLoss", bias_sum_valid, e)
             writer.add_scalar(f"Loss_epoch_val_SamplingDir_StdMeanLoss", std_sum_valid, e)
