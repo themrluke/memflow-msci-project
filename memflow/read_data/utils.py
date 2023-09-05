@@ -17,6 +17,9 @@ struct_jets = ak.zip({"pt": np.float32(0),
                       "btag": np.float32(0),
                       "m": np.float64(0),
                       "matched": bool(0),
+                      "prov_Thad": np.float32(0),
+                      "prov_Tlep": np.float32(0),
+                      "prov_H": np.float32(0),
                       "prov": -1},
                      with_name='Momentum4D')
 
