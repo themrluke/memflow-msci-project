@@ -129,6 +129,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
     sampling_Forward = config.training_params.sampling_Forward
     N_samplesLoss = config.training_params.sampling_points_loss
+    no_iterations = 1
     
     for e in range(config.training_params.nepochs):
         
