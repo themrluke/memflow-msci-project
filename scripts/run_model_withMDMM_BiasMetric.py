@@ -198,16 +198,15 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                         # rsample for sampling with grads
                         flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
-                        PS_target_expanded = PS_target[firstElem:lastElem] # size [1,1024,10]
+                        PS_target_masked = PS_target[firstElem:lastElem] # size [1,1024,10]
 
-                        sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                        sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
-
-                        sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
-                        sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
-
-                        flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
-                        PS_target_masked = PS_target_expanded[sample_mask_events] # remove the events with bad samples
+                        # MASK TO REMOVE EVENTS IF SAMPLING IS OUTSIDE 0-1
+                        #sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
+                        #sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
+                        #sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
+                        #sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
+                        #flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
+                        #PS_target_masked = PS_target_masked[sample_mask_events] # remove the events with bad samples
 
                         mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
                         
@@ -300,16 +299,14 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     if sampling_Forward:
 
                         flow_sample = model.flow(PS_regressed).sample((N_samplesLoss,)) # size [100,1024,10]
-                        PS_target_expanded = PS_target[firstElem:lastElem] # size [1,1024,10]
+                        PS_target_masked = PS_target[firstElem:lastElem] # size [1,1024,10]
 
-                        sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                        sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
-
-                        sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
-                        sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
-
-                        flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
-                        PS_target_masked = PS_target_expanded[sample_mask_events] # remove the events with bad samples
+                        #sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
+                        #sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
+                        #sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
+                        #sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
+                        #flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
+                        #PS_target_masked = PS_target_expanded[sample_mask_events] # remove the events with bad samples
 
                         mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
                         
