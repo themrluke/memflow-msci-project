@@ -39,8 +39,8 @@ class Dataset_PartonLevel(Dataset):
         self.object_types = object_types
         self.build = build
 
-        # if build flag set and number of files in processed partons directory is 0
-        if (build and len(os.listdir(self.rootDir + '/processed_partons/')) == 0):
+        # if build flag set or number of files in processed partons directory is 0
+        if (build or len(os.listdir(self.rootDir + '/processed_partons/')) == 0):
 
             (self.partons_boosted, self.leptons_boosted,
             self.higgs_boosted, self.generator,
@@ -169,7 +169,7 @@ class Dataset_PartonLevel(Dataset):
             leptons = ak.with_name(leptons, name="Momentum4D")
 
             higgs = df["higgs"]
-            higgs = ak.with_name(higgs, name="Momentum4D")
+            higgs = ak.with_name(higgs, name="Momentum4D")[:,0]
 
             partons_boosted = self.boost_CM(partons, boost)
             leptons_boosted = self.boost_CM(leptons, boost)
@@ -276,7 +276,7 @@ class Dataset_PartonLevel(Dataset):
                 objects, self.fields["H_thad_tlep_ISR"], axis=1, allow_missing=False)
 
             d_list = np.expand_dims(d_list, axis=1)
-
+            breakpoint()
             if i == 0:
                 intermediate_np = d_list
             else:

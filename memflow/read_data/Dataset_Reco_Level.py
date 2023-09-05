@@ -7,14 +7,12 @@ import awkward as ak
 from torch.utils.data import Dataset
 
 
-
-
 class Dataset_RecoLevel(Dataset):
     def __init__(self, root, object_types=["jets", "lepton_reco", "met", "boost"], dev=None, debug=False,
                  dtype=None, build=False, reco_list=[]):
 
         self.fields = {
-            "jets": ["pt", "eta", "phi", "btag", "prov"],
+            "jets": ["pt", "eta", "phi", "btag","prov_Thad", "prov_Tlep", "prov_H", "prov"],
             "lepton_reco": ["pt", "eta", "phi"],
             "met": ["pt", "eta", "phi"],
             "boost": ["E", "px", "py", "pz"],
@@ -36,8 +34,8 @@ class Dataset_RecoLevel(Dataset):
         allObjects = self.object_types[:]
         allObjects.append('recoParticles_Cartesian')
         
-        # if build flag set and number of files in processed jets directory is 0
-        if (build and len(os.listdir(self.rootDir + '/processed_jets/')) == 0):
+        # if build flag set or number of files in processed jets directory is 0
+        if (build or len(os.listdir(self.rootDir + '/processed_jets/')) == 0):
             (self.boost, self.boost_objBoosted) = self.get_boost()
 
             for object_type in self.object_types:
@@ -130,7 +128,7 @@ class Dataset_RecoLevel(Dataset):
             jets = ak.with_name(jets, name="Momentum4D")
 
             leptons = df["lepton_reco"]
-            leptons = ak.with_name(leptons, name="Momentum4D")
+            leptons = ak.with_name(leptons, name="Momentum4D")[:,0] # takingthe leading lepton
 
             met = df["met"]
             met = ak.with_name(met, name="Momentum4D")
@@ -186,6 +184,10 @@ class Dataset_RecoLevel(Dataset):
             if object_type == "jets":
                 objects = self.Reshape(objects, utils.struct_jets, 1)
 
+            if object_type == "lepton_reco":
+                # taking the leading lepton
+                objects = objects[:,0]
+            
             d_list = utils.to_flat_numpy(
                 objects, self.fields[object_type], axis=1, allow_missing=False)
 
@@ -198,9 +200,11 @@ class Dataset_RecoLevel(Dataset):
                 mask = np.ones((d_list.shape[0], d_list.shape[1]))
             
             if (object_type == "lepton_reco" or object_type == "met"):
-                fake_btag = np.zeros((d_list.shape[0], d_list.shape[1], 1))
-                fake_prov = np.zeros((d_list.shape[0], d_list.shape[1], 1))
-                d_list = np.concatenate((d_list, fake_btag, fake_prov), axis=2)
+                #missing fields
+                missing_fields = np.zeros((d_list.shape[0], d_list.shape[1],
+                                           len(self.fields["jets"])-len(self.fields[object_type])
+                                           ))
+                d_list = np.concatenate((d_list, missing_fields), axis=2)
                 
             tensor_data = torch.tensor(d_list, dtype=torch.float)
             tensor_mask = torch.tensor(mask, dtype=torch.float)
@@ -224,6 +228,10 @@ class Dataset_RecoLevel(Dataset):
                 if object_type == "jets":
                     objects = self.Reshape(objects, utils.struct_jets, 1)
 
+                if object_type == "lepton_reco":
+                    # only the leading lepton
+                    objects = objects[:,0]
+                    
                 d_list = utils.to_flat_numpy(
                         objects, self.fields['recoParticles_Cartesian'], axis=1, allow_missing=False)
 
@@ -258,7 +266,7 @@ class Dataset_RecoLevel(Dataset):
             log_objectNumpy = np.sign(objectNumpy)*np.log(1+np.abs(objectNumpy)) 
             log_objectTensor = torch.tensor(log_objectNumpy, dtype=torch.float)
         else:
-            # case ["pt", "eta", "phi", "btag", "prov"]
+            # case ["pt", "eta", "phi", "btag", + prov
             no_elements = 3
             pt = objectNumpy[:,:,0]
             log_pt = np.log(1+pt) #sign and abs not necessary
