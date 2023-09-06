@@ -1,14 +1,6 @@
 ARG FROM_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
 FROM ${FROM_IMAGE}
 
-USER root
-
-RUN apt-get update && apt-get install -y \
-    git\
-    vim\
-    && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
 
 ADD requirements.txt /tmp/
 RUN python -m pip install -r /tmp/requirements.txt
