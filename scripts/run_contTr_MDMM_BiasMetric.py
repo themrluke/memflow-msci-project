@@ -494,13 +494,13 @@ if __name__ == '__main__':
                     device=device,
                     dtype=torch.float64)
 
-    state_dict = torch.load(path_to_model, map_location=device)
-    model.load_state_dict(state_dict['model_state_dict'])
-    
     # Copy model on GPU memory
     if (device == torch.device('cuda')):
         model = model.cuda()
-        
+
+    state_dict = torch.load(path_to_model, map_location=device)
+    model.load_state_dict(state_dict['model_state_dict'])
+    
     print(f"parameters total:{utils.count_parameters(model)}")
     
     if (device == torch.device('cuda')):

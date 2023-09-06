@@ -31,7 +31,7 @@ class Dataset_PartonLevel(Dataset):
 
         self.root = root
         if root.endswith(".parquet"):
-            self.rootDir = os.path.basename(root)
+            self.rootDir = os.path.dirname(root)
         else:
             self.rootDir = root            
 
