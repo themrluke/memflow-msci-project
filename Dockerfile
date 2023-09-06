@@ -1,24 +1,9 @@
-FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
-USER root
-
-RUN apt-get update && apt-get install -y \
-    git\
-    vim\
-    && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+ARG FROM_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
+FROM ${FROM_IMAGE}
 
 
-RUN mkdir /opt/MEMFlow
-ADD memflow /opt/MEMFlow/memflow
-ADD .git /opt/MEMFlow/.git
-ADD scripts /opt/MEMFlow/scripts
-ADD setup.cfg /opt/MEMFlow/
-ADD pyproject.toml /opt/MEMFlow/
-
-WORKDIR /opt/MEMFlow
-ARG PSEUDO_VERSION=1
-RUN SETUPTOOLS_SCM_PRETEND_VERSION=${PSEUDO_VERSION} python -m pip install -e .
+ADD requirements.txt /tmp/
+RUN python -m pip install -r /tmp/requirements.txt
 
 RUN python -m pip install 'zuko @ git+https://github.com/valsdav/zuko@master'
 RUN python -m pip install 'mdmm @ git+https://github.com/the-moliver/mdmm@master'

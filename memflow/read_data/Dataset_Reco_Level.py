@@ -22,10 +22,12 @@ class Dataset_RecoLevel(Dataset):
 
         print("\nRecoLevel")
         self.debug = debug
-        if root[-1] == '/':
-            root = root[:-1]
+        
         self.root = root
-        self.rootDir = self.root.rsplit('/', 1)[0]
+        if root.endswith(".parquet"):
+            self.rootDir = os.path.basename(root)
+        else:
+            self.rootDir = root
 
         self.reco_list = reco_list
         os.makedirs(self.rootDir + "/processed_jets", exist_ok=True)
@@ -62,8 +64,7 @@ class Dataset_RecoLevel(Dataset):
         #self.mask_boost_objBoosted, self.data_boost_objBoosted = torch.load(self.processed_file_names("boost_objBoosted"))
         
         print("Reading reco_level Files")
-
-        if 'recoParticles_Cartesian' in self.reco_list:
+        if 'recoParticlesCartesian' in self.reco_list:
             print("Load recoParticles_Cartesian")
             self.recoParticlesCartesian = torch.load(self.processed_file_names("recoParticles_Cartesian"))
         
