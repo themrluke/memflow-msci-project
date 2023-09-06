@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-RUN python -m pip install -r requirements.txt
+ADD requirements.txt /tmp/
+RUN python -m pip install -r /tmp/requirements.txt
 
 RUN python -m pip install 'zuko @ git+https://github.com/valsdav/zuko@master'
 RUN python -m pip install 'mdmm @ git+https://github.com/the-moliver/mdmm@master'
