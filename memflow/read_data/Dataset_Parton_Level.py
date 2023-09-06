@@ -1,7 +1,6 @@
 from memflow.read_data import utils
 from memflow.phasespace.phasespace import PhaseSpace
 import os
-import os.path
 import numpy.ma as ma
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
@@ -29,10 +28,12 @@ class Dataset_PartonLevel(Dataset):
         
         print("\nPartonLevel")
         self.debug = debug
-        if root[-1] == '/':
-            root = root[:-1]
+
         self.root = root
-        self.rootDir = self.root.rsplit('/', 1)[0]
+        if root.endswith(".parquet"):
+            self.rootDir = os.path.basename(root)
+        else:
+            self.rootDir = root            
 
         self.parton_list = parton_list
         os.makedirs(self.rootDir + "/processed_partons", exist_ok=True)
@@ -112,12 +113,7 @@ class Dataset_PartonLevel(Dataset):
             print("Load phasespace_rambo_detjacobian")
             self.phasespace_rambo_detjacobian = torch.load(
                 self.processed_file_names("phasespace_rambo_detjacobian"))
-        
-        if 'log_data_higgs_t_tbar_ISR_cartesian' in self.parton_list:
-            print("Load log_data_higgs_t_tbar_ISR_cartesian")
-            self.log_data_higgs_t_tbar_ISR_cartesian = torch.load(
-                self.processed_file_names("Log_H_thad_tlep_ISR_cartesian"))
-        
+    
         if 'logScaled_data_higgs_t_tbar_ISR_cartesian' in self.parton_list or 'mean_log_data_higgs_t_tbar_ISR_cartesian' in self.parton_list:
             print("Load logScaled_data_higgs_t_tbar_ISR_cartesian")
             self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian = torch.load(
