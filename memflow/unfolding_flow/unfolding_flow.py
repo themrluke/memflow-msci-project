@@ -72,13 +72,16 @@ class UnfoldingFlow(nn.Module):
                 cond_X = self.cond_transformer(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
         else:
             cond_X = self.cond_transformer(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
+        if cond_aggregate:
+            return cond_X
+        else:
+            
+             HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(cond_X, self.log_mean,
+                                                                                         self.log_std, device, eps)
 
-        HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(cond_X, self.log_mean,
-                                                                                    self.log_std, device, eps)
+             # be careful at the order of phasespace_target and PS_regressed
+             # order by default: H/thad/tlep/ISR
+             PS_regressed, detjinv_regressed = Compute_ParticlesTensor.get_PS(HttISR_regressed, data_boost_reco)
 
-        # be careful at the order of phasespace_target and PS_regressed
-        # order by default: H/thad/tlep/ISR
-        PS_regressed, detjinv_regressed = Compute_ParticlesTensor.get_PS(HttISR_regressed, data_boost_reco)
-
-        return cond_X, PS_regressed
+             return cond_X, PS_regressed
 
