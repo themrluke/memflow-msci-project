@@ -22,7 +22,7 @@ variables:
   only:
     - pushes
     - merge_requests
-    - changes
+    - changes:
       - Dockerfile
       - requirements.txt 
 
