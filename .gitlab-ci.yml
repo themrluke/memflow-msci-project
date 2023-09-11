@@ -41,10 +41,13 @@ build_docker:
 
 build_docker_latest:
   extends: .tag_skopeo
-  needs: ["build_docker"]
   variables:
     IMAGE_ORIGIN_TAG: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
     IMAGE_DESTINATION_TAG: ${CI_REGISTRY_IMAGE}:latest
+  rules:
+    - changes:
+      - Dockerfile
+      - requirements.txt
 
 #-------------------------------------------------------------------
 # Tag images using git tag
@@ -52,7 +55,6 @@ build_docker_tagged:
   extends: .tag_skopeo
   rules:
     - if: $CI_COMMIT_TAG
-  needs: ["build_docker"]
   variables:
     IMAGE_ORIGIN_TAG: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
     IMAGE_DESTINATION_TAG: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG}
