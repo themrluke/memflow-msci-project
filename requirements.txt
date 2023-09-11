@@ -5,6 +5,7 @@ pyaml
 requests
 matplotlib
 numpy
+pandas
 mplhep
 tqdm
 rich
