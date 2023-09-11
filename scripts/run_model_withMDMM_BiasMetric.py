@@ -488,6 +488,11 @@ if __name__ == '__main__':
                     flow_base_second_arg=conf.unfolding_flow.base_second_arg,
                     flow_bound=conf.unfolding_flow.bound,
                     use_latent=conf.conditioning_transformer.use_latent,
+                    affine_param_input1=conf.unfolding_flow.affine_param_input1,
+                    affine_param_input2=conf.unfolding_flow.affine_param_input2,
+                    affine_param_output1=conf.unfolding_flow.affine_param_output1,
+                    affine_param_output2=conf.unfolding_flow.affine_param_output2,
+                    randPerm=conf.unfolding_flow.randPerm,
                     device=device,
                     dtype=torch.float64)
     
