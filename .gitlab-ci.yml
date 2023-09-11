@@ -20,9 +20,10 @@ variables:
 .build_docker_template:
   extends: .build_kaniko
   only:
-    - pushes
-    - merge_requests
-    - changes:
+    refs:
+      - pushes
+      - merge_requests
+    changes:
       - Dockerfile
       - requirements.txt 
 
