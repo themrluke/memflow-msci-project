@@ -15,7 +15,8 @@ class UnfoldingFlow(nn.Module):
                 cond_nheadDecoder=4, cond_NoLayersDecoder=2, cond_NoDecoders=3, cond_aggregate=False,
                 flow_nfeatures=12, flow_ncond=34, flow_ntransforms=5, flow_hiddenMLP_NoLayers=16,
                 flow_hiddenMLP_LayerDim=128, flow_bins=16, flow_autoregressive=True, 
-                flow_base=BoxUniform, flow_base_first_arg=-1, flow_base_second_arg=1, flow_bound=1.,
+                flow_base=BoxUniform, flow_base_first_arg=-1, flow_base_second_arg=1, flow_bound=1., randPerm=False,
+                affine_param_input1=0., affine_param_input2=1., affine_param_output1=-1., affine_param_output2=1.,
                 device=torch.device('cpu'), dtype=torch.float64, model_path='', read_CondTransf=False, use_latent=False):
 
         super(UnfoldingFlow, self).__init__()
@@ -49,14 +50,14 @@ class UnfoldingFlow(nn.Module):
                               transforms=flow_ntransforms, 
                               bins=flow_bins, 
                               hidden_features=[flow_hiddenMLP_LayerDim]*flow_hiddenMLP_NoLayers, 
-                              randperm=False,
+                              randperm=randPerm,
                               base=eval(flow_base),
                               base_args=[torch.ones(flow_nfeatures)*flow_base_first_arg, torch.ones(flow_nfeatures)*flow_base_second_arg],
                               univariate_kwargs={"bound": flow_bound }, # Keeping the flow in the [-1,1] box.
                               passes= 2 if not flow_autoregressive else flow_nfeatures)
 
-        self.flow.transforms.insert(0, SimpleAffineTransform(0*torch.ones(flow_nfeatures),1*torch.ones(flow_nfeatures),
-                                                     -1*torch.ones(flow_nfeatures), 1*torch.ones(flow_nfeatures)))
+        self.flow.transforms.insert(0, SimpleAffineTransform(affine_param_input1*torch.ones(flow_nfeatures),affine_param_input2*torch.ones(flow_nfeatures),
+                                                     affine_param_output1*torch.ones(flow_nfeatures), affine_param_output2*torch.ones(flow_nfeatures)))
         
         
     def forward(self, mask_jets, mask_lepton_reco, mask_met, mask_boost_reco,
