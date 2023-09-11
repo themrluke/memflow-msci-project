@@ -22,6 +22,9 @@ variables:
   only:
     - pushes
     - merge_requests
+    - changes
+      - Dockerfile
+      - requirements.txt 
 
 #--------------------------------------------------------------------
 # Build images and tag with short commit SHA
