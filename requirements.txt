@@ -8,7 +8,7 @@ numpy
 mplhep
 tqdm
 rich
-torch==1.13.1
+#torch==1.13.1
 numba
 particle
 awkward>=2
