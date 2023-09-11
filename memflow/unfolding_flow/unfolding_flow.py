@@ -22,6 +22,7 @@ class UnfoldingFlow(nn.Module):
 
         self.log_mean = torch.tensor(log_mean, device=device)
         self.log_std = torch.tensor(log_std, device=device)
+        self.cond_aggregate = cond_aggregate
         
         self.cond_transformer = ConditioningTransformerLayer(
                                     no_jets = no_jets,
@@ -72,7 +73,9 @@ class UnfoldingFlow(nn.Module):
                 cond_X = self.cond_transformer(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
         else:
             cond_X = self.cond_transformer(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
-        if cond_aggregate:
+
+
+        if self.cond_aggregate:
             return cond_X
         else:
             
