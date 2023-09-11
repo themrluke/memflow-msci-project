@@ -34,6 +34,14 @@
 
 # Installation
 
+# Singularity image
+
+A singularity image is unpacked on the CVMFS system: `/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest`
+
+```
+apptainer shell --bind /afs -B /cvmfs/cms.cern.ch --bind /tmp  --bind /eos/cms/  /cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest
+```
+
 # Environment on lxplus-gpu
 
 ```
