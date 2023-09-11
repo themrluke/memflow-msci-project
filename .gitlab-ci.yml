@@ -20,8 +20,12 @@ variables:
 .build_docker_template:
   extends: .build_kaniko
   only:
-    - pushes
-    - merge_requests
+    refs:
+      - pushes
+      - merge_requests
+    changes:
+      - Dockerfile
+      - requirements.txt 
 
 #--------------------------------------------------------------------
 # Build images and tag with short commit SHA
@@ -40,6 +44,10 @@ build_docker_latest:
   variables:
     IMAGE_ORIGIN_TAG: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
     IMAGE_DESTINATION_TAG: ${CI_REGISTRY_IMAGE}:latest
+  rules:
+    - changes:
+      - Dockerfile
+      - requirements.txt
 
 #-------------------------------------------------------------------
 # Tag images using git tag
