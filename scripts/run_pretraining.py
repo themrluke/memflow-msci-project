@@ -64,7 +64,23 @@ def compute_losses(logScaled_partons, higgs, thad, tlep, cartesian, loss_fn, dev
     
     return lossH, lossThad, lossTlep
 
-def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss):
+def get_weights_eta(bins=[-4,-3,-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,3,4], partons):
+
+    h_bin = np.digitize(partons[:,0,1], bins=bins)
+    h_counts = np.bincount(h_bin)
+    weights_H = 1./h_counts[h_bin]
+
+    t_bin = np.digitize(partons[:,1,1], bins=bins)
+    t_counts = np.bincount(t_bin)
+    weights_t = 1./t_counts[t_bin]
+
+    tbar_bin = np.digitize(partons[:,2,1], bins=bins)
+    tbar_counts = np.bincount(tbar_bin)
+    weights_tbar = 1./tbar_counts[tbar_bin]
+
+    return weights_H, weights_t, weights_tbar
+
+def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss, partons):
     
     if HuberLoss:
         loss_fn = torch.nn.HuberLoss(delta=1.0)
@@ -93,6 +109,8 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
     log_mean = torch.tensor(config.scaling_params.log_mean, device=device)
     log_std = torch.tensor(config.scaling_params.log_std, device=device)
+
+    weights_H, weights_t, weights_tbar = get_weights_eta(bins=[-8,-3,-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,3,8], partons)
 
     for e in range(config.training_params.nepochs):
         
@@ -137,7 +155,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             writer.add_scalar('loss_Thad', lossThad.item(), ii)
             writer.add_scalar('loss_Tlep', lossTlep.item(), ii)
 
-            loss = lossH + lossThad + lossTlep
+            loss = weights_H*weights_t*weights_tbar*(lossH + lossThad + lossTlep)
             
             loss.backward()
             optimizer.step()
@@ -179,7 +197,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 lossH, lossThad, lossTlep = compute_losses(logScaled_partons, higgs, thad, tlep,
                                                         config.cartesian, loss_fn, device)
 
-                loss = lossH + lossThad + lossTlep
+                loss = weights_H*weights_t*weights_tbar*(lossH + lossThad + lossTlep)
 
                 valid_loss += loss.item()
                 valid_lossH += lossH.item()
@@ -293,6 +311,8 @@ if __name__ == '__main__':
 
     print(f"parameters total:{count_parameters(model)}\n")
 
+    partons = data.parton_data.data_higgs_t_tbar_ISR
+
     if (device == torch.device('cuda')):
         
         # TODO: split the data for multi-GPU processing
@@ -307,11 +327,11 @@ if __name__ == '__main__':
             #    nprocs=world_size,
             #    join=True,
             #)
-        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
+        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss, partons)
         #else:
         #    TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
     else:
-        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
+        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss, partons)
         
     
     print(f"Normal version: preTraining finished succesfully! Version: {conf.version}")
