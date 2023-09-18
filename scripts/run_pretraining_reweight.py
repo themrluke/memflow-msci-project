@@ -72,7 +72,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     else:
         loss_fn = torch.nn.MSELoss(reduction='none') 
     
-    optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
+    optimizer = optim.AdamW(list(model.parameters()) , lr=config.training_params.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=10)
     
     outputDir = os.path.abspath(outputDir)
@@ -113,11 +113,11 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             optimizer.zero_grad()
             
             (partons,
-            logScaled_partons, 
+            logScaled_partons, weight_event,
             logScaled_reco, mask_lepton_reco, 
             mask_jets, mask_met, 
-             mask_boost_reco, data_boost_reco, weight_event) = data
-            
+             mask_boost_reco, data_boost_reco) = data
+
             mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
 
             # remove prov
@@ -141,7 +141,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             writer.add_scalar('loss_Tlep', lossTlep.mean().item(), ii)
 
             loss = torch.sum(weight_event*(lossH + lossThad + lossTlep))/torch.sum(weight_event)
-            
+            print(loss)
             loss.backward()
             optimizer.step()
 
@@ -163,10 +163,10 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             with torch.no_grad():
 
                 (partons,
-                logScaled_partons, 
+                 logScaled_partons, weight_event,
                 logScaled_reco, mask_lepton_reco, 
                 mask_jets, mask_met, 
-                 mask_boost_reco, data_boost_reco,weight_event) = data
+                 mask_boost_reco, data_boost_reco) = data
                 
                 mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
 

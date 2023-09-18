@@ -505,7 +505,7 @@ class Dataset_PartonLevel(Dataset):
         index = np.stack([xind, yind, zind], axis=1)
 
         w = get_weight(w3d, index, Nbins)
-        torch.save(w, self.processed_file_names(
+        torch.save(torch.from_numpy(w), self.processed_file_names(
             "flattening_weight_HEta_tHadEta_tLepEta"))
 
     def __getitem__(self, index):

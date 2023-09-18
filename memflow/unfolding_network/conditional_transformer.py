@@ -84,7 +84,7 @@ class ConditioningTransformerLayer(nn.Module):
     def forward(self, batch_recoParticles, batch_boost, mask_recoParticles, mask_boost):
 
         batch_size = batch_recoParticles.size(0)
-        
+
         input_afterLin = self.gelu(self.lin_input(batch_recoParticles) * mask_recoParticles[:, :, None])
         boost_afterLin = self.gelu(self.lin_boost(batch_boost))
         

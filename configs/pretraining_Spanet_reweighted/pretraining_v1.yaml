@@ -7,7 +7,7 @@ noProv: true
 input_shape:
   number_jets: 16
   number_lept: 1
-  input_features: 4
+  input_features: 7  # now with 3 prov probabilities
 scaling_params:
   log_mean: [4.6710e+00, 2.8028e-05, 7.9478e-04]
   log_std: [0.9195, 1.2910, 1.8139]
@@ -36,7 +36,7 @@ conditioning_transformer:
   dim_feedforward_transformer: 1024
   nhead_encoder: 4
   no_layers_encoder: 5
-  nhead_decoder: 5
+  nhead_decoder: 4
   no_layers_decoder: 5
   aggregate: false
   no_decoders: 3
