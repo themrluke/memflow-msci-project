@@ -8,7 +8,11 @@ import awkward as ak
 
 import torch
 import numpy as np
+import hist
+from numba import njit
 torch.set_default_dtype(torch.double)
+
+from .utils import get_weight
 
 
 
@@ -64,6 +68,9 @@ class Dataset_PartonLevel(Dataset):
             self.data_higgs_t_tbar_ISR = torch.load(
                                     self.processed_file_names("H_thad_tlep_ISR"))
 
+            print("Create flattening weight"):
+            self.get_weight_flatetas()
+
             print("Create new file for data_higgs_t_tbar_ISR_cartesian_onShell")
             self.get_intermediateParticles_cartesian_onShell()
 
@@ -92,10 +99,17 @@ class Dataset_PartonLevel(Dataset):
             self.processed_file_names("boost"))
         self.data_higgs_t_tbar_ISR = torch.load(
             self.processed_file_names("H_thad_tlep_ISR"))
-        self.data_higgs_t_tbar_ISR_cartesian = torch.load(
-            self.processed_file_names("H_thad_tlep_ISR_cartesian"))
-        self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
-            self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
+
+        if "flattening_weight_HEta_tHadEta_tLepEta" in self.parton_list:
+            self.flattening_weight_HEta_tHadEta_tLepEta = torch.load(
+                self.processed_file_names("flattening_weight_HEta_tHadEta_tLepEta")
+            )
+
+        if "H_thad_tlep_ISR_cartesian" in self.parton_list:
+            self.data_higgs_t_tbar_ISR_cartesian = torch.load(
+                self.processed_file_names("H_thad_tlep_ISR_cartesian"))
+            self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
+                self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
         
         if 'phasespace_intermediateParticles' in self.parton_list:
             print("Load phasespace_intermediateParticles")
@@ -459,6 +473,40 @@ class Dataset_PartonLevel(Dataset):
         top_leptonic = W + prov3_partons[:, 0]
 
         return top_leptonic
+
+    def get_weight_flatetas(self):
+        dataCorrect = self.data_higgs_t_tbar_ISR
+        higgs = dataCorrect[:,0]
+        t = dataCorrect[:,1]
+        tbar = dataCorrect[:,2]
+        ISR = dataCorrect[:,3]
+        Nbins = 25
+
+        bins_h = np.linspace(-4,4, Nbins)
+        bins_t = np.linspace(-4,4, Nbins)
+        bins_tbar = np.linspace(-4,4, Nbins)
+        
+        h = Hist(
+            hist.axis.Variable( bins_h, name="h"),
+            hist.axis.Variable( bins_t, name="t"),
+            hist.axis.Variable( bins_tbar, name="tbar"),
+        )
+        h.fill(higgs[:,1], t[:,1], tbar[:,1])
+
+        w3d = np.where(
+            h.values()>0.,
+            (1/ h.values()) * len(higgs)/(Nbins**3), 
+            1.)
+        w3d[w3d>30] = 30
+        
+        xind = np.digitize(higgs[:,1],  bins_h,  right=False)-1
+        yind = np.digitize(t[:,1], bins_t,       right=False)-1
+        zind = np.digitize(tbar[:,1], bins_tbar, right=False)-1
+        index = np.stack([xind, yind, zind], axis=1)
+
+        w = get_weight(w3d, index)
+        torch.save(w, self.processed_file_names(
+            "flattening_weight_HEta_tHadEta_tLepEta"))
 
     def __getitem__(self, index):
                     

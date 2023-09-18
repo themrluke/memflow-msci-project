@@ -147,3 +147,17 @@ class Test():
             batch_pz = torch.unsqueeze(batch_pz, 1)
 
         return batch_pz
+
+
+@njit
+def get_weight(weights, index):
+    out = np.ones(len(index))
+    i =0
+    for a,b,c in index:
+        #print(a,b,c)
+        if (a<0) or a>=(Nbins-1) or (b<0) or b>=(Nbins-1) or (c<0) or c>=(Nbins-1):
+            out[i] = 1.
+        else:
+            out[i] = weights[a, b, c]
+        i+=1
+    return out
