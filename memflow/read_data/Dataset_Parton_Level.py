@@ -68,7 +68,7 @@ class Dataset_PartonLevel(Dataset):
             self.data_higgs_t_tbar_ISR = torch.load(
                                     self.processed_file_names("H_thad_tlep_ISR"))
 
-            print("Create flattening weight"):
+            print("Create flattening weight")
             self.get_weight_flatetas()
 
             print("Create new file for data_higgs_t_tbar_ISR_cartesian_onShell")
@@ -486,7 +486,7 @@ class Dataset_PartonLevel(Dataset):
         bins_t = np.linspace(-4,4, Nbins)
         bins_tbar = np.linspace(-4,4, Nbins)
         
-        h = Hist(
+        h = hist.Hist(
             hist.axis.Variable( bins_h, name="h"),
             hist.axis.Variable( bins_t, name="t"),
             hist.axis.Variable( bins_tbar, name="tbar"),
@@ -504,7 +504,7 @@ class Dataset_PartonLevel(Dataset):
         zind = np.digitize(tbar[:,1], bins_tbar, right=False)-1
         index = np.stack([xind, yind, zind], axis=1)
 
-        w = get_weight(w3d, index)
+        w = get_weight(w3d, index, Nbins)
         torch.save(w, self.processed_file_names(
             "flattening_weight_HEta_tHadEta_tLepEta"))
 

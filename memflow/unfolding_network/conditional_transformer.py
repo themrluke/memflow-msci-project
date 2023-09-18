@@ -10,7 +10,10 @@ class ConditioningTransformerLayer(nn.Module):
                  nhead_decoder, no_layers_decoder,
                  no_decoders,
                  dim_feedforward_transformer=512,
-                 aggregate=True, use_latent=False, dtype=torch.float32):
+                 aggregate=True, use_latent=False,
+                 out_features_latent=None,
+                 no_layers_decoder_latent=None,
+                 dtype=torch.float32):
         super().__init__()
 
         self.nhead_encoder = nhead_encoder
@@ -42,6 +45,8 @@ class ConditioningTransformerLayer(nn.Module):
       
         self.aggregate = aggregate
         if self.aggregate:
+
+            self.transformer_decoder
             self.output_proj = nn.Linear(in_features=hidden_features, out_features=out_features-2)
         else:
             # do not aggregate but use the transformer encoder output to produce more decoded outputs\
@@ -58,7 +63,12 @@ class ConditioningTransformerLayer(nn.Module):
                                        for i in range(no_decoders)])
 
             if self.use_latent:
-                self.latent_proj = nn.Linear(in_features=hidden_features, out_features=out_features)
+                # Additional latent vector that is not linked to a parton regression.
+                # it is separated cause it can have different number of output features
+                self.out_features_latent = out_features_latent
+                self.no_layers_decoder_latent = no_layers_decoder_latent
+                self.latent_decoder = nn.TransformerEncoder(decoder_layer, num_layers=no_layers_decoder_latent)
+                self.latent_proj = nn.Linear(in_features=hidden_features, out_features=out_features_latent)
             
         
         self.register_buffer('ones', torch.ones(no_jets, 1))
@@ -68,9 +78,7 @@ class ConditioningTransformerLayer(nn.Module):
         
 
     def reset_parameters(self):
-        self.lin_jet.reset_parameters()
-        self.lin_lept.reset_parameters()
-        self.lin_met.reset_parameters()
+        self.lin_input.reset_parameters()
         self.lin_boost.reset_parameters()
 
     def forward(self, batch_recoParticles, batch_boost, mask_recoParticles, mask_boost):
@@ -122,13 +130,15 @@ class ConditioningTransformerLayer(nn.Module):
                     ou_deco * torch.unsqueeze(transformer_mask, -1), dim=1)  #[B, 64]
                 
                 conditional_out = transformer_output_sum / N_valid_objects
-                
                 decoder_outputs.append(proj(self.gelu(conditional_out)))
 
             if self.use_latent:
+                # Applying the latent decoder
+                ou_deco_latent = self.latent_decoder(transformer_output, src_key_padding_mask=tmask)
+                # Aggregate
                 transformer_latent_sum = torch.sum(
-                    transformer_output * torch.unsqueeze(transformer_mask, -1), dim=1)  #[B, 64]
-
+                    ou_deco_latent * torch.unsqueeze(transformer_mask, -1), dim=1)  #[B, 64]
+                # project
                 latent_out = transformer_latent_sum / N_valid_objects
 
                 decoder_outputs.append(self.latent_proj(self.gelu(latent_out)))

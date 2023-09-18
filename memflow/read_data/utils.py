@@ -150,7 +150,7 @@ class Test():
 
 
 @njit
-def get_weight(weights, index):
+def get_weight(weights, index, Nbins):
     out = np.ones(len(index))
     i =0
     for a,b,c in index:
