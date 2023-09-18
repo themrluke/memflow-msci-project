@@ -141,7 +141,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             writer.add_scalar('loss_Tlep', lossTlep.mean().item(), ii)
 
             loss = torch.sum(weight_event*(lossH + lossThad + lossTlep))/torch.sum(weight_event)
-            print(loss)
+            # print(loss)
             loss.backward()
             optimizer.step()
 
