@@ -56,8 +56,8 @@ class UnfoldingFlow(nn.Module):
                               univariate_kwargs={"bound": flow_bound }, # Keeping the flow in the [-1,1] box.
                               passes= 2 if not flow_autoregressive else flow_nfeatures)
 
-        self.flow.transforms.insert(0, SimpleAffineTransform(affine_param_input1*torch.ones(flow_nfeatures),affine_param_input2*torch.ones(flow_nfeatures),
-                                                     affine_param_output1*torch.ones(flow_nfeatures), affine_param_output2*torch.ones(flow_nfeatures)))
+        #self.flow.transforms.insert(0, SimpleAffineTransform(affine_param_input1*torch.ones(flow_nfeatures),affine_param_input2*torch.ones(flow_nfeatures),
+        #                                             affine_param_output1*torch.ones(flow_nfeatures), affine_param_output2*torch.ones(flow_nfeatures)))
         
         
     def forward(self, mask_jets, mask_lepton_reco, mask_met, mask_boost_reco,
