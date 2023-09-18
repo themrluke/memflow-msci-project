@@ -12,7 +12,7 @@ class Dataset_RecoLevel(Dataset):
                  dtype=None, build=False, reco_list=[]):
 
         self.fields = {
-            "jets": ["pt", "eta", "phi", "btag","prov"],#"prov_Thad", "prov_Tlep", "prov_H", "prov"],
+            "jets": ["pt", "eta", "phi", "btag","prov_Thad", "prov_Tlep", "prov_H", "prov"],
             "lepton_reco": ["pt", "eta", "phi"],
             "met": ["pt", "eta", "phi"],
             "boost": ["E", "px", "py", "pz"],
@@ -25,7 +25,7 @@ class Dataset_RecoLevel(Dataset):
         
         self.root = root
         if root.endswith(".parquet"):
-            self.rootDir = os.path.dirname(root)
+            self.rootDir = root.replace(".parquet","")
         else:
             self.rootDir = root
 
@@ -129,7 +129,7 @@ class Dataset_RecoLevel(Dataset):
             jets = ak.with_name(jets, name="Momentum4D")
 
             leptons = df["lepton_reco"]
-            leptons = ak.with_name(leptons, name="Momentum4D")#[:,0] # takingthe leading lepton
+            leptons = ak.with_name(leptons, name="Momentum4D")[:,0] # takingthe leading lepton
 
             met = df["met"]
             met = ak.with_name(met, name="Momentum4D")
@@ -185,9 +185,9 @@ class Dataset_RecoLevel(Dataset):
             if object_type == "jets":
                 objects = self.Reshape(objects, utils.struct_jets, 1)
 
-            # if object_type == "lepton_reco":
-            #     # taking the leading lepton
-            #     objects = objects[:,0]
+            if object_type == "lepton_reco":
+                # taking the leading lepton
+                objects = objects[:,0]
             
             d_list = utils.to_flat_numpy(
                 objects, self.fields[object_type], axis=1, allow_missing=False)

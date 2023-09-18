@@ -31,7 +31,7 @@ class Dataset_PartonLevel(Dataset):
 
         self.root = root
         if root.endswith(".parquet"):
-            self.rootDir = os.path.dirname(root)
+            self.rootDir = root.replace(".parquet","")
         else:
             self.rootDir = root            
 
@@ -165,7 +165,7 @@ class Dataset_PartonLevel(Dataset):
             leptons = ak.with_name(leptons, name="Momentum4D")
 
             higgs = df["higgs"]
-            higgs = ak.with_name(higgs, name="Momentum4D")[:,0]
+            higgs = ak.with_name(higgs, name="Momentum4D")[:,0] # for the new dataset format
 
             partons_boosted = self.boost_CM(partons, boost)
             leptons_boosted = self.boost_CM(leptons, boost)

@@ -18,3 +18,5 @@ tensorboardX
 pyarrow
 fsspec
 pynvml
+jupyter
+correctionlib
