@@ -50,8 +50,16 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     N_train = len(trainingLoader)
     N_valid = len(validLoader)
 
+   
     # Define the constraint
     constraint = mdmm.MaxConstraint(
+                    compute_losses,
+                    max=1.27, # to be modified based on the regression
+                    scale=config.MDMM.eps_regression,
+                    damping=5,
+                    )
+
+    constraint_bias = mdmm.MaxConstraint(
                     BiasLoss_Std,
                     max=0.01, # to be modified based on the regression
                     scale=config.MDMM.eps_stdMean,
@@ -60,10 +68,12 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
     # Create the optimizer
     MDMM_module = mdmm.MDMM([constraint]) # support many constraints TODO: use a constraint for every particle
+    MDMM_module_bias = mdmm.MDMM([constraint_bias]) # support many constraints TODO: use a constraint for every particle
+    
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=10)
     
-    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_stdMean}'
+    name_dir = f'{outputDir}/results_{config.name}_{config.version}_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_stdMean}'
     modelName = f"{name_dir}/model_flow.pt"
     writer = SummaryWriter(name_dir)
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
@@ -88,6 +98,8 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
             else:
                 sampling_Forward = True
                 no_iterations = config.training_params.subsplit
+        else:
+            no_iterations = 1
     
         # training loop    
         print("Before training loop")
@@ -169,6 +181,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                         std_sum_loss += std_BiasOverRambo.item()
 
                     else:
+                        # breakpoint()
                         flow_prob = model.flow(PS_regressed).log_prob(PS_target[firstElem:lastElem])
                         flow_loss = -flow_prob
 
@@ -340,7 +353,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-dir', type=str, required=True, help='path to config.yaml File')
+    parser.add_argument('--config', type=str, required=True, help='path to config.yaml File')
     parser.add_argument('--output-dir', type=str, required=True, help='path to output directory')
     parser.add_argument('--on-GPU', action="store_true",  help='run on GPU boolean')
     parser.add_argument('--alternativeTr', action="store_true",  help='Use Alternative Training')
@@ -348,15 +361,12 @@ if __name__ == '__main__':
     parser.add_argument('--disable-grad-CondTransformer', action="store_true",  help='Propagate gradients for ConditionalTransformer')
     args = parser.parse_args()
     
-    path_to_dir = args.model_dir
-    output_dir = f'{args.model_dir}/{args.output_dir}'
+    output_dir = args.output_dir
     on_GPU = args.on_GPU # by default run on CPU
     alternativeTr = args.alternativeTr # by default do the training in a specific direction
     disableGradTransf = args.disable_grad_CondTransformer
 
-
-    path_to_conf = glob.glob(f"{path_to_dir}/*.yaml")[0]
-    path_to_model = glob.glob(f"{path_to_dir}/model*.pt")[0]
+    path_to_conf = args.config
 
     if (args.path_config is not None):
         path_to_conf = args.path_config
@@ -399,8 +409,8 @@ if __name__ == '__main__':
     val_loader = DataLoader(dataset=val_subset, shuffle=True, batch_size=conf.training_params.batch_size_validation)
     
     # Initialize model
-    model = UnfoldingFlow(model_path=path_to_model,
-                    read_CondTransf=True,
+    model = UnfoldingFlow(model_path=None,
+                    read_CondTransf=False,
                     log_mean = conf.scaling_params.log_mean,
                     log_std = conf.scaling_params.log_std,
                     no_jets=conf.input_shape.number_jets,

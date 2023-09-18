@@ -64,21 +64,6 @@ def compute_losses(logScaled_partons, higgs, thad, tlep, cartesian, loss_fn, dev
     
     return lossH, lossThad, lossTlep
 
-def get_weights_eta(partons, bins=[-4,-3,-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,3,4]):
-
-    h_bin = np.digitize(partons[:,0,1], bins=bins)
-    h_counts = np.bincount(h_bin)
-    weights_H = 1./h_counts[h_bin]
-
-    t_bin = np.digitize(partons[:,1,1], bins=bins)
-    t_counts = np.bincount(t_bin)
-    weights_t = 1./t_counts[t_bin]
-
-    tbar_bin = np.digitize(partons[:,2,1], bins=bins)
-    tbar_counts = np.bincount(tbar_bin)
-    weights_tbar = 1./tbar_counts[tbar_bin]
-
-    return weights_H, weights_t, weights_tbar
 
 def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss):
     
@@ -92,7 +77,8 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     
     outputDir = os.path.abspath(outputDir)
     latentSpace = config.conditioning_transformer.use_latent
-    name_dir = f'{outputDir}/preTraining_noProv:{config.noProv}_cartesian:{config.cartesian}_HuberLoss:{HuberLoss}_latent_space:{latentSpace}_hiddenFeatures:{config.conditioning_transformer.hidden_features}_dimFeedForward:{config.conditioning_transformer.dim_feedforward_transformer}_nheadEnc:{config.conditioning_transformer.nhead_encoder}_LayersEnc:{config.conditioning_transformer.no_layers_encoder}_nheadDec:{config.conditioning_transformer.nhead_decoder}_LayersDec:{config.conditioning_transformer.no_layers_decoder}'
+    
+    name_dir = f'{outputDir}/preTraining_results_{config.name}_{config.version}_noProv:{config.noProv}_cartesian:{config.cartesian}_HuberLoss:{HuberLoss}_latent_space:{latentSpace}_hiddenFeatures:{config.conditioning_transformer.hidden_features}_dimFeedForward:{config.conditioning_transformer.dim_feedforward_transformer}_nheadEnc:{config.conditioning_transformer.nhead_encoder}_LayersEnc:{config.conditioning_transformer.no_layers_encoder}_nheadDec:{config.conditioning_transformer.nhead_decoder}_LayersDec:{config.conditioning_transformer.no_layers_decoder}'
     
     writer = SummaryWriter(name_dir)
 
@@ -130,13 +116,9 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             logScaled_partons, 
             logScaled_reco, mask_lepton_reco, 
             mask_jets, mask_met, 
-            mask_boost_reco, data_boost_reco) = data
+             mask_boost_reco, data_boost_reco, weight_event) = data
             
             mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
-
-            weights_H, weights_t, weights_tbar = get_weights_eta(partons, bins=[-8,-3,-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,3,8])
-            weight_event = weights_H*weights_t*weights_tbar
-            weight_event = torch.from_numpy(weight_event)
 
             # remove prov
             if (config.noProv):
@@ -184,13 +166,9 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 logScaled_partons, 
                 logScaled_reco, mask_lepton_reco, 
                 mask_jets, mask_met, 
-                mask_boost_reco, data_boost_reco) = data
+                 mask_boost_reco, data_boost_reco,weight_event) = data
                 
                 mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
-
-                weights_H, weights_t, weights_tbar = get_weights_eta(partons, bins=[-8,-3,-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,3,8])
-                weight_event = weights_H*weights_t*weights_tbar
-                weight_event = torch.from_numpy(weight_event)
 
                 # remove prov
                 if (config.noProv):
@@ -289,7 +267,8 @@ if __name__ == '__main__':
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
                                 parton_list=['data_higgs_t_tbar_ISR',
-                                            'logScaled_data_higgs_t_tbar_ISR'])
+                                             'logScaled_data_higgs_t_tbar_ISR',
+                                             'flattening_weight_HEta_tHadEta_tLepEta'])
 
     # split data for training sample and validation sample
     train_subset, val_subset = torch.utils.data.random_split(
@@ -313,6 +292,8 @@ if __name__ == '__main__':
                                     no_decoders=conf.conditioning_transformer.no_decoders,
                                     aggregate=conf.conditioning_transformer.aggregate,
                                     use_latent=conf.conditioning_transformer.use_latent,
+                                    out_features_latent=conf.conditioning_transformer.out_features_latent,
+                                    no_layers_decoder_latent=conf.conditioning_transformer.no_layers_decoder_latent,     
                                     dtype=torch.float64)
 
     # Copy model on GPU memory
