@@ -1,0 +1,58 @@
+name: preTraining-SPANET-v1
+version: v1
+description: ''
+input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/MEMFlow/all_jets_fullRun2_v1.parquet
+cartesian: false
+noProv: true
+input_shape:
+  number_jets: 16
+  number_lept: 1
+  input_features: 4
+scaling_params:
+  log_mean: [4.6831e+00, -1.2350e-04,  3.3137e-04]
+  log_std: [0.9240, 1.2891, 1.8136]
+training_params:
+  lr: 0.0001
+  batch_size_training: 1024
+  batch_size_validation: 1024
+  subsplit: 8
+  nepochs: 1000
+  training_sample: 0.8
+  validation_sample: 0.2
+  sampling_points_loss: 150
+  percentage_sampling_epoch: 0.2
+  sampling_points: 100
+  nEpochsPatience: 40
+  eps: 1.0e-05
+  order:
+  - 0
+  - 1
+  - 2
+  - 3
+  sampling_Forward: false
+conditioning_transformer:
+  out_features: 16
+  hidden_features: 64
+  dim_feedforward_transformer: 1024
+  nhead_encoder: 8
+  no_layers_encoder: 8
+  nhead_decoder: 8
+  no_layers_decoder: 6
+  aggregate: true
+  no_decoders: 3
+  use_latent: true
+unfolding_flow:
+  nfeatures: 10
+  ncond: 16
+  ntransforms: 20
+  hiddenMLP_NoLayers: 6
+  hiddenMLP_LayerDim: 128
+  bins: 30
+  autoregressive: false
+  base: DiagNormal
+  base_first_arg: 0
+  base_second_arg: 0.3
+  bound: 1.0
+MDMM:
+  eps_stdMean: 1.5
+  eps_regression: 0.8
