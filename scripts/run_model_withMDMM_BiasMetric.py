@@ -118,7 +118,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
         loss_fn = torch.nn.MSELoss()
     
     outputDir = os.path.abspath(outputDir)
-    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_regression}'
+    name_dir = f'{outputDir}/results_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Logit:{config.unfolding_flow.logit}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_regression}'
     modelName = f"{name_dir}/model_flow.pt"
     writer = SummaryWriter(name_dir)
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
@@ -130,6 +130,8 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     sampling_Forward = config.training_params.sampling_Forward
     N_samplesLoss = config.training_params.sampling_points_loss
     no_iterations = 1
+
+    eps_logit = 5e-5
     
     for e in range(config.training_params.nepochs):
         
@@ -165,11 +167,18 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
             mask_jets, mask_met, 
             mask_boost_reco, data_boost_reco) = data
 
-            mask0 = PS_target < 0
-            mask1 = PS_target > 1
-            if (mask0.any() or mask1.any()):
-                print('PS target < 0 or > 1')
-                exit(0)
+            if (config.unfolding_flow.logit):
+                mask0 = PS_target < eps_logit
+                mask1 = PS_target > 1-eps_logit
+                PS_target[mask0] = eps_logit
+                PS_target[mask1] = 1-eps_logit
+                PS_target = torch.logit(PS_target)
+            else:
+                mask0 = PS_target < 0
+                mask1 = PS_target > 1
+                if (mask0.any() or mask1.any()):
+                    print('PS target < 0 or > 1')
+                    exit(0)
 
             # here i start to subsplit -> do this because too much memory is required to sample
             # if the batch size is kept fixed (like in NormalizingDirection training))
@@ -192,6 +201,13 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                                                 logScaled_reco=logScaled_reco[firstElem:lastElem], data_boost_reco=data_boost_reco[firstElem:lastElem], 
                                                 device=device, noProv=config.noProv, eps=config.training_params.eps,
                                                 order=config.training_params.order, disableGradTransformer=disableGradTransformer)
+
+                    if (config.unfolding_flow.logit):
+                        mask0 = PS_regressed < eps_logit
+                        mask1 = PS_regressed > 1-eps_logit
+                        PS_regressed[mask0] = eps_logit
+                        PS_regressed[mask1] = 1-eps_logit
+                        PS_regressed = torch.logit(PS_regressed)
 
                     detjac = PS_rambo_detjacobian[firstElem:lastElem].log()
 
@@ -276,6 +292,19 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
             mask_jets, mask_met, 
             mask_boost_reco, data_boost_reco) = data
 
+            if (config.unfolding_flow.logit):
+                mask0 = PS_target < eps_logit
+                mask1 = PS_target > 1-eps_logit
+                PS_target[mask0] = eps_logit
+                PS_target[mask1] = 1-eps_logit
+                PS_target = torch.logit(PS_target)
+            else:
+                mask0 = PS_target < 0
+                mask1 = PS_target > 1
+                if (mask0.any() or mask1.any()):
+                    print('PS target < 0 or > 1')
+                    exit(0)
+
             with torch.no_grad():
 
                 for ii in range(no_iterations):
@@ -294,6 +323,13 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                                                 logScaled_reco=logScaled_reco[firstElem:lastElem], data_boost_reco=data_boost_reco[firstElem:lastElem], 
                                                 device=device, noProv=config.noProv, eps=config.training_params.eps,
                                                 order=config.training_params.order, disableGradTransformer=disableGradTransformer)
+
+                    if (config.unfolding_flow.logit):
+                        mask0 = PS_regressed < eps_logit
+                        mask1 = PS_regressed > 1-eps_logit
+                        PS_regressed[mask0] = eps_logit
+                        PS_regressed[mask1] = 1-eps_logit
+                        PS_regressed = torch.logit(PS_regressed)
 
                     detjac = PS_rambo_detjacobian[firstElem:lastElem].log()
 
@@ -356,16 +392,16 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                         fig, ax = plt.subplots()
                         h = ax.hist2d(data_ps_cpu[:,x].tile(N_samples,1,1).flatten().numpy(),
                                         ps_new_cpu[:,:,x].flatten().numpy(),
-                                        bins=50, range=((-1.5, 1.5),(-1.5, 1.5)))
+                                        bins=50, range=((-12, 12),(-12, 12)))
                         fig.colorbar(h[3], ax=ax)
                         writer.add_figure(f"CheckElemOutside_Plot_{x}", fig, e)
 
-                        fig, ax = plt.subplots()
-                        h = ax.hist2d(data_ps_cpu[:,x].tile(N_samples,1,1).flatten().numpy(),
-                                    ps_new_cpu[:,:,x].flatten().numpy(),
-                                    bins=50, range=((-0.1, 1.1),(-0.1, 1.1)))
-                        fig.colorbar(h[3], ax=ax)
-                        writer.add_figure(f"Validation_ramboentry_Plot_{x}", fig, e)
+                        #fig, ax = plt.subplots()
+                        #h = ax.hist2d(data_ps_cpu[:,x].tile(N_samples,1,1).flatten().numpy(),
+                        #            ps_new_cpu[:,:,x].flatten().numpy(),
+                        #            bins=50, range=((-0.1, 1.1),(-0.1, 1.1)))
+                        #fig.colorbar(h[3], ax=ax)
+                        #writer.add_figure(f"Validation_ramboentry_Plot_{x}", fig, e)
 
                         fig, ax = plt.subplots()
                         h = ax.hist(
