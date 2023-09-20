@@ -285,7 +285,7 @@ if __name__ == '__main__':
                                     no_decoders=conf.conditioning_transformer.no_decoders,
                                     aggregate=conf.conditioning_transformer.aggregate,
                                     use_latent=conf.conditioning_transformer.use_latent,
-                                         out_features_latent=conf.conditioning_transformer.out_features_latent,
+                                    out_features_latent=conf.conditioning_transformer.out_features_latent,
                                     no_layers_decoder_latent=conf.conditioning_transformer.no_layers_decoder_latent,     
                                     dtype=torch.float64)
 
