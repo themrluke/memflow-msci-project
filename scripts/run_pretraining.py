@@ -71,8 +71,11 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     else:
         loss_fn = torch.nn.MSELoss() 
     
-    optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=10)
+    # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
+    optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
+    # scheduler = CosineAnnealingLR(optimizer, T_max=10)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
+    
     
     outputDir = os.path.abspath(outputDir)
     latentSpace = config.conditioning_transformer.use_latent
