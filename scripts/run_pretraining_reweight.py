@@ -72,7 +72,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     else:
         loss_fn = torch.nn.MSELoss(reduction='none') 
     
-    optimizer = optim.AdamW(list(model.parameters()) , lr=config.training_params.lr)
+    optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr) #back to Adam
     scheduler = CosineAnnealingLR(optimizer, T_max=10)
     
     outputDir = os.path.abspath(outputDir)
@@ -188,7 +188,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 valid_loss += loss.item()
                 valid_lossH += lossH.mean().item()
                 valid_lossTlep += lossTlep.mean().item()
-                valid_lossThad += lossThad.mean().item()
+                valid_lossThad += lossThad.mean().item()x1
 
                 particle_list = [higgs, thad, tlep]
                 
