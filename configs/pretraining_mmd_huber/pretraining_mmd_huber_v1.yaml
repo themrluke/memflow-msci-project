@@ -14,8 +14,8 @@ scaling_params:
   log_std: [0.9195, 1.2910, 1.8139]
 training_params:
   lr: 0.0001
-  batch_size_training: 512
-  batch_size_validation: 2048
+  batch_size_training: 256
+  batch_size_validation: 512
   subsplit: 8
   nepochs: 1000
   training_sample: 0.9
@@ -59,5 +59,5 @@ unfolding_flow:
   bound: 1.5
 MDMM:
   max_huber: 0.1
-  scale_huber : 0.2
+  scale_huber : 1
   dumping_huber: 1.

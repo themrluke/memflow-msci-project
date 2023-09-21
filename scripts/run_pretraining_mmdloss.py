@@ -75,6 +75,15 @@ def compute_losses(logScaled_partons, higgs, thad, tlep, cartesian, loss_fn,
         return  (lossH + lossThad + lossTlep)/9
 
 
+def compute_mmd_loss(mmd_input, mmd_target, kernel, device, split=False):
+    mmds = []
+    for particle in range(mmd_input.shape[1]):
+        mmds.append(MMD(mmd_input[:,particle], mmd_target[:,particle], kernel, device ))
+    if split:
+        return mmds
+    else:
+        return sum(mmds)
+
 def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss):
 
 
@@ -152,33 +161,39 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             higgs = out[0]
             thad = out[1]
             tlep = out[2]
-            MMD_input = torch.cat((higgs, thad, tlep), dim=1)
+            MMD_input = torch.cat((higgs.unsqueeze(1),
+                                   thad.unsqueeze(1),
+                                   tlep.unsqueeze(1)), dim=1)
             # compute gluon
             #HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(out, log_mean,
                                                                                          # log_std, device,
                                                                                          # cartesian=False,
                                                                                          # eps=1e-5)
             #gluon = HttISR_regressed[:,-3:]
-            
-            MMD_target = logScaled_partons[:,0:3].flatten(1)
-            
-            mmd_loss = MMD(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel, device=device)
+            MMD_target = logScaled_partons[:,0:3]
+            mmd_loss = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel,
+                                        device=device, split=False)
             
             mdmm_return = MDMM_module(mmd_loss, [(logScaled_partons, higgs, thad, tlep, 
                                                   config.cartesian, loss_fn, [log_mean[2], log_std[2]],
                                                    device)])
             loss_final = mdmm_return.value
-            print(f"MMD loss: {mmd_loss.item()}, huber loss {mdmm_return.fn_values}, loss tot{loss_final.item()}")
+            #print(f"MMD loss: {mmd_loss.item()}, huber loss {mdmm_return.fn_values}, loss tot{loss_final.item()}")
             loss_final.backward()
             optimizer.step()
 
             with torch.no_grad():
+
+                mmd_loss_H, mmd_loss_thad, mmd_loss_tlep = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel, device=device, split=True)
                 lossH, lossThad, lossTlep = compute_losses(logScaled_partons, higgs, thad, tlep,
                                                 config.cartesian, loss_fn,
                                             scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
                                                 split=True,
                                                 device=device)
-                
+
+                writer.add_scalar('loss_mmd_H', mmd_loss_H.item(), ii)
+                writer.add_scalar('loss_mmd_thad', mmd_loss_thad.item(), ii)
+                writer.add_scalar('loss_mmd_tlep', mmd_loss_tlep.item(), ii)
                 writer.add_scalar('loss_huber_H', lossH.item()/3, ii)
                 writer.add_scalar('loss_huber_Thad', lossThad.item()/3, ii)
                 writer.add_scalar('loss_huber_Tlep', lossTlep.item()/3, ii)
@@ -192,16 +207,19 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             # optimizer.step()
 
             sum_loss += loss_final.item()
-
-            writer.add_scalar("Loss_total_step_train", loss_final.item(), ii)
+            #writer.add_scalar("Loss_total_step_train", loss_final.item(), ii)
         
-        writer.add_scalar('Loss_total_epoch_train', sum_loss/N_train, e)
+        writer.add_scalar('Loss_epoch_total_train', sum_loss/N_train, e)
         valid_loss_huber = 0.
         valid_loss_mmd = 0.
         valid_lossH = 0.
         valid_lossTlep = 0.
         valid_lossThad = 0.
         valid_lossGluon = 0.
+        valid_loss_final = 0.
+        valid_mmd_H = 0.
+        valid_mmd_thad = 0.
+        valid_mmd_tlep = 0.
  
         # validation loop (don't update weights and gradients)
         print("Before validation loop")
@@ -226,7 +244,9 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 higgs = out[0]
                 thad = out[1]
                 tlep = out[2]
-                MMD_input = torch.cat((higgs, thad, tlep), dim=1)
+                MMD_input = torch.cat((higgs.unsqueeze(1),
+                                       thad.unsqueeze(1),
+                                       tlep.unsqueeze(1)), dim=1)
                 # compute gluon
                 # HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(out, log_mean,
                 #                                                                          log_std, device,
@@ -234,9 +254,11 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 #                                                                          eps=1e-5)
                 # gluon = HttISR_regressed[:,-3:]
                 
-                MMD_target = logScaled_partons[:,0:3].flatten(1)
-                mmd_loss = MMD(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel, device=device)
-                
+                MMD_target = logScaled_partons[:,0:3]
+                mmd_loss_H, mmd_loss_thad, mmd_loss_tlep = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel,
+                                            device=device, split=True)
+                mmd_loss = mmd_loss_H+ mmd_loss_thad + mmd_loss_tlep
+                                
                 mdmm_return = MDMM_module(mmd_loss, [(logScaled_partons, higgs, thad, tlep,
                                                       config.cartesian, loss_fn, [log_mean[2], log_std[2]],
                                                       device)])
@@ -248,7 +270,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                                            device=device)
 
                 loss_huber = (lossH + lossThad + lossTlep)/9
-                print(f"validation loss:{loss.item()}")
+                #print(f"validation loss:{loss.item()}")
 
                 valid_loss_huber += loss_huber.item()
                 valid_lossH += lossH.item()/3
@@ -256,7 +278,11 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 valid_lossThad += lossThad.item()/3
                 # valid_lossGluon += lossGluon.item()/3
                 valid_loss_mmd += mmd_loss.item()
-                
+                valid_mmd_H += mmd_loss_H.item()
+                valid_mmd_thad += mmd_loss_thad.item()
+                valid_mmd_tlep += mmd_loss_tlep.item()
+            
+                valid_loss_final += mdmm_return.value.item()
 
                 particle_list = [higgs, thad, tlep]
                 
@@ -278,19 +304,23 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                          logScaled_partons[:,particle,feature].detach().cpu().numpy()), bins=100)
                             writer.add_figure(f"Validation_particleNo_{particle}__Feature_{feature}_Diff", fig, e)
          
-
+        writer.add_scalar("Loss_epoch_total_val", valid_loss_final/N_valid, e )
         writer.add_scalar("Loss_epoch_mmd_val", valid_loss_mmd/N_valid, e)
         writer.add_scalar('Loss_epoch_huber_val', valid_loss_huber/N_valid, e)
         writer.add_scalar('Loss_epoch_huber_val_H', valid_lossH/N_valid, e)
         writer.add_scalar('Loss_epoch_huber_val_Tlep', valid_lossTlep/N_valid, e)
         writer.add_scalar('Loss_epoch_huber_val_Thad', valid_lossThad/N_valid, e)
+        write.add_scalar("Loss_epoch_mmd_val_H", valid_mmd_H/N_valid, e)
+        write.add_scalar("Loss_epoch_mmd_val_thad", valid_mmd_thad/N_valid, e)
+        write.add_scalar("Loss_epoch_mmd_val_tlep", valid_mmd_tlep/N_valid, e)
         # writer.add_scalar('Loss_epoch_huber_val_Gluon', valid_lossGluon/N_valid, e)
 
-        if early_stopper.early_stop(valid_loss, model.state_dict(), optimizer.state_dict(), modelName):
+        if early_stopper.early_stop(valid_loss_final/N_valid,
+                                    model.state_dict(), optimizer.state_dict(), modelName):
             print(f"Model converges at epoch {e} !!!")         
             break
 
-        scheduler.step(valid_loss) # reduce lr if the model is not improving anymore
+        scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
 
     writer.close()
 
