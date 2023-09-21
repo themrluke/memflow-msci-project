@@ -146,6 +146,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     log_mean = torch.tensor(config.scaling_params.log_mean, device=device)
     log_std = torch.tensor(config.scaling_params.log_std, device=device)
 
+    ii = 0
     for e in range(config.training_params.nepochs):
         
         sum_loss = 0.
@@ -154,6 +155,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
         print("Before training loop")
         model.train()
         for i, data in enumerate(trainingLoader):
+            ii+=1
             if (i % 100 == 0):
                 print(i)
 
@@ -211,15 +213,15 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 #                                 split=True,
                 #                                 device=device)
 
-                exp.log_metric("loss_mmd_H", mmd_loss_H.item())
-                exp.log_metric('loss_mmd_thad', mmd_loss_thad.item())
-                exp.log_metric('loss_mmd_tlep', mmd_loss_tlep.item())
-                exp.log_metric('loss_mmd_tot', (mmd_loss_H+mmd_loss_thad + mmd_loss_tlep).item()/3)
-                exp.log_metric('loss_huber_H', lossH.item()/3)
-                exp.log_metric('loss_huber_Thad', lossThad.item()/3)
-                exp.log_metric('loss_huber_Tlep', lossTlep.item()/3)
-                exp.log_metric('loss_huber_tot', regr_loss.item())
-                exp.log_metric('loss_tot_train', loss_final.item())
+                exp.log_metric("loss_mmd_H", mmd_loss_H.item(),step=ii)
+                exp.log_metric('loss_mmd_thad', mmd_loss_thad.item(),step=ii)
+                exp.log_metric('loss_mmd_tlep', mmd_loss_tlep.item(),step=ii)
+                exp.log_metric('loss_mmd_tot', (mmd_loss_H+mmd_loss_thad + mmd_loss_tlep).item()/3,step=ii)
+                exp.log_metric('loss_huber_H', lossH.item()/3,step=ii)
+                exp.log_metric('loss_huber_Thad', lossThad.item()/3,step=ii)
+                exp.log_metric('loss_huber_Tlep', lossTlep.item()/3,step=ii)
+                exp.log_metric('loss_huber_tot', regr_loss.item(),step=ii)
+                exp.log_metric('loss_tot_train', loss_final.item(),step=ii)
 
             sum_loss += loss_final.item()
         
@@ -373,7 +375,6 @@ if __name__ == '__main__':
         env_var = os.environ.get("CUDA_VISIBLE_DEVICES")
         if env_var:
             actual_devices = env_var.split(",")
-            actual_devices = [int(d) for d in actual_devices]
         else:
             actual_devices = list(range(torch.cuda.device_count()))
         print("Actual devices: ", actual_devices)
