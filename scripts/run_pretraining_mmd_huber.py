@@ -114,8 +114,9 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     
     outputDir = os.path.abspath(outputDir)
     latentSpace = config.conditioning_transformer.use_latent
-    name_dir = f'{outputDir}/preTraining_{config.name}_{config.version}_noProv:{config.noProv}_cartesian:{config.cartesian}_HuberLoss:{HuberLoss}_latent_space:{latentSpace}_hiddenFeatures:{config.conditioning_transformer.hidden_features}_dimFeedForward:{config.conditioning_transformer.dim_feedforward_transformer}_nheadEnc:{config.conditioning_transformer.nhead_encoder}_LayersEnc:{config.conditioning_transformer.no_layers_encoder}_nheadDec:{config.conditioning_transformer.nhead_decoder}_LayersDec:{config.conditioning_transformer.no_layers_decoder}'
-    
+    name_dir = f'{outputDir}/preTraining_{config.name}_{config.version}_hiddenFeatures:{config.conditioning_transformer.hidden_features}_dimFeedForward:{config.conditioning_transformer.dim_feedforward_transformer}_nheadEnc:{config.conditioning_transformer.nhead_encoder}_LayersEnc:{config.conditioning_transformer.no_layers_encoder}_nheadDec:{config.conditioning_transformer.nhead_decoder}_LayersDec:{config.conditioning_transformer.no_layers_decoder}'
+
+    os.makedirs(name_dir, exist_ok=True)
     # writer = SummaryWriter(name_dir)
     # Loading comet_ai logging
     exp = Experiment(
