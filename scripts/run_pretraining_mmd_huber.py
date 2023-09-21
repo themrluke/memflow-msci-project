@@ -128,6 +128,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     exp.add_tags([config.name,config.version])
     exp.log_parameters(config.training_params)
     exp.log_parameters(config.conditioning_transformer)
+    exp.log_parameters(config.MDMM)
 
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
         fo.write(OmegaConf.to_yaml(config)) 
@@ -218,7 +219,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
             sum_loss += loss_final.item()
 
-        exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e)
+        exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e, step=ii)
         valid_loss_huber = 0.
         valid_loss_mmd = 0.
         valid_lossH = 0.
@@ -368,7 +369,6 @@ if __name__ == '__main__':
         env_var = os.environ.get("CUDA_VISIBLE_DEVICES")
         if env_var:
             actual_devices = env_var.split(",")
-            actual_devices = [int(d) for d in actual_devices]
         else:
             actual_devices = list(range(torch.cuda.device_count()))
         print("Actual devices: ", actual_devices)
