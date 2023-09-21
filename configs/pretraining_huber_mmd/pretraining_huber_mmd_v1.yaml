@@ -58,6 +58,6 @@ unfolding_flow:
   base_second_arg: 0.3
   bound: 1.5
 MDMM:
-  max_mmd: 0.05
+  max_mmd: 0.3
   scale_mmd : 1
   dumping_mmd: 1.

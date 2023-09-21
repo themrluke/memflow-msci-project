@@ -172,25 +172,25 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             #gluon = HttISR_regressed[:,-3:]
             MMD_target = logScaled_partons[:,0:3]
 
-            lossH, lossThad, lossTlep = compute_losses(logScaled_partons, higgs, thad, tlep,
+            lossH, lossThad, lossTlep = compute_regr_losses(logScaled_partons, higgs, thad, tlep,
                                                 config.cartesian, loss_fn,
                                             scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
                                                 split=True,
                                                 device=device)
-            regr_loss =  (lossH + lossThad + lossTLep)/9
+            regr_loss =  (lossH + lossThad + lossTlep)/9
             
                     
-            mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_traget, kernel, device, False)])
+            mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, False)])
 
             loss_final = mdmm_return.value
-            #print(f"MMD loss: {mmd_loss.item()}, huber loss {mdmm_return.fn_values}, loss tot{loss_final.item()}")
+            print(f"MMD loss: {mdmm_return.fn_values}, huber loss {regr_loss.item()}, loss tot{loss_final.item()}")
             loss_final.backward()
             optimizer.step()
 
             with torch.no_grad():
 
                 mmd_loss_H, mmd_loss_thad, mmd_loss_tlep = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel, device=device, split=True)
-                # lossH, lossThad, lossTlep = compute_losses(logScaled_partons, higgs, thad, tlep,
+                # lossH, lossThad, lossTlep = compute_regr_losses(logScaled_partons, higgs, thad, tlep,
                 #                                 config.cartesian, loss_fn,
                 #                             scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
                 #                                 split=True,
@@ -199,7 +199,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 writer.add_scalar('loss_mmd_H', mmd_loss_H.item(), ii)
                 writer.add_scalar('loss_mmd_thad', mmd_loss_thad.item(), ii)
                 writer.add_scalar('loss_mmd_tlep', mmd_loss_tlep.item(), ii)
-                writer.add_scalar('loss_mmd_tot', mmd_loss.item(), ii)
+                writer.add_scalar('loss_mmd_tot', (mmd_loss_H+mmd_loss_thad + mmd_loss_tlep).item(), ii)
 
                 writer.add_scalar('loss_huber_H', lossH.item()/3, ii)
                 writer.add_scalar('loss_huber_Thad', lossThad.item()/3, ii)
@@ -262,7 +262,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 
                 MMD_target = logScaled_partons[:,0:3]
 
-                lossH, lossThad, lossTlep, = compute_losses(logScaled_partons, higgs, thad, tlep,
+                lossH, lossThad, lossTlep, = compute_regr_losses(logScaled_partons, higgs, thad, tlep,
                                                                       config.cartesian, loss_fn,
                                                     scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
                                                            split=True,
