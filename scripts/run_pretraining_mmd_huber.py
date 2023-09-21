@@ -1,3 +1,6 @@
+from comet_ml import Experiment
+from comet_ml.integration.pytorch import log_model
+
 from memflow.read_data.dataset_all import DatasetCombined
 from memflow.unfolding_network.conditional_transformer import ConditioningTransformerLayer
 from memflow.unfolding_flow.utils import *
@@ -113,7 +116,17 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     latentSpace = config.conditioning_transformer.use_latent
     name_dir = f'{outputDir}/preTraining_{config.name}_{config.version}_noProv:{config.noProv}_cartesian:{config.cartesian}_HuberLoss:{HuberLoss}_latent_space:{latentSpace}_hiddenFeatures:{config.conditioning_transformer.hidden_features}_dimFeedForward:{config.conditioning_transformer.dim_feedforward_transformer}_nheadEnc:{config.conditioning_transformer.nhead_encoder}_LayersEnc:{config.conditioning_transformer.no_layers_encoder}_nheadDec:{config.conditioning_transformer.nhead_decoder}_LayersDec:{config.conditioning_transformer.no_layers_decoder}'
     
-    writer = SummaryWriter(name_dir)
+    # writer = SummaryWriter(name_dir)
+    # Loading comet_ai logging
+    exp = Experiment(
+        api_key=config.comet_token,
+        project_name="memflow",
+        workspace="valsdav"
+    )
+
+    exp.add_tags([config.name,config.version])
+    exp.log_parameters(config.training_params)
+    exp.log_parameters(config.conditioning_transformer)
 
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
         fo.write(OmegaConf.to_yaml(config)) 
@@ -121,7 +134,6 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     N_train = len(trainingLoader)
     N_valid = len(validLoader)
     
-    ii = 0
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
 
     modelName = f"{name_dir}/model_{config.name}_{config.version}.pt"
@@ -138,7 +150,6 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
         model.train()
         for i, data in enumerate(trainingLoader):
             
-            ii += 1
 
             if (i % 100 == 0):
                 print(i)
@@ -191,25 +202,20 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                                 split=True,
                                                 device=device)
 
-                writer.add_scalar('loss_mmd_H', mmd_loss_H.item(), ii)
-                writer.add_scalar('loss_mmd_thad', mmd_loss_thad.item(), ii)
-                writer.add_scalar('loss_mmd_tlep', mmd_loss_tlep.item(), ii)
-                writer.add_scalar('loss_huber_H', lossH.item()/3, ii)
-                writer.add_scalar('loss_huber_Thad', lossThad.item()/3, ii)
-                writer.add_scalar('loss_huber_Tlep', lossTlep.item()/3, ii)
-                # writer.add_scalar('loss_huber_Gluon', lossGluon.item()/3, ii)
-                writer.add_scalar('loss_huber_tot', (lossH+lossThad+lossTlep)/9,ii)
-                writer.add_scalar('loss_MMD', mmd_loss.item(), ii)
-                writer.add_scalar('loss_tot_train', loss_final.item(), ii)
-            # loss = lossH + lossThad + lossTlep
-            
-            # loss.backward()
-            # optimizer.step()
+                exp.log_metric("loss_mmd_H", mmd_loss_H.item())
+                exp.log_metric('loss_mmd_thad', mmd_loss_thad.item())
+                exp.log_metric('loss_mmd_tlep', mmd_loss_tlep.item())
+                exp.log_metric('loss_mmd_tot', (mmd_loss_H+mmd_loss_thad + mmd_loss_tlep).item()/3)
+                exp.log_metric('loss_huber_H', lossH.item()/3)
+                exp.log_metric('loss_huber_Thad', lossThad.item()/3)
+                exp.log_metric('loss_huber_Tlep', lossTlep.item()/3)
+                exp.log_metric('loss_huber_tot',  (lossH+lossThad+lossTlep)/9)
+                exp.log_metric('loss_tot_train', loss_final.item())
+               
 
             sum_loss += loss_final.item()
-            #writer.add_scalar("Loss_total_step_train", loss_final.item(), ii)
-        
-        writer.add_scalar('Loss_epoch_total_train', sum_loss/N_train, e)
+
+        exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e)
         valid_loss_huber = 0.
         valid_loss_mmd = 0.
         valid_lossH = 0.
@@ -285,38 +291,45 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 valid_loss_final += mdmm_return.value.item()
 
                 particle_list = [higgs, thad, tlep]
-                
+
+                 
                 if i == 0:
                     for particle in range(len(particle_list)): # 4 or 3 particles: higgs/thad/tlep/gluonISR
                         
                         # 4 or 3 features
                         for feature in range(config.conditioning_transformer.out_features):  
+                            exp.log_histogram_3d(particle_list[particle][:,feature].flatten().cpu().numpy(),
+                                                 name = f"particle_regressed_{particle}_{feature}",
+                                                 epoch=e, step=e)
+
+                            exp.log_histogram_3d(logScaled_partons[:,particle,feature].cpu().numpy(),
+                                                 name = f"particle_truth_{particle}_{feature}",
+                                                 epoch=e, step=e)
+
+                            exp.log_histogram_3d(particle_list[particle][:,feature].flatten().cpu().numpy()-\
+                                                 logScaled_partons[:,particle,feature].cpu().numpy(),
+                                                 name = f"diff_particle_{particle}_{feature}",
+                                                 epoch=e, step=e)
 
                             fig, ax = plt.subplots()
-                            h = ax.hist2d(particle_list[particle][:,feature].cpu().detach().numpy().flatten(),
-                                          logScaled_partons[:,particle,feature].detach().cpu().numpy(),
-                                          bins=100, range=((-3, 3),(-3, 3)))
+                            h = ax.hist2d(logScaled_partons[:,particle,feature].detach().cpu().numpy(),
+                                          particle_list[particle][:,feature].cpu().detach().numpy().flatten(),
+                                          bins=40, range=((-3, 3),(-3, 3)), cmin=1)
                             fig.colorbar(h[3], ax=ax)
-                            writer.add_figure(f"Validation_particleNo_{particle}_Feature_{feature}", fig, e)
+                            exp.log_figure(f"particle_2D_{particle}_{feature}", fig)
 
-                            fig, ax = plt.subplots()
-                            h = ax.hist((particle_list[particle][:,feature].cpu().detach().numpy().flatten() - \
-                                         logScaled_partons[:,particle,feature].detach().cpu().numpy()), bins=100)
-                            writer.add_figure(f"Validation_particleNo_{particle}__Feature_{feature}_Diff", fig, e)
-         
-        writer.add_scalar("Loss_epoch_total_val", valid_loss_final/N_valid, e )
-        writer.add_scalar("Loss_epoch_mmd_val", valid_loss_mmd/N_valid, e)
-        writer.add_scalar('Loss_epoch_huber_val', valid_loss_huber/N_valid, e)
-        writer.add_scalar('Loss_epoch_huber_val_H', valid_lossH/N_valid, e)
-        writer.add_scalar('Loss_epoch_huber_val_Tlep', valid_lossTlep/N_valid, e)
-        writer.add_scalar('Loss_epoch_huber_val_Thad', valid_lossThad/N_valid, e)
-        write.add_scalar("Loss_epoch_mmd_val_H", valid_mmd_H/N_valid, e)
-        write.add_scalar("Loss_epoch_mmd_val_thad", valid_mmd_thad/N_valid, e)
-        write.add_scalar("Loss_epoch_mmd_val_tlep", valid_mmd_tlep/N_valid, e)
-        # writer.add_scalar('Loss_epoch_huber_val_Gluon', valid_lossGluon/N_valid, e)
+        exp.log_metric("loss_total_val", valid_loss_final/N_valid, epoch=e )
+        exp.log_metric("loss_mmd_val", valid_loss_mmd/N_valid,epoch= e)
+        exp.log_metric('loss_huber_val', valid_loss_huber/N_valid,epoch= e)
+        exp.log_metric('loss_huber_val_H', valid_lossH/N_valid,epoch= e)
+        exp.log_metric('loss_huber_val_Tlep', valid_lossTlep/N_valid,epoch= e)
+        exp.log_metric('loss_huber_val_Thad', valid_lossThad/N_valid,epoch= e)
+        exp.log_metric("loss_mmd_val_H", valid_mmd_H/N_valid,epoch= e)
+        exp.log_metric("loss_mmd_val_thad", valid_mmd_thad/N_valid,epoch= e)
+        exp.log_metric("loss_mmd_val_tlep", valid_mmd_tlep/N_valid,epoch= e)
 
         if early_stopper.early_stop(valid_loss_final/N_valid,
-                                    model.state_dict(), optimizer.state_dict(), modelName):
+                                    model.state_dict(), optimizer.state_dict(), modelName, exp):
             print(f"Model converges at epoch {e} !!!")         
             break
 
