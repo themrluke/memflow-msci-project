@@ -18,8 +18,8 @@ training_params:
   batch_size_validation: 2048
   subsplit: 8
   nepochs: 1000
-  training_sample: 0.80
-  validation_sample: 0.20
+  training_sample: 0.9
+  validation_sample: 0.1
   sampling_points_loss: 150
   percentage_sampling_epoch: 0.2
   sampling_points: 100
