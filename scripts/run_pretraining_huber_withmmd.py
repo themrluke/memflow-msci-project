@@ -112,7 +112,10 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
     # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
     # scheduler = CosineAnnealingLR(optimizer, T_max=10)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                           factor=config.training_params.reduce_on_plateau.factor,
+                                                           patience=config.training_params.reduce_on_plateau.patience,
+                                                           threshold=config.training_params.reduce_on_plateau.threshold)
     
     
     outputDir = os.path.abspath(outputDir)
@@ -326,6 +329,15 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                             fig.colorbar(h[3], ax=ax)
                             exp.log_figure(f"particle_2D_{particle}_{feature}", fig)
 
+                    
+                            fig, ax = plt.subplots()
+                            ax.hist(logScaled_partons[:,particle,feature].detach().cpu().numpy(),
+                                          bins=20, range=((-2, 2),(-2, 2)), label="truth")
+                            ax.hist(particle_list[particle][:,feature].cpu().detach().numpy().flatten(),
+                                          bins=20, range=((-2, 2),(-2, 2)), label="regressed")
+                            ax.legend()
+                            exp.log_figure(f"particle_1D_{particle}_{feature}", fig)
+                            
          
        
         exp.log_metric("loss_total_val", valid_loss_final/N_valid, epoch=e )
@@ -345,7 +357,8 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
         scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
 
-    writer.close()
+    # writer.close()
+    # exp_log.end()
 
     print('preTraining finished!!')
         

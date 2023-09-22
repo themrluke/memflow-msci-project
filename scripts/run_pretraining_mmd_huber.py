@@ -339,7 +339,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
         scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
 
-    writer.close()
+    # writer.close()
 
     print('preTraining finished!!')
         
