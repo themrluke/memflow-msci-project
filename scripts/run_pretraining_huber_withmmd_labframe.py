@@ -88,12 +88,12 @@ def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, b
 
 def compute_mmd_loss(mmd_input, mmd_target, kernel, device, split=False):
     mmds = []
-    for particle in range(mmd_input.shape[1]):
-        mmds.append(MMD(mmd_input[:,particle], mmd_target[:,particle], kernel, device ))
+    for particle in range(len(mmd_input)):
+        mmds.append(MMD(mmd_input[particle], mmd_target[particle], kernel, device ))
     if split:
         return mmds
     else:
-        return sum(mmds)/mmd_input.shape[1]
+        return sum(mmds)/len(mmd_input)
 
 def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss,
                          log_mean, log_std):
@@ -185,9 +185,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             thad = out[1]
             tlep = out[2]
             boost = out[3]
-            MMD_input = torch.cat((higgs.unsqueeze(1),
-                                   thad.unsqueeze(1),
-                                   tlep.unsqueeze(1)), dim=1)
+            MMD_input = [higgs, thad, tlep, boost]
 
             # compute gluon
             #HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(out, log_mean,
@@ -195,7 +193,10 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                                                                          # cartesian=False,
                                                                                          # eps=1e-5)
             #gluon = HttISR_regressed[:,-3:]
-            MMD_target = logScaled_partons[:,0:3]
+            MMD_target = [logScaled_partons[:,0],
+                          logScaled_partons[:,1],
+                          logScaled_partons[:,2],
+                          logScaled_boost]
 
             lossH, lossThad, lossTlep, lossBoost = compute_regr_losses(logScaled_partons, logScaled_boost,
                                                             higgs, thad, tlep, boost,
@@ -204,7 +205,6 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                                             split=True,
                                                             device=device)
             regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/11
-            print(regr_loss, lossBoost)
                     
             mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, False)])
 
@@ -213,10 +213,11 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
             loss_final.backward()
             optimizer.step()
-
             with torch.no_grad():
 
-                mmd_loss_H, mmd_loss_thad, mmd_loss_tlep = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel, device=device, split=True)
+                (mmd_loss_H, mmd_loss_thad,
+                 mmd_loss_tlep,
+                 mmd_loss_boost) = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel, device=device, split=True)
                 # lossH, lossThad, lossTlep = compute_regr_losses(logScaled_partons, higgs, thad, tlep,
                 #                                 config.cartesian, loss_fn,
                 #                             scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
@@ -226,17 +227,20 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 exp.log_metric("loss_mmd_H", mmd_loss_H.item(),step=ii)
                 exp.log_metric('loss_mmd_thad', mmd_loss_thad.item(),step=ii)
                 exp.log_metric('loss_mmd_tlep', mmd_loss_tlep.item(),step=ii)
-                exp.log_metric('loss_mmd_tot', (mmd_loss_H+mmd_loss_thad + mmd_loss_tlep).item()/3,step=ii)
+                exp.log_metric('loss_mmd_boost', mmd_loss_boost.item(),step=ii)
+                exp.log_metric('loss_mmd_tot', (mmd_loss_H+mmd_loss_thad + mmd_loss_tlep + mmd_loss_boost).item()/4,step=ii)
                 exp.log_metric('loss_huber_H', lossH.item()/3,step=ii)
                 exp.log_metric('loss_huber_Thad', lossThad.item()/3,step=ii)
                 exp.log_metric('loss_huber_Tlep', lossTlep.item()/3,step=ii)
-                exp.log_metric('loss_huber_boost', lossBoost.item()/3,step=ii)
+                exp.log_metric('loss_huber_boost', lossBoost.item()/2,step=ii)
                 exp.log_metric('loss_huber_tot', regr_loss.item(),step=ii)
                 exp.log_metric('loss_tot_train', loss_final.item(),step=ii)
 
             sum_loss += loss_final.item()
         
         exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e, step=ii)
+        exp.log_metric("learning_rate", optimizer.param_groups[0]['lr'], epoch=e, step=ii)
+
         
         valid_loss_huber = 0.
         valid_loss_mmd = 0.
@@ -274,18 +278,23 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 thad = out[1]
                 tlep = out[2]
                 boost= out[3]
+                MMD_input = [higgs, thad, tlep, boost]
                 
-                MMD_input = torch.cat((higgs.unsqueeze(1),
-                                       thad.unsqueeze(1),
-                                       tlep.unsqueeze(1)), dim=1)
-                # compute gluon
+                # MMD_input = torch.cat((higgs.unsqueeze(1),
+                #                        thad.unsqueeze(1),
+                #                        tlep.unsqueeze(1)), dim=1)
+                # # compute gluon
                 # HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(out, log_mean,
                 #                                                                          log_std, device,
                 #                                                                          cartesian=False,
                 #                                                                          eps=1e-5)
                 # gluon = HttISR_regressed[:,-3:]
                 
-                MMD_target = logScaled_partons[:,0:3]
+                # MMD_target = logScaled_partons[:,0:3]
+                MMD_target = [logScaled_partons[:,0],
+                          logScaled_partons[:,1],
+                          logScaled_partons[:,2],
+                          logScaled_boost]
 
                 lossH, lossThad, lossTlep, lossBoost = compute_regr_losses(logScaled_partons,logScaled_boost,
                                                                  higgs, thad, tlep,boost,
@@ -315,13 +324,13 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             
                 valid_loss_final += mdmm_return.value.item()
 
-                particle_list = [higgs, thad, tlep]
+                particle_list = [higgs, thad, tlep, boost]
                 
                 if i == 0:
                     for particle in range(len(particle_list)): # 4 or 3 particles: higgs/thad/tlep/gluonISR
                         
                         # 4 or 3 features
-                        for feature in range(config.conditioning_transformer.out_features):  
+                        for feature in range(config.conditioning_transformer.out_features[particle]):  
                             # exp.log_histogram_3d(particle_list[particle][:,feature].flatten().cpu().numpy(),
                             #                      name = f"particle_regressed_{particle}_{feature}",
                             #                      epoch=e, step=e)
@@ -340,7 +349,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                           particle_list[particle][:,feature].cpu().detach().numpy().flatten(),
                                           bins=40, range=((-3, 3),(-3, 3)), cmin=1)
                             fig.colorbar(h[3], ax=ax)
-                            exp.log_figure(f"particle_2D_{particle}_{feature}", fig)
+                            exp.log_figure(f"particle_2D_{particle}_{feature}", fig,step=e)
 
                     
                             fig, ax = plt.subplots(figsize=(7,6), dpi=100)
@@ -350,25 +359,9 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                           bins=30, range=(-2, 2), label="regressed",histtype="step")
                             ax.legend()
                             ax.set_xlabel(f"particle {particle} feature {feature}")
-                            exp.log_figure(f"particle_1D_{particle}_{feature}", fig)
+                            exp.log_figure(f"particle_1D_{particle}_{feature}", fig, step=e)
 
-                for feat in range(2):
-                    fig, ax = plt.subplots(figsize=(7,6), dpi=100)
-                    h = ax.hist2d(logScaled_boost[:,feat].detach().cpu().numpy(),
-                                  boost[:,feature].cpu().detach().numpy().flatten(),
-                                  bins=40, range=((-3, 3),(-3, 3)), cmin=1)
-                    fig.colorbar(h[3], ax=ax)
-                    exp.log_figure(f"boost_2D_{feat}", fig)
-                    
-                    
-                    fig, ax = plt.subplots(figsize=(7,6), dpi=100)
-                    ax.hist(logScaled_boost[:,feat].detach().cpu().numpy(),
-                            bins=30, range=(-2, 2), label="truth", histtype="step")
-                    ax.hist(boost[:,feat].cpu().detach().numpy().flatten(),
-                            bins=30, range=(-2, 2), label="regressed",histtype="step")
-                    ax.legend()
-                    ax.set_xlabel(f"boost feature {feat}")
-                    exp.log_figure(f"boost_1D_{feat}", fig)
+               
 
 
        
@@ -389,6 +382,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             break
 
         scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
+        
 
     # writer.close()
     # exp_log.end()
@@ -502,7 +496,6 @@ if __name__ == '__main__':
         
     
     print(f"Normal version: preTraining finished succesfully! Version: {conf.version}")
-    
     
     
     

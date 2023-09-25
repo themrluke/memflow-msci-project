@@ -1,5 +1,5 @@
 name: spanet_labframe
-version: v1
+version: v4b
 description: 'Like v10c'
 input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_labframe_part1.parquet
 #input_dataset: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
@@ -13,7 +13,7 @@ scaling_params:
   log_mean: [4.6710e+00, 2.8028e-05, 7.9478e-04]
   log_std: [0.9195, 1.2910, 1.8139]
 training_params:
-  lr: 0.0001
+  lr: 0.0005
   batch_size_training: 1024
   batch_size_validation: 2048
   subsplit: 8
@@ -38,12 +38,12 @@ training_params:
     threshold: 1e-3
 conditioning_transformer:
   out_features: [3,3,3,2]
-  hidden_features: 64
-  dim_feedforward_transformer: 1024
-  nhead_encoder: 8
-  no_layers_encoder: 3
-  nhead_decoder: 8
-  no_layers_decoder: 3
+  hidden_features: 32
+  dim_feedforward_transformer: 512
+  nhead_encoder: 4
+  no_layers_encoder: 6
+  nhead_decoder: 4
+  no_layers_decoder: 6
   aggregate: false
   no_decoders: 4
   use_latent: true

@@ -1,5 +1,5 @@
 name: spanet_labframe
-version: v1
+version: v1c
 description: 'Like v10c'
 input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_labframe_part1.parquet
 #input_dataset: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
@@ -23,7 +23,7 @@ training_params:
   sampling_points_loss: 150
   percentage_sampling_epoch: 0.2
   sampling_points: 100
-  nEpochsPatience: 50
+  nEpochsPatience: 60
   eps: 1.0e-05
   mmd_kernel: "multiscale"
   order:
@@ -62,8 +62,9 @@ unfolding_flow:
   base_second_arg: 0.3
   bound: 1.5
 MDMM:
-  max_mmd: 0.005
+  max_mmd: 0.001
   scale_mmd : 1
   dumping_mmd: 1.
 
 comet_token: uaitssszWuWAaWQkBrDXdlJBt
+
