@@ -1,8 +1,8 @@
 name: spanet_mmd
 version: v7
 description: 'Like v1 with larger batch'
-input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
-#input_dataset: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
+#input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
+input_dataset: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
 cartesian: false
 noProv: true
 input_shape:
@@ -14,7 +14,7 @@ scaling_params:
   log_std: [0.9195, 1.2910, 1.8139]
 training_params:
   lr: 0.0001
-  batch_size_training: 512
+  batch_size_training: 1024
   batch_size_validation: 2048
   subsplit: 8
   nepochs: 1000

@@ -465,10 +465,11 @@ def plot_regressionFactor(regressedVar, correctVar, targetVar, matched, limTarge
     mean_result = []
     std_result = []
     std2_result = []
-    
-    regressedVar = regressedVar[matched]
-    correctVar = correctVar[matched]
-    targetVar = targetVar[matched]
+
+    if matched is not None:
+        regressedVar = regressedVar[matched]
+        correctVar = correctVar[matched]
+        targetVar = targetVar[matched]
     
     if intervalTargetVar == 0:
         intervalTargetVar = np.linspace(start=limTarget[0], stop=limTarget[1], num=bins+1)

@@ -87,6 +87,7 @@ if __name__ == '__main__':
     parser.add_argument('--model-dir', type=str, required=True, help='path to model directory')
     parser.add_argument('--conf', type=str, required=True, help='path config')
     parser.add_argument('--on-GPU', action="store_true",  help='run on GPU boolean')
+    parser.add_argument('--data-validation', type=str, required=False, help="Validation dataset overwrite")
     args = parser.parse_args()
     
     if(args.model_dir[-1] != '/'):
@@ -95,12 +96,13 @@ if __name__ == '__main__':
         args.model_dir = args.model_dir[:len(args.model_dir)-1] # remove '/' from input 
 
     path_to_dir = args.model_dir
-    path_to_conf = args.conf
+    path_to_conf = f"{args.model_dir}/{args.conf}"
     model_path = glob.glob(f"{path_to_dir}/model*.pt")[0]
     
     # Read config file in 'conf'
-    with open(path_to_conf) as f:
-        conf = OmegaConf.load(path_to_conf)
+    conf = OmegaConf.load(path_to_conf)
+    if args.data_validation:
+        conf.input_dataset_validation = args.data_validation
 
     on_GPU = args.on_GPU # by default run on CPU
     outputDir = args.model_dir
@@ -142,7 +144,7 @@ if __name__ == '__main__':
                                 parton_list=[])
 
     print(f"Working with {len(data)} samples")
-    batch_size = 1024
+    batch_size = 2048
     data_loader = DataLoader(dataset=data, shuffle=False, batch_size=batch_size)
 
     if (device == torch.device('cuda')):
@@ -180,7 +182,6 @@ if __name__ == '__main__':
 
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict['model_state_dict'])
-    model.eval()
     print("Model weight evaluated")
     
     if (device == torch.device('cuda')):
@@ -200,28 +201,14 @@ if __name__ == '__main__':
 
     # Copy model on GPU memory
     if (device == torch.device('cuda')):
-        model = model.cuda()
+        if len(actual_devices)>1:
+            model = torch.nn.DataParallel(model)
+
+        model = model.to(device)
 
     print(f"parameters total:{count_parameters(model)}")
-    if (device == torch.device('cuda')):
-        
-        # TODO: split the data for multi-GPU processing
-        if len(actual_devices) > 1:
-            #world_size = torch.cuda.device_count()
-            # make a dictionary with k: rank, v: actual device
-            #dev_dct = {i: actual_devices[i] for i in range(world_size)}
-            #print(f"Devices dict: {dev_dct}")
-            #mp.spawn(
-            #    TrainingAndValidLoop,
-            #    args=(conf, model, train_loader, val_loader, world_size),
-            #    nprocs=world_size,
-            #    join=True,
-            #)
-            UnscaleTensor(conf, model, data_loader, len(data), outputDir, batch_size, device)
-        else:
-            UnscaleTensor(conf, model, data_loader,  len(data),outputDir, batch_size, device)
-    else:
-        UnscaleTensor(conf, model, data_loader, len(data), outputDir, batch_size, device)
+    model.eval()
+    UnscaleTensor(conf, model, data_loader, len(data), outputDir, batch_size, device)
         
     
     print("Unscale tensor finished!")
