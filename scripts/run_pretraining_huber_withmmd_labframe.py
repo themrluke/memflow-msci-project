@@ -49,7 +49,7 @@ def loss_fn_periodic(inp, target, loss_fn, device):
     
     return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device))
 
-def compute_regr_losses(logScaled_partons, higgs, thad, tlep, cartesian, loss_fn,
+def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, boost, cartesian, loss_fn,
                    scaling_phi, device, split=False):
     lossH = 0.
     lossThad = 0.
@@ -78,11 +78,12 @@ def compute_regr_losses(logScaled_partons, higgs, thad, tlep, cartesian, loss_fn
                                               logScaled_partons[:,2,feature]*scaling_phi[1] + scaling_phi[0], loss_fn, device)
                 # lossGluon +=  loss_fn_periodic(gluon[:,feature]*scaling_phi[1] + scaling_phi[0],
                                               # logScaled_partons[:,3,feature]*scaling_phi[1] + scaling_phi[0], loss_fn, device)
+        lossBoost = loss_fn(logScaled_boost, boost)
 
     if split:
-        return lossH, lossThad, lossTlep#, lossGluon
+        return lossH, lossThad, lossTlep, lossBoost#, lossGluon
     else:
-        return  (lossH + lossThad + lossTlep)/9
+        return  (lossH + lossThad + lossTlep + lossBoost)/11
 
 
 def compute_mmd_loss(mmd_input, mmd_target, kernel, device, split=False):
@@ -92,9 +93,10 @@ def compute_mmd_loss(mmd_input, mmd_target, kernel, device, split=False):
     if split:
         return mmds
     else:
-        return sum(mmds)/3
+        return sum(mmds)/mmd_input.shape[1]
 
-def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss):
+def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss,
+                         log_mean, log_std):
 
 
     constraint = mdmm.MaxConstraint(
@@ -150,8 +152,6 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
     modelName = f"{name_dir}/model_{config.name}_{config.version}.pt"
 
-    log_mean = torch.tensor(config.scaling_params.log_mean, device=device)
-    log_std = torch.tensor(config.scaling_params.log_std, device=device)
 
     ii = 0
     for e in range(config.training_params.nepochs):
@@ -168,7 +168,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
             optimizer.zero_grad()
             
-            (logScaled_partons, 
+            (logScaled_partons, logScaled_boost,
             logScaled_reco, mask_lepton_reco, 
             mask_jets, mask_met, 
             mask_boost_reco, data_boost_reco) = data
@@ -184,9 +184,11 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             higgs = out[0]
             thad = out[1]
             tlep = out[2]
+            boost = out[3]
             MMD_input = torch.cat((higgs.unsqueeze(1),
                                    thad.unsqueeze(1),
                                    tlep.unsqueeze(1)), dim=1)
+
             # compute gluon
             #HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(out, log_mean,
                                                                                          # log_std, device,
@@ -195,13 +197,14 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             #gluon = HttISR_regressed[:,-3:]
             MMD_target = logScaled_partons[:,0:3]
 
-            lossH, lossThad, lossTlep = compute_regr_losses(logScaled_partons, higgs, thad, tlep,
-                                                config.cartesian, loss_fn,
-                                            scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
-                                                split=True,
-                                                device=device)
-            regr_loss =  (lossH + lossThad + lossTlep)/9
-            
+            lossH, lossThad, lossTlep, lossBoost = compute_regr_losses(logScaled_partons, logScaled_boost,
+                                                            higgs, thad, tlep, boost,
+                                                            config.cartesian, loss_fn,
+                                                            scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
+                                                            split=True,
+                                                            device=device)
+            regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/11
+            print(regr_loss, lossBoost)
                     
             mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, False)])
 
@@ -227,6 +230,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 exp.log_metric('loss_huber_H', lossH.item()/3,step=ii)
                 exp.log_metric('loss_huber_Thad', lossThad.item()/3,step=ii)
                 exp.log_metric('loss_huber_Tlep', lossTlep.item()/3,step=ii)
+                exp.log_metric('loss_huber_boost', lossBoost.item()/3,step=ii)
                 exp.log_metric('loss_huber_tot', regr_loss.item(),step=ii)
                 exp.log_metric('loss_tot_train', loss_final.item(),step=ii)
 
@@ -240,6 +244,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
         valid_lossTlep = 0.
         valid_lossThad = 0.
         valid_lossGluon = 0.
+        valid_lossBoost = 0.
         valid_loss_final = 0.
         valid_mmd_H = 0.
         valid_mmd_thad = 0.
@@ -252,7 +257,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             
             with torch.no_grad():
 
-                (logScaled_partons, 
+                (logScaled_partons, logScaled_boost,
                 logScaled_reco, mask_lepton_reco, 
                 mask_jets, mask_met, 
                 mask_boost_reco, data_boost_reco) = data
@@ -268,6 +273,8 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 higgs = out[0]
                 thad = out[1]
                 tlep = out[2]
+                boost= out[3]
+                
                 MMD_input = torch.cat((higgs.unsqueeze(1),
                                        thad.unsqueeze(1),
                                        tlep.unsqueeze(1)), dim=1)
@@ -280,13 +287,14 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 
                 MMD_target = logScaled_partons[:,0:3]
 
-                lossH, lossThad, lossTlep, = compute_regr_losses(logScaled_partons, higgs, thad, tlep,
-                                                                      config.cartesian, loss_fn,
+                lossH, lossThad, lossTlep, lossBoost = compute_regr_losses(logScaled_partons,logScaled_boost,
+                                                                 higgs, thad, tlep,boost,
+                                                                 config.cartesian, loss_fn,
                                                     scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
                                                            split=True,
                                                            device=device)
 
-                regr_loss =  (lossH + lossThad + lossTlep)/9
+                regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/11
                 
                 mmd_loss_H, mmd_loss_thad, mmd_loss_tlep = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel,
                                             device=device, split=True)
@@ -298,6 +306,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 valid_lossH += lossH.item()/3
                 valid_lossTlep += lossTlep.item()/3
                 valid_lossThad += lossThad.item()/3
+                valid_lossBoost += lossBoost.item()/2
                 # valid_lossGluon += lossGluon.item()/3
                 valid_loss_mmd += mmd_loss.item()
                 valid_mmd_H += mmd_loss_H.item()
@@ -342,8 +351,26 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                             ax.legend()
                             ax.set_xlabel(f"particle {particle} feature {feature}")
                             exp.log_figure(f"particle_1D_{particle}_{feature}", fig)
-                            
-         
+
+                for feat in range(2):
+                    fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                    h = ax.hist2d(logScaled_boost[:,feat].detach().cpu().numpy(),
+                                  boost[:,feature].cpu().detach().numpy().flatten(),
+                                  bins=40, range=((-3, 3),(-3, 3)), cmin=1)
+                    fig.colorbar(h[3], ax=ax)
+                    exp.log_figure(f"boost_2D_{feat}", fig)
+                    
+                    
+                    fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                    ax.hist(logScaled_boost[:,feat].detach().cpu().numpy(),
+                            bins=30, range=(-2, 2), label="truth", histtype="step")
+                    ax.hist(boost[:,feat].cpu().detach().numpy().flatten(),
+                            bins=30, range=(-2, 2), label="regressed",histtype="step")
+                    ax.legend()
+                    ax.set_xlabel(f"boost feature {feat}")
+                    exp.log_figure(f"boost_1D_{feat}", fig)
+
+
        
         exp.log_metric("loss_total_val", valid_loss_final/N_valid, epoch=e )
         exp.log_metric("loss_mmd_val", valid_loss_mmd/N_valid,epoch= e)
@@ -351,6 +378,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
         exp.log_metric('loss_huber_val_H', valid_lossH/N_valid,epoch= e)
         exp.log_metric('loss_huber_val_Tlep', valid_lossTlep/N_valid,epoch= e)
         exp.log_metric('loss_huber_val_Thad', valid_lossThad/N_valid,epoch= e)
+        exp.log_metric('loss_huber_val_boost', valid_lossBoost/N_valid,epoch= e)
         exp.log_metric("loss_mmd_val_H", valid_mmd_H/N_valid,epoch= e)
         exp.log_metric("loss_mmd_val_thad", valid_mmd_thad/N_valid,epoch= e)
         exp.log_metric("loss_mmd_val_tlep", valid_mmd_tlep/N_valid,epoch= e)
@@ -405,17 +433,28 @@ if __name__ == '__main__':
     
     # READ data
     if (conf.cartesian):
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, boost_CM=False,
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
-                                parton_list=['logScaled_data_higgs_t_tbar_ISR_cartesian'])
+                                parton_list=['logScaled_data_higgs_t_tbar_ISR',
+                                             'logScaled_data_boost',
+                                             'mean_log_data_higgs_t_tbar_ISR',
+                                             'std_log_data_higgs_t_tbar_ISR',
+                                             'mean_log_data_boost',
+                                             'std_log_data_boost'])
     else:
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, boost_CM=False,
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
-                                parton_list=['logScaled_data_higgs_t_tbar_ISR'])
+                                parton_list=['logScaled_data_higgs_t_tbar_ISR',
+                                             'logScaled_data_boost',
+                                             'mean_log_data_higgs_t_tbar_ISR',
+                                             'std_log_data_higgs_t_tbar_ISR',
+                                             'mean_log_data_boost',
+                                             'std_log_data_boost'])
+
 
     # split data for training sample and validation sample
     train_subset, val_subset = torch.utils.data.random_split(
@@ -453,9 +492,13 @@ if __name__ == '__main__':
         print("Moving the model to device")
         model = model.to(device)
     
-        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
+        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss,
+                             data.parton_data.mean_log_data_higgs_t_tbar_ISR,
+                             data.parton_data.std_log_data_higgs_t_tbar_ISR)
     else:
-        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss)
+        TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss,
+                             data.parton_data.mean_log_data_higgs_t_tbar_ISR,
+                             data.parton_data.std_log_data_higgs_t_tbar_ISR)
         
     
     print(f"Normal version: preTraining finished succesfully! Version: {conf.version}")

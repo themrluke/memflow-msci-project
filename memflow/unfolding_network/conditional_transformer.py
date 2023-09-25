@@ -50,7 +50,7 @@ class ConditioningTransformerLayer(nn.Module):
             self.output_proj = nn.Linear(in_features=hidden_features, out_features=out_features-2)
         else:
             # do not aggregate but use the transformer encoder output to produce more decoded outputs\
-            self.output_projs = nn.ModuleList([nn.Linear(in_features=hidden_features, out_features=out_features)
+            self.output_projs = nn.ModuleList([nn.Linear(in_features=hidden_features, out_features=out_features[i]) #out_features is an array
                                                for i in range(no_decoders)])
             
             decoder_layer = nn.TransformerEncoderLayer(d_model=hidden_features,

@@ -52,7 +52,7 @@ class Dataset_PartonLevel_NoBoost(Dataset):
 
             (self.partons, self.leptons,
             self.higgs, self.generator,
-            self.gluon_ISR, self.boost) = self.get_PartonsAndLeptonsAndBoost()
+            self.gluon_ISR, self.boost) = self.get_PartonsAndLeptons()
 
             for object_type in self.object_types:
                 print("Create new file for " + object_type)
@@ -144,6 +144,13 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             self.logScaled_data_higgs_t_tbar_ISR = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
 
+        if 'logScaled_data_boost' in self.parton_list or 'mean_log_data_boost' in self.parton_list:
+            print("Load logScaled_data_boost")
+            self.mean_log_data_boost, self.std_log_data_boost = torch.load(
+                self.processed_file_names("Log_mean_std_boost"))
+            self.logScaled_data_boost = torch.load(
+                self.processed_file_names("LogScaled_boost"))
+
         if dev==torch.device('cuda') and torch.cuda.is_available():
             print("Parton: Move tensors to GPU memory")
             for field in self.parton_list:
@@ -160,7 +167,7 @@ class Dataset_PartonLevel_NoBoost(Dataset):
     def processed_file_names(self, type):
         return (self.rootDir + '/processed_partonsNoBoost/' + type + '_data.pt')
 
-    def get_PartonsAndLeptonsAndBoost(self):
+    def get_PartonsAndLeptons(self):
         for file in self.raw_file_names:
             df = ak.from_parquet(file)
 
@@ -403,7 +410,16 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             "Log_mean_std_H_thad_tlep_ISR"))
         torch.save(scaledIntermediateParticles, self.processed_file_names(
             "LogScaled_H_thad_tlep_ISR"))
-        
+
+        # Scaling also the boost
+        boost_output = torch.cat((torch.from_numpy(self.boost.E.to_numpy()).unsqueeze(1),
+                                  torch.from_numpy(self.boost.pz.to_numpy()).unsqueeze(1)), 1)
+        boost_output = torch.sign(boost_output)*torch.log(1+boost_output.abs())
+        mean_boost = torch.mean(boost_output, dim=0)
+        std_boost = torch.std(boost_output, dim=0)
+        scaled_boost_output = (boost_output -mean_boost)/std_boost
+        torch.save((mean_boost, std_boost), self.processed_file_names("Log_mean_std_boost"))
+        torch.save(scaled_boost_output, self.processed_file_names("LogScaled_boost"))
         
     def get_Higgs(self):
         partons = self.partons
@@ -503,10 +519,16 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                     self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian,
                     self.logScaled_data_higgs_t_tbar_ISR_cartesian[index])
         
-        
-        return [getattr(self, field)[index] if field != 'mean_log_data_higgs_t_tbar_ISR_cartesian' \
-                    and field != 'std_log_data_higgs_t_tbar_ISR_cartesian' \
-                    else getattr(self, field) for field in self.parton_list]
+        out = [ ]
+        for field in self.parton_list:
+             if field not in ['mean_log_data_higgs_t_tbar_ISR_cartesian',
+                              'std_log_data_higgs_t_tbar_ISR_cartesian',
+                              'mean_log_data_higgs_t_tbar_ISR',
+                              'std_log_data_higgs_t_tbar_ISR',
+                              'mean_log_data_boost',
+                              'std_log_data_boost']:
+                 out.append(getattr(self, field)[index])
+        return out
 
     def __len__(self):
         size = len(self.mask_partons)
