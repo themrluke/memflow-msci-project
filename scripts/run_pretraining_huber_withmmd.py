@@ -37,9 +37,13 @@ PI = torch.pi
 
 
 
-def loss_fn_periodic(input, target, loss_fn, device):
+def loss_fn_periodic(inp, target, loss_fn, device):
 
-    deltaPhi = target - input
+    # rescale to pi
+    inp[inp>PI] = inp[inp>PI]-2*PI
+    inp[inp<-PI] = inp[inp<-PI] + 2*PI
+    
+    deltaPhi = target - inp
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
     
@@ -322,7 +326,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                                  name = f"diff_particle_{particle}_{feature}",
                                                  epoch=e, step=e)
 
-                            fig, ax = plt.subplots()
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                             h = ax.hist2d(logScaled_partons[:,particle,feature].detach().cpu().numpy(),
                                           particle_list[particle][:,feature].cpu().detach().numpy().flatten(),
                                           bins=40, range=((-3, 3),(-3, 3)), cmin=1)
@@ -330,12 +334,13 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                             exp.log_figure(f"particle_2D_{particle}_{feature}", fig)
 
                     
-                            fig, ax = plt.subplots()
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                             ax.hist(logScaled_partons[:,particle,feature].detach().cpu().numpy(),
-                                          bins=20, range=((-2, 2),(-2, 2)), label="truth")
+                                          bins=30, range=(-2, 2), label="truth", histtype="step")
                             ax.hist(particle_list[particle][:,feature].cpu().detach().numpy().flatten(),
-                                          bins=20, range=((-2, 2),(-2, 2)), label="regressed")
+                                          bins=30, range=(-2, 2), label="regressed",histtype="step")
                             ax.legend()
+                            ax.set_xlabel(f"particle {particle} feature {feature}")
                             exp.log_figure(f"particle_1D_{particle}_{feature}", fig)
                             
          
