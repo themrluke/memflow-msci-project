@@ -102,9 +102,9 @@ class Compute_ParticlesTensor:
         
         return data_regressed, boost_regressed
 
-    def get_cartesian_comp(particle, mass):
+    def get_cartesian_comp(particle, mass, device):
 
-        particle_cartesian = torch.zeros((particle.shape[0], 4))
+        particle_cartesian = torch.zeros((particle.shape[0], 4), device=device)
         
         # px
         particle_cartesian[:,1] = particle[:,0]*torch.cos(particle[:,2])
@@ -122,7 +122,7 @@ class Compute_ParticlesTensor:
 
         return particle_cartesian
 
-    def get_HttISR_numpy(cond_X, log_mean, log_std, device, eps=0.0):
+    def get_HttISR_numpy(cond_X, log_mean, log_std, device, cartesian=True, eps=0.0):
 
         higgs = cond_X[0].unsqueeze(dim=1)
         thad = cond_X[1].unsqueeze(dim=1)
@@ -137,27 +137,34 @@ class Compute_ParticlesTensor:
         thad = data_regressed[:,1]
         tlep = data_regressed[:,2]
 
-        higgs_cartesian = Compute_ParticlesTensor.get_cartesian_comp(higgs, M_HIGGS).unsqueeze(dim=1)
-        thad_cartesian = Compute_ParticlesTensor.get_cartesian_comp(thad, M_TOP).unsqueeze(dim=1)
-        tlep_cartesian = Compute_ParticlesTensor.get_cartesian_comp(tlep, M_TOP).unsqueeze(dim=1)
+        higgs_cartesian = Compute_ParticlesTensor.get_cartesian_comp(higgs, M_HIGGS, device).unsqueeze(dim=1)
+        thad_cartesian = Compute_ParticlesTensor.get_cartesian_comp(thad, M_TOP, device).unsqueeze(dim=1)
+        tlep_cartesian = Compute_ParticlesTensor.get_cartesian_comp(tlep, M_TOP, device).unsqueeze(dim=1)
 
         gluon_px = -(higgs_cartesian[:,0,1] + thad_cartesian[:,0,1] + tlep_cartesian[:,0,1]).unsqueeze(dim=1)
         gluon_py = -(higgs_cartesian[:,0,2] + thad_cartesian[:,0,2] + tlep_cartesian[:,0,2]).unsqueeze(dim=1)
         gluon_pz = -(higgs_cartesian[:,0,3] + thad_cartesian[:,0,3] + tlep_cartesian[:,0,3]).unsqueeze(dim=1)
         E_gluon = torch.sqrt(gluon_px**2 + gluon_py**2 + gluon_pz**2) + eps # add epsilon to have positive masses of the gluon
-        gluon_cartesian = torch.cat((E_gluon, gluon_px, gluon_py, gluon_pz), dim=1).unsqueeze(dim=1)
+        gluon_cartesian = torch.cat((E_gluon, gluon_px, gluon_py, gluon_pz), dim=1).unsqueeze(dim=1).to(device)
 
-        data_regressed = torch.cat((higgs_cartesian, thad_cartesian, tlep_cartesian, gluon_cartesian), dim=1)
-        # order: by default higgs/thad/tlep/glISR
-        # but for glISR negative masses in Rambo ==> can switch the order of the data_regressed
-        # I changed to do this permutation of the particles inside the get_PS
-
+        if cartesian:
+            data_regressed = torch.cat((higgs_cartesian, thad_cartesian, tlep_cartesian, gluon_cartesian), dim=1)
+            # order: by default higgs/thad/tlep/glISR
+            # but for glISR negative masses in Rambo ==> can switch the order of the data_regressed
+            # I changed to do this permutation of the particles inside the get_PS
+        else:
+            gluon_pt = (gluon_px**2 + gluon_py**2)**0.5
+            gluon_eta = -torch.log(torch.tan(torch.atan2(gluon_pt, gluon_pz)/2))
+            gluon_phi = torch.atan2(gluon_py, gluon_px)
+            gluon = torch.cat((gluon_pt, gluon_eta, gluon_phi), dim=1).to(device)
+            data_regressed = torch.cat((higgs, thad, tlep, gluon), dim=1)
+            
         boost_regressed = gluon_cartesian + higgs_cartesian + thad_cartesian + tlep_cartesian
         boost_regressed = boost_regressed.squeeze(dim=1)
 
-        if (device == torch.device('cuda')):
-            data_regressed = data_regressed.cuda()
-            boost_regressed = boost_regressed.cuda()
+        # if (device == torch.device('cuda')):
+        #     data_regressed = data_regressed.cuda()
+        #     boost_regressed = boost_regressed.cuda()
         
         return data_regressed, boost_regressed
 

@@ -29,15 +29,19 @@ class Dataset_RecoLevel(Dataset):
         else:
             self.rootDir = root
 
+        if not os.path.exists(self.rootDir):
+            build=True
+            
         self.reco_list = reco_list
+
         os.makedirs(self.rootDir + "/processed_jets", exist_ok=True)
         self.object_types = object_types
 
         allObjects = self.object_types[:]
         allObjects.append('recoParticles_Cartesian')
-        
+        print("Badsedir: ", self.rootDir)
         # if build flag set or number of files in processed jets directory is 0
-        if (build or len(os.listdir(self.rootDir + '/processed_jets/')) == 0):
+        if (build or  len(os.listdir(self.rootDir + '/processed_jets/')) == 0):
             (self.boost, self.boost_objBoosted) = self.get_boost()
 
             for object_type in self.object_types:
@@ -156,8 +160,9 @@ class Dataset_RecoLevel(Dataset):
 
         return objects_CM
 
-    def Reshape(self, input, value, ax):
-        max_no = ak.max(ak.num(input, axis=ax))
+    def Reshape(self, input, value, ax, max_no=None):
+        if max_no is None:
+            max_no = ak.max(ak.num(input, axis=ax))
         input_padded = ak.pad_none(input, max_no, axis=ax)
         input_filled = ak.fill_none(input_padded, value, axis=ax)
 
@@ -183,7 +188,7 @@ class Dataset_RecoLevel(Dataset):
                 objects = self.boost_CM(objects, self.boost)
 
             if object_type == "jets":
-                objects = self.Reshape(objects, utils.struct_jets, 1)
+                objects = self.Reshape(objects, utils.struct_jets, 1, max_no=16)
 
             if object_type == "lepton_reco":
                 # taking the leading lepton
@@ -227,7 +232,7 @@ class Dataset_RecoLevel(Dataset):
                 objects = self.boost_CM(objects, self.boost)
 
                 if object_type == "jets":
-                    objects = self.Reshape(objects, utils.struct_jets, 1)
+                    objects = self.Reshape(objects, utils.struct_jets, 1, 16)
 
                 if object_type == "lepton_reco":
                     # only the leading lepton

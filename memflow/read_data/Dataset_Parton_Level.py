@@ -37,7 +37,10 @@ class Dataset_PartonLevel(Dataset):
         if root.endswith(".parquet"):
             self.rootDir = root.replace(".parquet","")
         else:
-            self.rootDir = root            
+            self.rootDir = root
+
+        if not os.path.exists(self.rootDir):
+            build=True
 
         self.parton_list = parton_list
         os.makedirs(self.rootDir + "/processed_partons", exist_ok=True)
@@ -105,11 +108,10 @@ class Dataset_PartonLevel(Dataset):
                 self.processed_file_names("flattening_weight_HEta_tHadEta_tLepEta")
             )
 
-        if "H_thad_tlep_ISR_cartesian" in self.parton_list:
-            self.data_higgs_t_tbar_ISR_cartesian = torch.load(
-                self.processed_file_names("H_thad_tlep_ISR_cartesian"))
-            self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
-                self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
+        self.data_higgs_t_tbar_ISR_cartesian = torch.load(
+            self.processed_file_names("H_thad_tlep_ISR_cartesian"))
+        self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
+            self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
         
         if 'phasespace_intermediateParticles' in self.parton_list:
             print("Load phasespace_intermediateParticles")

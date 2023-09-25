@@ -20,3 +20,4 @@ fsspec
 pynvml
 jupyter
 correctionlib
+comet_ml

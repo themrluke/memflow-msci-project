@@ -17,34 +17,31 @@ from tensorboardX import SummaryWriter
 from omegaconf import OmegaConf
 import sys
 import argparse
+from rich.progress import track
 import os
 from pynvml import *
 import glob
 
-def UnscaleTensor(config, model, dataLoader, outputDir, batch_size):
+def UnscaleTensor(config, model, dataLoader, Nsamples, outputDir, batch_size, device):
             
     outputDir = os.path.abspath(outputDir)
             
-    total_sample = config.training_params.training_sample + config.training_params.validation_sample
-
-    N = len(dataLoader)
-
-    unscaledRegressedPartonsTensor = torch.empty((total_sample,
+    unscaledRegressedPartonsTensor = torch.empty((Nsamples,
                                             config.conditioning_transformer.no_decoders,
-                                            config.conditioning_transformer.out_features))
+                                                  config.conditioning_transformer.out_features), device="cpu")
 
     log_mean = torch.tensor(config.scaling_params.log_mean, device=device)
     log_std = torch.tensor(config.scaling_params.log_std, device=device)
-                
-    for i, data in enumerate(dataLoader):
 
-        with torch.no_grad():
-            if (i % 100 == 0):
-                print(i)
-                
+    iterator = iter(dataLoader)
+    for i in track(range(len(dataLoader)), "Evaluating"):
+        data = next(iterator)
+        with torch.no_grad():                
             (logScaled_reco, mask_lepton_reco, 
             mask_jets, mask_met, 
             mask_boost_reco, data_boost_reco) = data
+
+            #print(logScaled_reco[0])
                 
             mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
 
@@ -52,18 +49,30 @@ def UnscaleTensor(config, model, dataLoader, outputDir, batch_size):
             if (config.noProv):
                 logScaled_reco = logScaled_reco[:,:,:-1]
 
+            #print(mask_recoParticles.shape)
+            #print(logScaled_reco.shape)
+
             out = model(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
 
+            #print(out)
             if config.conditioning_transformer.use_latent:
                 no_particles = len(out) - 1
             else:
                 no_particles = len(out)
 
+            
             for particle in range(no_particles):
+                out_unscaled_log = out[particle]*log_std + log_mean
+                out_unscaled = out_unscaled_log
+                out_unscaled[:,0] = torch.sign(out_unscaled_log[:,0])*(torch.exp(torch.abs(out_unscaled_log[:,0])) - 1)
+                # print(unscaledRegressedPartonsTensor[i*batch_size:(i+1)*batch_size,particle,:].shape)
+                # print(out_unscaled.shape)
                 if out[particle].shape[0] == batch_size:
-                    unscaledRegressedPartonsTensor[i*batch_size:(i+1)*batch_size,particle,:] = out[particle]
+                    unscaledRegressedPartonsTensor[i*batch_size:(i+1)*batch_size,particle] = out_unscaled.cpu()
                 else:
-                    unscaledRegressedPartonsTensor[i*batch_size:,particle,:] = out[particle]
+                    unscaledRegressedPartonsTensor[i*batch_size:,particle] = out_unscaled.cpu()
+
+                    
 
     
     torch.save((unscaledRegressedPartonsTensor), f'{outputDir}/unscaledRegressedPartonsTensor.pt')
@@ -76,7 +85,9 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-dir', type=str, required=True, help='path to model directory')
+    parser.add_argument('--conf', type=str, required=True, help='path config')
     parser.add_argument('--on-GPU', action="store_true",  help='run on GPU boolean')
+    parser.add_argument('--data-validation', type=str, required=False, help="Validation dataset overwrite")
     args = parser.parse_args()
     
     if(args.model_dir[-1] != '/'):
@@ -85,12 +96,13 @@ if __name__ == '__main__':
         args.model_dir = args.model_dir[:len(args.model_dir)-1] # remove '/' from input 
 
     path_to_dir = args.model_dir
-    path_to_conf = glob.glob(f"{path_to_dir}/*.yaml")[0]
+    path_to_conf = f"{args.model_dir}/{args.conf}"
     model_path = glob.glob(f"{path_to_dir}/model*.pt")[0]
     
     # Read config file in 'conf'
-    with open(path_to_conf) as f:
-        conf = OmegaConf.load(path_to_conf)
+    conf = OmegaConf.load(path_to_conf)
+    if args.data_validation:
+        conf.input_dataset_validation = args.data_validation
 
     on_GPU = args.on_GPU # by default run on CPU
     outputDir = args.model_dir
@@ -119,24 +131,25 @@ if __name__ == '__main__':
     
     # READ data
     if (conf.cartesian):
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
+        data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64,
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
                                 parton_list=[])
     else:
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
+        data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64,
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
                                 parton_list=[])
-    
+
+    print(f"Working with {len(data)} samples")
     batch_size = 2048
     data_loader = DataLoader(dataset=data, shuffle=False, batch_size=batch_size)
 
     if (device == torch.device('cuda')):
         nvmlInit()
-        h = nvmlDeviceGetHandleByIndex(0)
+        h = nvmlDeviceGetHandleByIndex(actual_devices[0])
         # card id 0 hardcoded here, there is also a call to get all available card ids, so we could iterate
         info = nvmlDeviceGetMemoryInfo(h)
         print(f'\ntotal    : {info.total}')
@@ -163,15 +176,17 @@ if __name__ == '__main__':
                                     no_decoders=conf.conditioning_transformer.no_decoders,
                                     aggregate=conf.conditioning_transformer.aggregate,
                                     use_latent=conf.conditioning_transformer.use_latent,
+                                    out_features_latent=conf.conditioning_transformer.out_features_latent,
+                                    no_layers_decoder_latent=conf.conditioning_transformer.no_layers_decoder_latent,   
                                     dtype=torch.float64)
 
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict['model_state_dict'])
-    model.eval()
+    print("Model weight evaluated")
     
     if (device == torch.device('cuda')):
         nvmlInit()
-        h = nvmlDeviceGetHandleByIndex(0)
+        h = nvmlDeviceGetHandleByIndex(actual_devices[0])
         # card id 0 hardcoded here, there is also a call to get all available card ids, so we could iterate
         info = nvmlDeviceGetMemoryInfo(h)
         print(f'\ntotal    : {info.total}')
@@ -186,28 +201,14 @@ if __name__ == '__main__':
 
     # Copy model on GPU memory
     if (device == torch.device('cuda')):
-        model = model.cuda()
+        if len(actual_devices)>1:
+            model = torch.nn.DataParallel(model)
+
+        model = model.to(device)
 
     print(f"parameters total:{count_parameters(model)}")
-    if (device == torch.device('cuda')):
-        
-        # TODO: split the data for multi-GPU processing
-        if len(actual_devices) > 1:
-            #world_size = torch.cuda.device_count()
-            # make a dictionary with k: rank, v: actual device
-            #dev_dct = {i: actual_devices[i] for i in range(world_size)}
-            #print(f"Devices dict: {dev_dct}")
-            #mp.spawn(
-            #    TrainingAndValidLoop,
-            #    args=(conf, model, train_loader, val_loader, world_size),
-            #    nprocs=world_size,
-            #    join=True,
-            #)
-            UnscaleTensor(conf, model, data_loader, outputDir, batch_size)
-        else:
-            UnscaleTensor(conf, model, data_loader, outputDir, batch_size)
-    else:
-        UnscaleTensor(conf, model, data_loader, outputDir, batch_size)
+    model.eval()
+    UnscaleTensor(conf, model, data_loader, len(data), outputDir, batch_size, device)
         
     
     print("Unscale tensor finished!")
