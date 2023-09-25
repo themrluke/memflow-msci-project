@@ -341,10 +341,9 @@ class Dataset_PartonLevel(Dataset):
             "H_thad_tlep_ISR_cartesian"))
 
 
-
     def get_intermediateParticles_cartesian_onShell(self):
         tensor_cartesian_onShell = self.data_higgs_t_tbar_ISR_cartesian.clone()
-        mass = [M_HIGGS, M_TOP, M_TOP, M_GLUON]
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
         for i in range(4):
             tensor_cartesian_onShell[:,i,0] = torch.sqrt(tensor_cartesian_onShell[:,i,1]**2 + tensor_cartesian_onShell[:,i,2]**2 + tensor_cartesian_onShell[:,i,3]**2 + mass[i]**2)
 
@@ -354,7 +353,7 @@ class Dataset_PartonLevel(Dataset):
 
     def get_PS_intermediateParticles_onShell(self):
         E_CM = 13000
-        mass = [M_HIGGS, M_TOP, M_TOP, M_GLUON]
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
         phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], final_masses=mass, dev="cpu")
 
         incoming_p_boost = self.data_boost
@@ -370,7 +369,7 @@ class Dataset_PartonLevel(Dataset):
     def get_PS_intermediateParticles(self):
 
         E_CM = 13000
-        mass = [M_HIGGS, M_TOP, M_TOP, M_GLUON]
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
         phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], final_masses=mass, dev="cpu")
 
         incoming_p_boost = self.data_boost
