@@ -11,9 +11,7 @@ from .utils import *
 
 M_HIGGS = 125.25
 M_TOP = 172.5
-M_GLUON = 1e-3
-
-torch.set_default_dtype(torch.double)
+M_GLUON = 0.0
 
 
 class PhaseSpaceGeneratorError(Exception):
@@ -57,7 +55,6 @@ class VirtualPhaseSpaceGenerator(object):
             )
         self.initial_masses = initial_masses
         self.masses_t = final_masses.clone().to(dev)
-        print(f'Phasespace class: masses: {self.masses_t}')
         self.tot_final_state_masses = torch.sum(self.masses_t)
         self.n_initial = len(initial_masses)
         self.n_final = len(final_masses)
@@ -595,7 +592,7 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
                     )
         return
 
-    def getPSpoint_batch(self, momenta_batch, x1, x2, order=[0,1,2,3], ensure_CM=True):
+    def getPSpoint_batch(self, momenta_batch, x1, x2, order=[0,1,2,3], target_mass=torch.Tensor([[M_HIGGS, M_TOP, M_TOP, M_GLUON]]), ensure_CM=True, ensure_onShell=True):
         """Generate a self.n_final -> self.n_initial phase-space point
         using the four momenta given in input.
 
@@ -625,7 +622,10 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
         Q = torch.zeros_like(P).to(P.device)
         Q[:, -1] = P[:, -1]  # Qn = pn
 
-        masses_t = self.masses_t[perm].unsqueeze(dim=0)
+        if ensure_onShell:
+            masses_t = self.masses_t[perm].unsqueeze(dim=0)
+        else:
+            masses_t = target_mass
         #print(masses_t.shape)
 
         # intermediate mass

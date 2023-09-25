@@ -3,8 +3,6 @@ from . import utils
 import torch
 from particle import Particle
 
-torch.set_default_dtype(torch.double)
-
 
 # def get_pdfxQ2(pdf, pdg, x, scale2):
 #     """Call the PDF and return the corresponding density."""
@@ -31,7 +29,7 @@ torch.set_default_dtype(torch.double)
 
 
 class PhaseSpace:
-    def __init__(self, collider_energy, initial_pdgs, final_pdgs, final_masses, pdf=None, dev=None):
+    def __init__(self, collider_energy, initial_pdgs, final_pdgs, pdf=None, dev=None):
         if dev == None:
             self.dev = (
                 torch.device("cuda:" + str(0))
@@ -43,7 +41,9 @@ class PhaseSpace:
         self.collider_energy = collider_energy
         self.initial_pdgs = initial_pdgs
         self.final_pdgs = final_pdgs
-        self.final_masses = final_masses
+        self.final_masses = torch.tensor(
+            [Particle.from_pdgid(pdg).mass / 1e3 for pdg in self.final_pdgs]
+        ).to(self.dev)
         self.final_state_mass = torch.sum(self.final_masses)
         self.pdf = pdf
         # init the generatoer
@@ -96,8 +96,8 @@ class PhaseSpace:
         )
         return momenta, weight, x1, x2
 
-    def get_ps_from_momenta(self, momenta, x1, x2, ensure_CM=True, order=[0,1,2,3]):
+    def get_ps_from_momenta(self, momenta, x1, x2, ensure_CM=True):
         ''' Momenta contains the two incoming particle 1 and 2 and the
         final state particles in the correct order'''
-        ps, detjacinv = self.generator.getPSpoint_batch(momenta, x1, x2, order=order)
+        ps, detjacinv = self.generator.getPSpoint_batch(momenta, x1, x2)
         return ps, detjacinv
