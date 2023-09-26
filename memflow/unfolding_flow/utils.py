@@ -7,7 +7,7 @@ import memflow.phasespace.utils as utils
 
 M_HIGGS = 125.25
 M_TOP = 172.5
-M_GLUON = 0.0
+M_GLUON = 1e-3
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

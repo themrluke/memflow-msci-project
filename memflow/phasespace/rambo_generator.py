@@ -657,6 +657,8 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
                 (P_copy[:, j - 1, 3] / torch.sqrt(rho2_t(P_copy[:, j - 1]))) + 1
             ) / 2
             # phi= tan^-1(Py/Px)
+            #phi = torch.atan2(P_copy[:, j - 1, 2], P_copy[:, j - 1, 1])
+            #phi = torch.where(phi >= 0, phi, phi + 2*torch.pi)
             phi = torch.atan(P_copy[:, j - 1, 2] / P_copy[:, j - 1, 1])
             # Fixing phi depending on X and y sign
             # 4th quandrant  (px > 0, py < 0)

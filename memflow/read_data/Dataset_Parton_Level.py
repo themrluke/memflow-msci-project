@@ -14,7 +14,9 @@ torch.set_default_dtype(torch.double)
 
 from .utils import get_weight
 
-
+M_HIGGS = 125.25
+M_TOP = 172.5
+M_GLUON = 1e-3
 
 class Dataset_PartonLevel(Dataset):
     def __init__(self, root, object_types=["partons", "lepton_partons", "boost",
@@ -279,6 +281,13 @@ class Dataset_PartonLevel(Dataset):
         top_leptonic = self.get_top_leptonic()
         gluon_ISR = self.gluon_ISR
 
+        boost = higgs + top_hadronic + top_leptonic + gluon_ISR
+
+        higgs = higgs.boost_p4(boost.neg3D)
+        top_hadronic = top_hadronic.boost_p4(boost.neg3D)
+        top_leptonic = top_leptonic.boost_p4(boost.neg3D)
+        gluon_ISR = gluon_ISR.boost_p4(boost.neg3D)
+
         # Don't need to boost in CM frame because the partons/leptons are already boosted
 
         intermediate = [higgs, top_hadronic, top_leptonic, gluon_ISR]
@@ -304,6 +313,13 @@ class Dataset_PartonLevel(Dataset):
         top_leptonic = self.get_top_leptonic()
         gluon_ISR = self.gluon_ISR
 
+        boost = higgs + top_hadronic + top_leptonic + gluon_ISR
+
+        higgs = higgs.boost_p4(boost.neg3D)
+        top_hadronic = top_hadronic.boost_p4(boost.neg3D)
+        top_leptonic = top_leptonic.boost_p4(boost.neg3D)
+        gluon_ISR = gluon_ISR.boost_p4(boost.neg3D)
+
         # Don't need to boost in CM frame because the partons/leptons are already boosted
         intermediate = [higgs, top_hadronic, top_leptonic, gluon_ISR]
 
@@ -327,10 +343,9 @@ class Dataset_PartonLevel(Dataset):
             "H_thad_tlep_ISR_cartesian"))
 
 
-
     def get_intermediateParticles_cartesian_onShell(self):
         tensor_cartesian_onShell = self.data_higgs_t_tbar_ISR_cartesian.clone()
-        mass = [125.25, 172.5, 172.5, 0.000001]
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
         for i in range(4):
             tensor_cartesian_onShell[:,i,0] = torch.sqrt(tensor_cartesian_onShell[:,i,1]**2 + tensor_cartesian_onShell[:,i,2]**2 + tensor_cartesian_onShell[:,i,3]**2 + mass[i]**2)
 
@@ -340,7 +355,8 @@ class Dataset_PartonLevel(Dataset):
 
     def get_PS_intermediateParticles_onShell(self):
         E_CM = 13000
-        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], dev="cpu")
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
+        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], final_masses=mass, dev="cpu")
 
         incoming_p_boost = self.data_boost
         x1 = (incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM
@@ -355,7 +371,8 @@ class Dataset_PartonLevel(Dataset):
     def get_PS_intermediateParticles(self):
 
         E_CM = 13000
-        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], dev="cpu")
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
+        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], final_masses=mass, dev="cpu")
 
         incoming_p_boost = self.data_boost
         x1 = (incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM

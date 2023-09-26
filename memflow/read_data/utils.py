@@ -10,6 +10,7 @@ vector.register_numba()
 import numpy.ma as ma
 from torch.utils.data import DataLoader
 
+M_GLUON = 1e-3
 
 struct_jets = ak.zip({"pt": np.float32(0),
                       "eta": np.float32(0),
@@ -31,10 +32,10 @@ struct_partons = ak.zip({"pt": np.float32(0),
                          "prov": -1},
                         with_name='Momentum4D')
 
-struct_gluon = ak.zip({"pt": np.float32(1e-7),
+struct_gluon = ak.zip({"pt": np.float32(M_GLUON),
                          "eta": np.float32(0.),
                          "phi": np.float32(0.),
-                         "mass": np.float64(1e-7),
+                         "mass": np.float64(M_GLUON),
                          "pdgId": bool(0),
                          "prov": -1},
                         with_name='Momentum4D')
