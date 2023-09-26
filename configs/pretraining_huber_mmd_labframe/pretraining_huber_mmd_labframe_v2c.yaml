@@ -26,6 +26,7 @@ training_params:
   nEpochsPatience: 50
   eps: 1.0e-05
   mmd_kernel: "multiscale"
+  huber_delta: 4.
   order:
   - 0
   - 1

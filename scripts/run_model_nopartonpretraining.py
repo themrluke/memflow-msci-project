@@ -1,3 +1,5 @@
+from comet_ml import Experiment
+from comet_ml.integration.pytorch import log_model
 from memflow.unfolding_flow.unfolding_flow import UnfoldingFlow
 from memflow.read_data.dataset_all import DatasetCombined
 from memflow.unfolding_network.conditional_transformer import ConditioningTransformerLayer
@@ -51,35 +53,53 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
     N_valid = len(validLoader)
 
    
-    # Define the constraint
-    constraint = mdmm.MaxConstraint(
-                    compute_losses,
-                    max=1.27, # to be modified based on the regression
-                    scale=config.MDMM.eps_regression,
-                    damping=5,
-                    )
+    # # Define the constraint
+    # constraint = mdmm.MaxConstraint(
+    #                 compute_losses,
+    #                 max=1.27, # to be modified based on the regression
+    #                 scale=config.MDMM.eps_regression,
+    #                 damping=5,
+    #                 )
 
-    constraint_bias = mdmm.MaxConstraint(
-                    BiasLoss_Std,
-                    max=0.01, # to be modified based on the regression
-                    scale=config.MDMM.eps_stdMean,
-                    damping=5,
-                    )
+    # constraint_bias = mdmm.MaxConstraint(
+    #                 BiasLoss_Std,
+    #                 max=0.01, # to be modified based on the regression
+    #                 scale=config.MDMM.eps_stdMean,
+    #                 damping=5,
+    #                 )
 
-    # Create the optimizer
-    MDMM_module = mdmm.MDMM([constraint]) # support many constraints TODO: use a constraint for every particle
-    MDMM_module_bias = mdmm.MDMM([constraint_bias]) # support many constraints TODO: use a constraint for every particle
+    # # Create the optimizer
+    # MDMM_module = mdmm.MDMM([constraint]) # support many constraints TODO: use a constraint for every particle
+    # MDMM_module_bias = mdmm.MDMM([constraint_bias]) # support many constraints TODO: use a constraint for every particle
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.training_params.lr)
+    # optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
+    # scheduler = CosineAnnealingLR(optimizer, T_max=10)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                           factor=config.training_params.reduce_on_plateau.factor,
+                                                           patience=config.training_params.reduce_on_plateau.patience,
+                                                           threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
     
-    optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=10)
-    
-    name_dir = f'{outputDir}/results_{config.name}_{config.version}_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_stdMean}'
+    name_dir = f'{outputDir}/flow_{config.name}_{config.version}_{config.unfolding_flow.base}_FirstArg:{config.unfolding_flow.base_first_arg}_Autoreg:{config.unfolding_flow.autoregressive}_NoTransf:{config.unfolding_flow.ntransforms}_NoBins:{config.unfolding_flow.bins}_DNN:{config.unfolding_flow.hiddenMLP_NoLayers}:{config.unfolding_flow.hiddenMLP_LayerDim}_epsMDMM:{config.MDMM.eps_stdMean}'
     modelName = f"{name_dir}/model_flow.pt"
-    writer = SummaryWriter(name_dir)
+
+    os.makedirs(name_dir, exist_ok=True)
+
+    exp = Experiment(
+        api_key=config.comet_token,
+        project_name="memflow",
+        workspace="valsdav"
+    )
+
+    exp.add_tags([config.name,config.version])
+    exp.log_parameters(config.training_params)
+    exp.log_parameters(config.conditioning_transformer)
+    exp.log_parameters(config.MDMM)
+    
+    # writer = SummaryWriter(name_dir)
     with open(f"{name_dir}/config_{config.name}_{config.version}.yaml", "w") as fo:
         fo.write(OmegaConf.to_yaml(config))
 
-    early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.001)
+    early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=config.training_params.early_stop_delta)
     torch.autograd.set_detect_anomaly(True)
 
     sampling_Forward = config.training_params.sampling_Forward
@@ -120,11 +140,11 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
             mask_jets, mask_met, 
             mask_boost_reco, data_boost_reco) = data
 
-            mask0 = PS_target < 0
-            mask1 = PS_target > 1
-            if (mask0.any() or mask1.any()):
-                print('PS target < 0 or > 1')
-                exit(0)
+            # mask0 = PS_target < 0
+            # mask1 = PS_target > 1
+            # if (mask0.any() or mask1.any()):
+            #     print('PS target < 0 or > 1')
+            #     exit(0)
 
             # here i start to subsplit -> do this because too much memory is required to sample
             # if the batch size is kept fixed (like in NormalizingDirection training))
@@ -158,27 +178,27 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     detjac = PS_rambo_detjacobian[firstElem:lastElem].log()
 
                     if sampling_Forward:
+                        pass
+                        # # rsample for sampling with grads
+                        # flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
+                        # PS_target_expanded = PS_target[firstElem:lastElem] # size [1,1024,10]
 
-                        # rsample for sampling with grads
-                        flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
-                        PS_target_expanded = PS_target[firstElem:lastElem] # size [1,1024,10]
+                        # sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
+                        # sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
 
-                        sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                        sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
+                        # sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
+                        # sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
 
-                        sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
-                        sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
+                        # flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
+                        # PS_target_masked = PS_target_expanded[sample_mask_events] # remove the events with bad samples
 
-                        flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
-                        PS_target_masked = PS_target_expanded[sample_mask_events] # remove the events with bad samples
-
-                        mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
+                        # mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
                         
-                        mdmm_return = MDMM_module_bias(mean_BiasOverRambo, [(std_BiasOverRambo)])
+                        # mdmm_return = MDMM_module_bias(mean_BiasOverRambo, [(std_BiasOverRambo)])
 
-                        flow_loss = mdmm_return.value
-                        bias_sum_loss += mean_BiasOverRambo.item()
-                        std_sum_loss += std_BiasOverRambo.item()
+                        # flow_loss = mdmm_return.value
+                        # bias_sum_loss += mean_BiasOverRambo.item()
+                        # std_sum_loss += std_BiasOverRambo.item()
 
                     else:
                         # breakpoint()
@@ -187,7 +207,7 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                     inf_mask = torch.isinf(flow_loss)
                     nonzeros = torch.count_nonzero(inf_mask)
-                    #writer.add_scalar(f"Number_INF_flow_{e}", nonzeros.item(), i)
+                    exp.log_metric(f"number_inf_flow", nonzeros.item(), step=i)
 
                     detjac_mean = -detjac.nanmean()
                     
@@ -201,21 +221,22 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                 sum_loss += loss.item()
 
-                writer.add_scalar(f"detJacOnly_epoch_step", detjac_mean.item(), i)
+                # exp.log_metric(f"detJacOnly_epoch_step", detjac_mean.item(), i)
                 if sampling_Forward:
-                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_MDMMLoss", loss.item(), i)
-                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_BiasMeanLoss", mean_BiasOverRambo.item(), i)
-                    writer.add_scalar(f"Loss_step_train_epoch_step_SamplingDir_StdMeanLoss", std_BiasOverRambo.item(), i)
+                    exp.log_metric(f"loss_step_samplingDir_MDMMLoss", loss.item(), step=i)
+                    exp.log_metric(f"loss_step_samplingDir_BiasMeanLoss", mean_BiasOverRambo.item(), step=i)
+                    exp.log_metric(f"loss_step_SamplingDir_StdMeanLoss", std_BiasOverRambo.item(), step=i)
                 else:
-                    writer.add_scalar(f"Loss_step_train_epoch_step_Normalizing_dir", loss.item(), i)
+                    exp.log_metric(f"loss_step_normalizing_dir", loss.item(), step=i)
+                exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e, step=ii)
 
 
         if sampling_Forward:
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_MDMMLoss", sum_loss/i/no_iterations, e)
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_BiasMeanLoss", bias_sum_loss/i/no_iterations, e)
-            writer.add_scalar(f"Loss_epoch_train_SamplingDir_StdMeanLoss", std_sum_loss/i/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_amplingDir_MDMMLoss", sum_loss/i/no_iterations, epoch=e)
+            writer.add_scalar(f"Loss_epoch_SamplingDir_BiasMeanLoss", bias_sum_loss/i/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_SamplingDir_StdMeanLoss", std_sum_loss/i/no_iterations, e)
         else:
-            writer.add_scalar(f"Loss_epoch_train_NormalizingDir", sum_loss/i/no_iterations, e)
+            writer.add_scalar(f"Loss_epoch_normalizing_dir", sum_loss/i/no_iterations, e)
 
         valid_loss = 0.
         bias_sum_valid = 0.
@@ -308,23 +329,23 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
 
                     mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(data_ps_cpu, ps_new_cpu)
 
-                    writer.add_scalar(f"Validation_Bias_Samples_Var", mean_BiasOverRambo.item(), e)
-                    writer.add_scalar(f"Validation_Std_Samples_Var", std_BiasOverRambo.item(), e)
+                    exp.log_scalar(f"validation_Bias_Samples_Var", mean_BiasOverRambo.item(), e)
+                    exp.log_scalar(f"validation_Std_Samples_Var", std_BiasOverRambo.item(), e)
 
                     for x in range(data_ps_cpu.size(1)):
 
-                        fig, ax = plt.subplots()
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                         h = ax.hist2d(data_ps_cpu[:,x].tile(N_samples,1,1).flatten().numpy(),
                                     ps_new_cpu[:,:,x].flatten().numpy(),
                                     bins=50, range=((-0.1, 1.1),(-0.1, 1.1)))
                         fig.colorbar(h[3], ax=ax)
-                        writer.add_figure(f"Validation_ramboentry_Plot_{x}", fig, e)
+                        exp.log_figure(f"Validation_ramboentry_Plot_{x}", fig, step=e)
 
-                        fig, ax = plt.subplots()
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                         h = ax.hist(
                             (data_ps_cpu[:,x].tile(N_samples,1,1) - ps_new_cpu[:,:,x]).flatten().numpy(),
                             bins=100)
-                        writer.add_figure(f"Validation_ramboentry_Diff_{x}", fig, e)
+                        exp.log_figure(f"Validation_ramboentry_Diff_{x}", fig, step=e)
 
         valid_loss = valid_loss/i/no_iterations
         
@@ -332,17 +353,17 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
         if sampling_Forward:
             bias_sum_valid = bias_sum_valid/i/no_iterations
             std_sum_valid = std_sum_valid/i/no_iterations
-            writer.add_scalar(f"Loss_epoch_val_SamplingDir_MDMMLoss", valid_loss, e)
-            writer.add_scalar(f"Loss_epoch_val_SamplingDir_BiasLoss", bias_sum_valid, e)
-            writer.add_scalar(f"Loss_epoch_val_SamplingDir_StdMeanLoss", std_sum_valid, e)
+            exp.log_metric(f"Loss_epoch_val_SamplingDir_MDMMLoss", valid_loss, epoch=e)
+            exp.log_metric(f"Loss_epoch_val_SamplingDir_BiasLoss", bias_sum_valid, epoch=e)
+            exp.log_metric(f"Loss_epoch_val_SamplingDir_StdMeanLoss", std_sum_valid, epoch=e)
         else:
-            writer.add_scalar(f"Loss_epoch_val_NormalizingDir", valid_loss, e)
+            exp.log_metric(f"Loss_epoch_val_NormalizingDir", valid_loss, epoch=e)
 
         if early_stopper.early_stop(valid_loss, model.state_dict(), optimizer.state_dict(), modelName):
             print(f"Model converges at epoch {e} !!!")         
             break
 
-        scheduler.step() # reduce lr if the model is not improving anymore
+        scheduler.step(valid_loss) # reduce lr if the model is not improving anymore
 
     writer.close()
         
@@ -357,7 +378,6 @@ if __name__ == '__main__':
     parser.add_argument('--output-dir', type=str, required=True, help='path to output directory')
     parser.add_argument('--on-GPU', action="store_true",  help='run on GPU boolean')
     parser.add_argument('--alternativeTr', action="store_true",  help='Use Alternative Training')
-    parser.add_argument('--path-config', type=str, help='by default use the file config from the pretraining directory')
     parser.add_argument('--disable-grad-CondTransformer', action="store_true",  help='Propagate gradients for ConditionalTransformer')
     args = parser.parse_args()
     
@@ -367,15 +387,9 @@ if __name__ == '__main__':
     disableGradTransf = args.disable_grad_CondTransformer
 
     path_to_conf = args.config
-
-    if (args.path_config is not None):
-        path_to_conf = args.path_config
-
     print(path_to_conf)
     # Read config file in 'conf'
-    with open(path_to_conf) as f:
-        conf = OmegaConf.load(path_to_conf)
-        print(conf)
+    conf = OmegaConf.load(path_to_conf)
     
     print("Training with cfg: \n", OmegaConf.to_yaml(conf))
 
@@ -390,14 +404,14 @@ if __name__ == '__main__':
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
-                                parton_list=['phasespace_intermediateParticles_onShell',
+                                parton_list=['phasespace_intermediateParticles_onShell_logit',
                                             'phasespace_rambo_detjacobian_onShell'])
     else:
         data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
-                                parton_list=['phasespace_intermediateParticles_onShell',
+                                parton_list=['phasespace_intermediateParticles_onShell_logit',
                                             'phasespace_rambo_detjacobian_onShell'])
     
     # split data for training sample and validation sample
@@ -436,6 +450,7 @@ if __name__ == '__main__':
                     flow_base_first_arg=conf.unfolding_flow.base_first_arg,
                     flow_base_second_arg=conf.unfolding_flow.base_second_arg,
                     flow_bound=conf.unfolding_flow.bound,
+                    randPerm=conf.unfolding_flow.rand_perm,
                     use_latent=conf.conditioning_transformer.use_latent,
                     device=device,
                     dtype=torch.float64)

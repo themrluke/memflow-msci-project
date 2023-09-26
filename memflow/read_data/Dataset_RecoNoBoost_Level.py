@@ -294,7 +294,6 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         
         meanBoost, stdBoost, scaledLogBoost, LogBoost = self.scaleTensor(self.data_boost,
                                                                          self.mask_boost, isCartesian=True)
-        
         recoMask = torch.cat((self.mask_jets, self.mask_lepton, self.mask_met), dim=1)
         meanRecoCartesian, stdRecoCartesian, scaledLogRecoParticlesCartesian, LogRecoParticlesCartesian = \
                                            self.scaleTensor(self.recoParticlesCartesian,
@@ -313,7 +312,7 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         #torch.save((scaledLogJets, LogJets, meanJets, stdJets), self.processed_file_names('scaledLogJets'))
         #torch.save((scaledLogLepton, LogLepton, meanLepton, stdLepton), self.processed_file_names('scaledLogLepton'))
         #torch.save((scaledLogMet, LogMet, meanMet, stdMet), self.processed_file_names('scaledLogMet'))
-        #torch.save((scaledLogBoost, LogBoost, meanBoost, stdBoost), self.processed_file_names('scaledLogBoost'))
+        torch.save((scaledLogBoost, LogBoost, meanBoost, stdBoost), self.processed_file_names('scaledLogBoost'))
         torch.save((scaledLogRecoParticlesCartesian, LogRecoParticlesCartesian, meanRecoCartesian, stdRecoCartesian),
                        self.processed_file_names('scaledLogRecoParticlesCartesian'))
         torch.save((scaledLogRecoParticles, LogRecoParticles, meanRecoParticles, stdRecoParticles),

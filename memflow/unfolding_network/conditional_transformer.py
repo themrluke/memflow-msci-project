@@ -46,7 +46,6 @@ class ConditioningTransformerLayer(nn.Module):
         self.aggregate = aggregate
         if self.aggregate:
 
-            self.transformer_decoder
             self.output_proj = nn.Linear(in_features=hidden_features, out_features=out_features-2)
         else:
             # do not aggregate but use the transformer encoder output to produce more decoded outputs\

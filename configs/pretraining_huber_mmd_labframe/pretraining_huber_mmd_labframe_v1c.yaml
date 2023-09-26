@@ -32,6 +32,7 @@ training_params:
   - 2
   - 3
   sampling_Forward: false
+  huber_delta: 4.
   reduce_on_plateau:
     factor: 0.5
     patience: 10
@@ -39,11 +40,11 @@ training_params:
 conditioning_transformer:
   out_features: [3,3,3,2]
   hidden_features: 64
-  dim_feedforward_transformer: 1024
+  dim_feedforward_transformer: 512
   nhead_encoder: 8
-  no_layers_encoder: 3
+  no_layers_encoder: 4
   nhead_decoder: 8
-  no_layers_decoder: 3
+  no_layers_decoder: 4
   aggregate: false
   no_decoders: 4
   use_latent: true

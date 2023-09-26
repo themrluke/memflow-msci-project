@@ -23,9 +23,10 @@ training_params:
   sampling_points_loss: 150
   percentage_sampling_epoch: 0.2
   sampling_points: 100
-  nEpochsPatience: 50
+  nEpochsPatience: 60
   eps: 1.0e-05
   mmd_kernel: "multiscale"
+  huber_delta: 4.
   order:
   - 0
   - 1

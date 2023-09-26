@@ -127,6 +127,13 @@ class Dataset_PartonLevel(Dataset):
             self.phasespace_rambo_detjacobian_onShell = torch.load(
                 self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
 
+        if 'phasespace_intermediateParticles_onShell_logit' in self.parton_list:
+            print("Load phasespace_intermediateParticles_onShell_logit")
+            self.phasespace_intermediateParticles_onShell_logit = torch.load(
+                self.processed_file_names("phasespace_intermediateParticles_onShell_logit"))
+            self.phasespace_rambo_detjacobian_onShell = torch.load(
+                self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
+
         if 'phasespace_rambo_detjacobian' in self.parton_list:
             print("Load phasespace_rambo_detjacobian")
             self.phasespace_rambo_detjacobian = torch.load(
@@ -366,6 +373,10 @@ class Dataset_PartonLevel(Dataset):
     
         torch.save(ps, self.processed_file_names(
             "phasespace_intermediateParticles_onShell"))
+        
+        torch.save(torch.logit(ps), self.processed_file_names(
+            "phasespace_intermediateParticles_onShell_logit"))
+        
         torch.save(detjinv, self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
 
     def get_PS_intermediateParticles(self):

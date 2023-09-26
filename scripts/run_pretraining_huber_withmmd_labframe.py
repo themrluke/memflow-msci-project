@@ -78,6 +78,7 @@ def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, b
                                               logScaled_partons[:,2,feature]*scaling_phi[1] + scaling_phi[0], loss_fn, device)
                 # lossGluon +=  loss_fn_periodic(gluon[:,feature]*scaling_phi[1] + scaling_phi[0],
                                               # logScaled_partons[:,3,feature]*scaling_phi[1] + scaling_phi[0], loss_fn, device)
+
         lossBoost = loss_fn(logScaled_boost, boost)
 
     if split:
@@ -89,7 +90,7 @@ def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, b
 def compute_mmd_loss(mmd_input, mmd_target, kernel, device, split=False):
     mmds = []
     for particle in range(len(mmd_input)):
-        mmds.append(MMD(mmd_input[particle], mmd_target[particle], kernel, device ))
+        mmds.append(MMD(mmd_input[particle], mmd_target[particle], kernel, device))
     if split:
         return mmds
     else:
@@ -110,7 +111,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     MDMM_module = mdmm.MDMM([constraint]) # support many constraints TODO: use a constraint for every particle
     
     if HuberLoss:
-        loss_fn = torch.nn.HuberLoss(delta=1.0)
+        loss_fn = torch.nn.HuberLoss(delta=config.training_params.huber_delta)
     else:
         loss_fn = torch.nn.MSELoss() 
     
@@ -253,7 +254,8 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
         valid_mmd_H = 0.
         valid_mmd_thad = 0.
         valid_mmd_tlep = 0.
- 
+        valid_mmd_boost = 0.
+        
         # validation loop (don't update weights and gradients)
         print("Before validation loop")
         model.eval()
@@ -305,9 +307,9 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
                 regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/11
                 
-                mmd_loss_H, mmd_loss_thad, mmd_loss_tlep = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel,
+                mmd_loss_H, mmd_loss_thad, mmd_loss_tlep, mmd_loss_boost = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel,
                                             device=device, split=True)
-                mmd_loss = (mmd_loss_H+ mmd_loss_thad + mmd_loss_tlep)/3
+                mmd_loss = (mmd_loss_H+ mmd_loss_thad + mmd_loss_tlep + mmd_loss_boost)/4
                                 
                 mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, False)])
 
@@ -321,10 +323,10 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 valid_mmd_H += mmd_loss_H.item()
                 valid_mmd_thad += mmd_loss_thad.item()
                 valid_mmd_tlep += mmd_loss_tlep.item()
-            
+                valid_mmd_boost += mmd_loss_boost.item()
                 valid_loss_final += mdmm_return.value.item()
 
-                particle_list = [higgs, thad, tlep, boost]
+                particle_list = [higgs, thad, tlep]
                 
                 if i == 0:
                     for particle in range(len(particle_list)): # 4 or 3 particles: higgs/thad/tlep/gluonISR
@@ -361,10 +363,27 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                             ax.set_xlabel(f"particle {particle} feature {feature}")
                             exp.log_figure(f"particle_1D_{particle}_{feature}", fig, step=e)
 
-               
+                    ranges_boost = [(-3,3),(-2,2)]
+                    for feature in range(2):
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        h = ax.hist2d(logScaled_boost[:,feature].detach().cpu().numpy(),
+                                      boost[:,feature].cpu().detach().numpy().flatten(),
+                                      bins=40, range=(ranges_boost[feature],ranges_boost[feature] ), cmin=1)
+                        fig.colorbar(h[3], ax=ax)
+                        exp.log_figure(f"boost_2D_{feature}", fig,step=e)
 
 
-       
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        ax.hist(logScaled_boost[:,feature].detach().cpu().numpy(),
+                                      bins=30, range=ranges_boost[feature], label="truth", histtype="step")
+                        ax.hist(boost[:,feature].cpu().detach().numpy().flatten(),
+                                      bins=30, range=ranges_boost[feature], label="regressed",histtype="step")
+                        ax.legend()
+                        ax.set_xlabel(f"boost feature {feature}")
+                        exp.log_figure(f"boost_1D_{feature}", fig, step=e)
+
+
+
         exp.log_metric("loss_total_val", valid_loss_final/N_valid, epoch=e )
         exp.log_metric("loss_mmd_val", valid_loss_mmd/N_valid,epoch= e)
         exp.log_metric('loss_huber_val', valid_loss_huber/N_valid,epoch= e)
@@ -375,6 +394,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
         exp.log_metric("loss_mmd_val_H", valid_mmd_H/N_valid,epoch= e)
         exp.log_metric("loss_mmd_val_thad", valid_mmd_thad/N_valid,epoch= e)
         exp.log_metric("loss_mmd_val_tlep", valid_mmd_tlep/N_valid,epoch= e)
+        exp.log_metric("loss_mmd_val_boost", valid_mmd_boost/N_valid,epoch= e)
 
         if early_stopper.early_stop(valid_loss_final/N_valid,
                                     model.state_dict(), optimizer.state_dict(), modelName, exp):
@@ -430,7 +450,7 @@ if __name__ == '__main__':
         data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, boost_CM=False,
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
-                                            'mask_boost', 'data_boost'],
+                                            'mask_boost', 'scaledLogBoost'],
                                 parton_list=['logScaled_data_higgs_t_tbar_ISR',
                                              'logScaled_data_boost',
                                              'mean_log_data_higgs_t_tbar_ISR',
@@ -441,7 +461,7 @@ if __name__ == '__main__':
         data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, boost_CM=False,
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
-                                            'mask_boost', 'data_boost'],
+                                            'mask_boost', 'scaledLogBoost'],
                                 parton_list=['logScaled_data_higgs_t_tbar_ISR',
                                              'logScaled_data_boost',
                                              'mean_log_data_higgs_t_tbar_ISR',

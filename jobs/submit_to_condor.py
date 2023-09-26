@@ -49,6 +49,19 @@ elif model == "huber_mmd_labframe":
     sub['request_gpus'] = '1'
     sub['arguments'] = f"pretraining_huber_mmd_labframe/pretraining_huber_mmd_labframe_v{version}.yaml flow_pretraining_huber_mmd_labframe"
 
+
+elif model == "flow_nopretrain":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_flow_nopretrain.sh"
+    sub['Error'] = f"{basedir}/jobs/error/flow-nopretrain-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/flow-nopretrain-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/flow-nopretrain-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['request_cpus'] = '3'
+    sub['request_gpus'] = '1'
+    sub['arguments'] = f"flow_nopretrain_spanet_logit/flow_nopretrain_v{version}.yaml flow_nopretrain_spanet_logit"
+
     
 schedd = htcondor.Schedd()
 with schedd.transaction() as txn:
