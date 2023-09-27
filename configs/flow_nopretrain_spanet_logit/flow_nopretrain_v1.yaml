@@ -12,7 +12,7 @@ scaling_params:
   log_mean: []
   log_std: []
 training_params:
-  lr: 0.0001
+  lr: 0.001
   batch_size_training: 1024
   batch_size_validation: 1024
   subsplit: 8
@@ -51,13 +51,13 @@ unfolding_flow:
   ncond: 32
   ntransforms: 10
   hiddenMLP_NoLayers: 4
-  hiddenMLP_LayerDim: 256
-  bins: 30
+  hiddenMLP_LayerDim: 128
+  bins: 40
   autoregressive: false
   rand_perm: true
   base: DiagNormal
   base_first_arg: 0
-  base_second_arg: 3
+  base_second_arg: 4
   bound: 10
 MDMM:
   eps_stdMean: 1.5

@@ -519,7 +519,7 @@ if __name__ == '__main__':
                                     use_latent=conf.conditioning_transformer.use_latent,
                                     out_features_latent=conf.conditioning_transformer.out_features_latent,
                                     no_layers_decoder_latent=conf.conditioning_transformer.no_layers_decoder_latent,     
-                                    dtype=torch.float64)
+3                                    dtype=torch.float64)
 
 
     print(f"parameters total:{count_parameters(model)}\n")

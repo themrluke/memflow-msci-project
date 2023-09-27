@@ -22,8 +22,8 @@ class UnfoldingFlow(nn.Module):
                  cond_NoDecoders=3,
                  cond_aggregate=False,
                  flow_nfeatures=12,
-                 flow_ncond=34, f
-                 low_ntransforms=5,
+                 flow_ncond=34, 
+                 flow_ntransforms=5,
                  flow_hiddenMLP_NoLayers=16,
                  flow_hiddenMLP_LayerDim=128,
                  flow_bins=16,

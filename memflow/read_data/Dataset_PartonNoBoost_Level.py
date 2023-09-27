@@ -14,7 +14,9 @@ torch.set_default_dtype(torch.double)
 
 from .utils import get_weight
 
-
+M_HIGGS = 125.25
+M_TOP = 172.5
+M_GLUON = 1e-3
 
 class Dataset_PartonLevel_NoBoost(Dataset):
     def __init__(self, root, object_types=["partons", "lepton_partons", "boost",
@@ -325,7 +327,8 @@ class Dataset_PartonLevel_NoBoost(Dataset):
 
     def get_PS_intermediateParticles_onShell(self):
         E_CM = 13000
-        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], dev="cpu")
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
+        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], mass, dev="cpu")
 
         incoming_p_boost = self.data_boost
         x1 = (incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM
@@ -340,7 +343,8 @@ class Dataset_PartonLevel_NoBoost(Dataset):
     def get_PS_intermediateParticles(self):
 
         E_CM = 13000
-        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], dev="cpu")
+        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
+        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], mass, dev="cpu")
 
         incoming_p_boost = self.data_boost
         x1 = (incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM

@@ -13,7 +13,7 @@ scaling_params:
   log_std: []
 training_params:
   lr: 0.001
-  batch_size_training: 512
+  batch_size_training: 1024
   batch_size_validation: 1024
   subsplit: 8
   nepochs: 1000
@@ -36,11 +36,11 @@ training_params:
     patience: 5
     threshold: 1e-3
 conditioning_transformer:
-  out_features: 32
-  hidden_features: 128
-  dim_feedforward_transformer: 1024
+  out_features: 10
+  hidden_features: 64
+  dim_feedforward_transformer: 512
   nhead_encoder: 8
-  no_layers_encoder: 8
+  no_layers_encoder: 8 
   nhead_decoder: 8
   no_layers_decoder: 6
   aggregate: true
@@ -48,16 +48,16 @@ conditioning_transformer:
   use_latent: true
 unfolding_flow:
   nfeatures: 10
-  ncond: 32
-  ntransforms: 10
+  ncond: 10
+  ntransforms: 20
   hiddenMLP_NoLayers: 4
-  hiddenMLP_LayerDim: 256
-  bins: 30
+  hiddenMLP_LayerDim: 128
+  bins: 40
   autoregressive: false
   rand_perm: true
   base: DiagNormal
   base_first_arg: 0
-  base_second_arg: 3
+  base_second_arg: 4
   bound: 10
 MDMM:
   eps_stdMean: 1.5
