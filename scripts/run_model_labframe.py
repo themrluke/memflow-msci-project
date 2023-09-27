@@ -178,7 +178,9 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
         fo.write(OmegaConf.to_yaml(config))
 
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=config.training_params.early_stop_delta)
-    torch.autograd.set_detect_anomaly(True)
+
+    # For debugging it slows down critically the jobs
+    # torch.autograd.set_detect_anomaly(True)
 
     sampling_Forward = config.training_params.sampling_Forward
     N_samplesLoss = config.training_params.sampling_points_loss
@@ -246,65 +248,65 @@ def TrainingAndValidLoop(config, model, trainingLoader, validLoader, outputDir, 
                     lastElem = PS_target.size(0)
 
                 # Runs the forward pass with autocasting.
-                with autocast(device_type='cuda', dtype=torch.float16):
+                # with autocast(device_type='cuda', dtype=torch.float16):
                 #if True:
                     cond_X, PS_regressed = model(mask_jets=mask_jets[firstElem:lastElem],
-                                                 mask_lepton_reco=mask_lepton_reco[firstElem:lastElem],
-                                                 mask_met=mask_met[firstElem:lastElem],
-                                                 mask_boost_reco=mask_boost_reco[firstElem:lastElem],
-                                                 logScaled_reco=logScaled_reco[firstElem:lastElem],
-                                                 data_boost_reco=data_boost_reco[firstElem:lastElem], 
-                                                 device=device,
-                                                 noProv=config.noProv,
-                                                 eps=config.training_params.eps,
-                                                 order=config.training_params.order,
-                                                 disableGradTransformer=disableGradTransformer)
+                                             mask_lepton_reco=mask_lepton_reco[firstElem:lastElem],
+                                             mask_met=mask_met[firstElem:lastElem],
+                                             mask_boost_reco=mask_boost_reco[firstElem:lastElem],
+                                             logScaled_reco=logScaled_reco[firstElem:lastElem],
+                                             data_boost_reco=data_boost_reco[firstElem:lastElem], 
+                                             device=device,
+                                             noProv=config.noProv,
+                                             eps=config.training_params.eps,
+                                             order=config.training_params.order,
+                                             disableGradTransformer=disableGradTransformer)
 
-                    if (config.unfolding_flow.logit):
-                        mask0 = PS_regressed < eps_logit
-                        mask1 = PS_regressed > 1-eps_logit
-                        PS_regressed[mask0] = eps_logit
-                        PS_regressed[mask1] = 1-eps_logit
-                        PS_regressed = torch.logit(PS_regressed)
+                if (config.unfolding_flow.logit):
+                    mask0 = PS_regressed < eps_logit
+                    mask1 = PS_regressed > 1-eps_logit
+                    PS_regressed[mask0] = eps_logit
+                    PS_regressed[mask1] = 1-eps_logit
+                    PS_regressed = torch.logit(PS_regressed)
 
-                    detjac = PS_rambo_detjacobian[firstElem:lastElem].log()
+                detjac = PS_rambo_detjacobian[firstElem:lastElem].log()
 
-                    if sampling_Forward:
+                if sampling_Forward:
 
-                        # rsample for sampling with grads
-                        flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
-                        PS_target_masked = PS_target[firstElem:lastElem] # size [1,1024,10]
+                    # rsample for sampling with grads
+                    flow_sample = model.flow(PS_regressed).rsample((N_samplesLoss,)) # size [100,1024,10]
+                    PS_target_masked = PS_target[firstElem:lastElem] # size [1,1024,10]
 
-                        # MASK TO REMOVE EVENTS IF SAMPLING IS OUTSIDE 0-1
-                        #sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
-                        #sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
-                        #sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
-                        #sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
-                        #flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
-                        #PS_target_masked = PS_target_masked[sample_mask_events] # remove the events with bad samples
+                    # MASK TO REMOVE EVENTS IF SAMPLING IS OUTSIDE 0-1
+                    #sample_mask_all = (flow_sample>=0) & (flow_sample<=1)
+                    #sample_mask_all = torch.transpose(sample_mask_all, 0, 1) #[events,samples]
+                    #sample_mask = torch.all(sample_mask_all, dim=2) # reduce the last dimension
+                    #sample_mask_events = torch.all(sample_mask, dim=1) # mask for the events with good samples
+                    #flow_sample = flow_sample[:, sample_mask_events] # remove the events with bad samples
+                    #PS_target_masked = PS_target_masked[sample_mask_events] # remove the events with bad samples
 
-                        mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
-                        
-                        mdmm_return = MDMM_module_bias(mean_BiasOverRambo, [(std_BiasOverRambo)])
+                    mean_BiasOverRambo, std_BiasOverRambo = BiasLoss(PS_target_masked, flow_sample)
 
-                        flow_loss = mdmm_return.value
-                        bias_sum_loss += mean_BiasOverRambo.item()
-                        std_sum_loss += std_BiasOverRambo.item()
+                    mdmm_return = MDMM_module_bias(mean_BiasOverRambo, [(std_BiasOverRambo)])
 
-                    else:
-                        flow_prob = model.flow(PS_regressed).log_prob(PS_target[firstElem:lastElem])
-                        flow_loss = -flow_prob
+                    flow_loss = mdmm_return.value
+                    bias_sum_loss += mean_BiasOverRambo.item()
+                    std_sum_loss += std_BiasOverRambo.item()
 
-                    inf_mask = torch.isinf(flow_loss)
-                    nonzeros = torch.count_nonzero(inf_mask)
-                    #writer.add_scalar(f"Number_INF_flow_{e}", nonzeros.item(), i)
+                else:
+                    flow_prob = model.flow(PS_regressed).log_prob(PS_target[firstElem:lastElem])
+                    flow_loss = -flow_prob
 
-                    detjac_mean = -detjac.nanmean()
-                    
-                    if sampling_Forward:
-                        loss = flow_loss
-                    else:
-                        loss = flow_loss[torch.logical_not(inf_mask)].mean() # dont take infinities into consideration
+                inf_mask = torch.isinf(flow_loss)
+                nonzeros = torch.count_nonzero(inf_mask)
+                #writer.add_scalar(f"Number_INF_flow_{e}", nonzeros.item(), i)
+
+                detjac_mean = -detjac.nanmean()
+
+                if sampling_Forward:
+                    loss = flow_loss
+                else:
+                    loss = flow_loss[torch.logical_not(inf_mask)].mean() # dont take infinities into consideration
 
                 higgs = cond_X[0]
                 thad = cond_X[1]
