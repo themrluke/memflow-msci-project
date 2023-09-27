@@ -400,14 +400,14 @@ if __name__ == '__main__':
         
     # READ data
     if (conf.cartesian):
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64, boost_CM=True, 
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],
                                 parton_list=['phasespace_intermediateParticles_onShell_logit',
                                             'phasespace_rambo_detjacobian_onShell'])
     else:
-        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,
+        data = DatasetCombined(conf.input_dataset, dev=device, dtype=torch.float64,boost_CM=True,
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'data_boost'],

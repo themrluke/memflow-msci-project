@@ -103,24 +103,18 @@ class Compute_ParticlesTensor:
         return data_regressed, boost_regressed
 
     def get_cartesian_comp(particle, mass, device):
-
-        particle_cartesian = torch.zeros((particle.shape[0], 4), device=device)
-        
         # px
-        particle_cartesian[:,1] = particle[:,0]*torch.cos(particle[:,2])
+        Px = particle[:,0]*torch.cos(particle[:,2])
 
         # py
-        particle_cartesian[:,2] = particle[:,0]*torch.sin(particle[:,2])
+        Py = particle[:,0]*torch.sin(particle[:,2])
 
         # pz
-        particle_cartesian[:,3] = particle[:,0]*torch.sinh(particle[:,1])
+        Pz = particle[:,0]*torch.sinh(particle[:,1])
 
-        particle2 = particle_cartesian.clone()
-
-        # E
-        particle_cartesian[:,0] = torch.sqrt(particle2[:,1]**2 + particle2[:,2]**2 + particle2[:,3]**2 + mass**2)
-
-        return particle_cartesian
+         # E
+        E = torch.sqrt(Px**2 + Py**2 + Pz**2 + mass**2)
+        return torch.stack((E, Px, Py, Pz), dim=1)
 
     def get_HttISR_numpy(cond_X, log_mean, log_std, device, cartesian=True, eps=0.0):
 
@@ -165,6 +159,55 @@ class Compute_ParticlesTensor:
         # if (device == torch.device('cuda')):
         #     data_regressed = data_regressed.cuda()
         #     boost_regressed = boost_regressed.cuda()
+        
+        return data_regressed, boost_regressed
+
+    def get_HttISR_fromlab_numpy(cond_X, log_mean_parton,
+                                  log_std_parton,
+                                  log_mean_boost, log_std_boost,
+                                  device, cartesian=True, eps=1e-5):
+
+        boost = cond_X[3]
+        Htt = torch.stack((cond_X[0], cond_X[1],cond_X[2]), dim=1)
+
+        unscaledlog = Htt*log_std_parton + log_mean_parton
+        data_regressed = unscaledlog.clone()
+        data_regressed[:,:,0] = torch.sign(unscaledlog[:,:,0])*(torch.exp(torch.abs(unscaledlog[:,:,0])) - 1)
+
+        boost_regressed = boost*log_std_boost[1] + log_mean_boost[1]
+        boost_regressed = torch.sign(boost_regressed)*torch.exp(torch.abs(boost_regressed)-1)        
+
+        higgs = data_regressed[:,0]
+        thad = data_regressed[:,1]
+        tlep = data_regressed[:,2]
+        boost_pz = boost_regressed
+
+        higgs_cartesian = Compute_ParticlesTensor.get_cartesian_comp(higgs, M_HIGGS, device)
+        thad_cartesian = Compute_ParticlesTensor.get_cartesian_comp(thad, M_TOP, device)
+        tlep_cartesian = Compute_ParticlesTensor.get_cartesian_comp(tlep, M_TOP, device)
+
+        # Now gluon = boost - partons
+        gluon_px = -(higgs_cartesian[:,1] + thad_cartesian[:,1] + tlep_cartesian[:,1])
+        gluon_py = -(higgs_cartesian[:,2] + thad_cartesian[:,2] + tlep_cartesian[:,2])
+        gluon_pz = boost_pz[:,0] -(higgs_cartesian[:,3] + thad_cartesian[:,3] + tlep_cartesian[:,3])
+        # Now, also energy needs to be correct, but we need to be carefull about the mass of the gluon
+        gluon_E = torch.sqrt(gluon_px**2 + gluon_py**2 + gluon_pz**2) + eps
+
+        gluon_cartesian = torch.stack((gluon_E, gluon_px, gluon_py, gluon_pz), dim=1)
+        
+        if cartesian:
+            data_regressed = torch.stack((higgs_cartesian, thad_cartesian, tlep_cartesian, gluon_cartesian), dim=1)
+            # order: by default higgs/thad/tlep/glISR
+            # but for glISR negative masses in Rambo ==> can switch the order of the data_regressed
+            # I changed to do this permutation of the particles inside the get_PS
+        else:
+            gluon_pt = (gluon_px**2 + gluon_py**2)**0.5
+            gluon_eta = -torch.log(torch.tan(torch.atan2(gluon_pt, gluon_pz)/2))
+            gluon_phi = torch.atan2(gluon_py, gluon_px)
+            gluon = torch.cat((gluon_pt, gluon_eta, gluon_phi), dim=1).to(device)
+            data_regressed = torch.stack((higgs, thad, tlep, gluon), dim=1)
+            
+        boost_regressed = gluon_cartesian + higgs_cartesian + thad_cartesian + tlep_cartesian
         
         return data_regressed, boost_regressed
 

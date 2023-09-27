@@ -31,9 +31,11 @@ from utils import constrain_energy
 from utils import total_mom
 
 from earlystop import EarlyStopper
+from memflow.unfolding_flow.utils import Compute_ParticlesTensor
 
 PI = torch.pi
 
+# torch.autograd.set_detect_anomaly(True)
 
 
 
@@ -101,10 +103,9 @@ def compute_mmd_loss(mmd_input, mmd_target, kernel, device, split=False):
 
 
 
-
-
 def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, outputDir, HuberLoss,
-                         log_mean, log_std):
+                         log_mean_parton, log_std_parton,
+                         log_mean_boost, log_std_boost):
 
 
     constraint = mdmm.MaxConstraint(
@@ -192,7 +193,15 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             higgs = out[0]
             thad = out[1]
             tlep = out[2]
-            boost = out[3]
+
+            data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab_numpy(out, log_mean_parton,
+                                  log_std_parton,
+                                  log_mean_boost, log_std_boost,
+                                  device, cartesian=True, eps=0.0)
+
+            boost = boost_regressed[:, [0,-1]]
+            boost = (torch.sign(boost)*torch.log(boost.abs()+1) - log_mean_boost)/log_std_boost
+                        
             MMD_input = [higgs, thad, tlep, boost]
 
             # compute gluon
@@ -209,10 +218,10 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
             lossH, lossThad, lossTlep, lossBoost = compute_regr_losses(logScaled_partons, logScaled_boost,
                                                             higgs, thad, tlep, boost,
                                                             config.cartesian, loss_fn,
-                                                            scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
+                                                            scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
                                                             split=True,
                                                             device=device)
-            regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/11
+            regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/10
                     
             mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, False)])
 
@@ -240,7 +249,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 exp.log_metric('loss_huber_H', lossH.item()/3,step=ii)
                 exp.log_metric('loss_huber_Thad', lossThad.item()/3,step=ii)
                 exp.log_metric('loss_huber_Tlep', lossTlep.item()/3,step=ii)
-                exp.log_metric('loss_huber_boost', lossBoost.item()/2,step=ii)
+                exp.log_metric('loss_huber_boost', lossBoost.item(),step=ii)
                 exp.log_metric('loss_huber_tot', regr_loss.item(),step=ii)
                 exp.log_metric('loss_tot_train', loss_final.item(),step=ii)
 
@@ -286,7 +295,16 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 higgs = out[0]
                 thad = out[1]
                 tlep = out[2]
-                boost= out[3]
+
+                data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab_numpy(out, log_mean_parton,
+                                  log_std_parton,
+                                  log_mean_boost, log_std_boost,
+                                  device, cartesian=True, eps=0.0)
+
+                boost = boost_regressed[:, [0,-1]]
+                boost = (torch.sign(boost)*torch.log(boost.abs()+1) - log_mean_boost)/log_std_boost
+
+            
                 MMD_input = [higgs, thad, tlep, boost]
                 
                 # MMD_input = torch.cat((higgs.unsqueeze(1),
@@ -308,11 +326,11 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 lossH, lossThad, lossTlep, lossBoost = compute_regr_losses(logScaled_partons,logScaled_boost,
                                                                  higgs, thad, tlep,boost,
                                                                  config.cartesian, loss_fn,
-                                                    scaling_phi=[log_mean[2], log_std[2]], # Added scaling for phi
+                                                    scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
                                                            split=True,
                                                            device=device)
 
-                regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/11
+                regr_loss =  (lossH + lossThad + lossTlep+lossBoost)/10
                 
                 mmd_loss_H, mmd_loss_thad, mmd_loss_tlep, mmd_loss_boost = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel,
                                             device=device, split=True)
@@ -324,7 +342,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 valid_lossH += lossH.item()/3
                 valid_lossTlep += lossTlep.item()/3
                 valid_lossThad += lossThad.item()/3
-                valid_lossBoost += lossBoost.item()/2
+                valid_lossBoost += lossBoost.item()
                 # valid_lossGluon += lossGluon.item()/3
                 valid_loss_mmd += mmd_loss.item()
                 valid_mmd_H += mmd_loss_H.item()
@@ -515,11 +533,15 @@ if __name__ == '__main__':
     
         TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss,
                              data.parton_data.mean_log_data_higgs_t_tbar_ISR,
-                             data.parton_data.std_log_data_higgs_t_tbar_ISR)
+                             data.parton_data.std_log_data_higgs_t_tbar_ISR,
+                             data.parton_data.mean_log_data_boost,
+                             data.parton_data.std_log_data_boost)
     else:
         TrainingAndValidLoop(conf, device, model, train_loader, val_loader, outputDir, use_huberLoss,
                              data.parton_data.mean_log_data_higgs_t_tbar_ISR,
-                             data.parton_data.std_log_data_higgs_t_tbar_ISR)
+                             data.parton_data.std_log_data_higgs_t_tbar_ISR,
+                             data.parton_data.mean_log_data_boost,
+                             data.parton_data.std_log_data_boost)
         
     
     print(f"Normal version: preTraining finished succesfully! Version: {conf.version}")
