@@ -418,10 +418,10 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         # Scaling also the boost
         boost_output = torch.cat((torch.from_numpy(self.boost.E.to_numpy()).unsqueeze(1),
                                   torch.from_numpy(self.boost.pz.to_numpy()).unsqueeze(1)), 1)
-        boost_output = torch.sign(boost_output)*torch.log(1+boost_output.abs())
+        boost_output[:,0] = torch.log(1+boost_output[:,0])
         mean_boost = torch.mean(boost_output, dim=0)
         std_boost = torch.std(boost_output, dim=0)
-        scaled_boost_output = (boost_output -mean_boost)/std_boost
+        scaled_boost_output = (boost_output - mean_boost)/std_boost
         torch.save((mean_boost, std_boost), self.processed_file_names("Log_mean_std_boost"))
         torch.save(scaled_boost_output, self.processed_file_names("LogScaled_boost"))
         
