@@ -167,7 +167,7 @@ class Compute_ParticlesTensor:
                                   log_mean_boost, log_std_boost,
                                   device, cartesian=True, eps=1e-5):
 
-        boost = cond_X[3]
+        boost = cond_X[-1]
         Htt = torch.stack((cond_X[0], cond_X[1],cond_X[2]), dim=1)
 
         unscaledlog = Htt*log_std_parton + log_mean_parton
@@ -204,7 +204,7 @@ class Compute_ParticlesTensor:
             gluon_pt = (gluon_px**2 + gluon_py**2)**0.5
             gluon_eta = -torch.log(torch.tan(torch.atan2(gluon_pt, gluon_pz)/2))
             gluon_phi = torch.atan2(gluon_py, gluon_px)
-            gluon = torch.cat((gluon_pt, gluon_eta, gluon_phi), dim=1).to(device)
+            gluon = torch.stack((gluon_pt, gluon_eta, gluon_phi), dim=1)
             data_regressed = torch.stack((higgs, thad, tlep, gluon), dim=1)
             
         boost_regressed = gluon_cartesian + higgs_cartesian + thad_cartesian + tlep_cartesian
