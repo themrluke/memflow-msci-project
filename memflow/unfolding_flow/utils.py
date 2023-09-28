@@ -172,10 +172,11 @@ class Compute_ParticlesTensor:
 
         unscaledlog = Htt*log_std_parton + log_mean_parton
         data_regressed = unscaledlog.clone()
-        data_regressed[:,:,0] = torch.sign(unscaledlog[:,:,0])*(torch.exp(torch.abs(unscaledlog[:,:,0])) - 1)
+        data_regressed[:,:,0] = torch.exp(torch.abs(unscaledlog[:,:,0])) - 1
 
         boost_regressed = boost*log_std_boost[1] + log_mean_boost[1]
-        boost_regressed = torch.sign(boost_regressed)*torch.exp(torch.abs(boost_regressed)-1)        
+        # Do not rescale the pz of the boost, we removed the logscale and kept it only for E
+        #boost_regressed = torch.sign(boost_regressed)*torch.exp(torch.abs(boost_regressed)-1)        
 
         higgs = data_regressed[:,0]
         thad = data_regressed[:,1]

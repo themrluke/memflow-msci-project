@@ -205,12 +205,14 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                   log_mean_boost, log_std_boost,
                                   device, cartesian=False, eps=0.0)
 
-            boost = boost_regressed[:, [0,-1]]
-            boost = (torch.sign(boost)*torch.log(boost.abs()+1) - log_mean_boost)/log_std_boost
+            boost_notscaled = boost_regressed[:, [0,-1]]
+            boost = boost_notscaled.clone()
+            boost[:,0] = torch.log(boost_notscaled[:,0] + 1)
+            boost = (boost - log_mean_boost)/log_std_boost
 
             gluon_toscale = data_regressed[:,3] #pt, eta, phi
             gluon = gluon_toscale.clone()
-            gluon[:,0] = torch.sign(gluon_toscale[:,0])*torch.log(gluon_toscale[:,0].abs()+1)
+            gluon[:,0] = torch.log(gluon_toscale[:,0] + 1) # No need for abs and sign
             gluon = (gluon - log_mean_parton) / log_std_parton
                         
             MMD_input = [higgs, thad, tlep, gluon, boost]
@@ -322,11 +324,16 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
 
                 boost = boost_regressed[:, [0,-1]]
                 boost = (torch.sign(boost)*torch.log(boost.abs()+1) - log_mean_boost)/log_std_boost
+                boost_notscaled = boost_regressed[:, [0,-1]]
+                boost = boost_notscaled.clone()
+                boost[:,0] = torch.log(boost_notscaled[:,0] + 1)
+                boost = (boost - log_mean_boost)/log_std_boost
 
                 gluon_toscale = data_regressed[:,3] #pt, eta, phi
                 gluon = gluon_toscale.clone()
-                gluon[:,0] = torch.sign(gluon_toscale[:,0])*torch.log(gluon_toscale[:,0].abs()+1)
+                gluon[:,0] = torch.log(gluon_toscale[:,0] +1)
                 gluon = (gluon - log_mean_parton) / log_std_parton
+                
             
                 MMD_input = [higgs, thad, tlep, gluon, boost]
                 

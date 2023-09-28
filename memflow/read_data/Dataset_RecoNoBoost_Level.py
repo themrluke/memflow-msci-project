@@ -239,21 +239,16 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         # get masks of 'recoParticlesCartesian'
         
         maskNumpy = mask.numpy()
-        objectNumpy = object_tensor.numpy()
-        
+        log_objectTensor = object_tensor.clone()
+
+        # pt or E.  all the rest we don't log scale it
+        log_objectTensor[:,:,0] = torch.sign(log_objectTensor[:,:,0])*torch.log(1+torch.abs(log_objectTensor[:,:,0]))
         if isCartesian:
             # case [E,px,py,pz] or [x,y,z,t]
-            no_elements = 4
-            log_objectNumpy = np.sign(objectNumpy)*np.log(1+np.abs(objectNumpy)) 
-            log_objectTensor = torch.tensor(log_objectNumpy, dtype=torch.float)
+            no_elements = 4             
         else:
             # case ["pt", "eta", "phi", "btag", + prov
             no_elements = 3
-            pt = objectNumpy[:,:,0]
-            log_pt = np.log(1+pt) #sign and abs not necessary
-            objectNumpy[:,:,0] = log_pt
-            
-            log_objectTensor = torch.tensor(objectNumpy, dtype=torch.float)
             
         for i in range(no_elements):
             feature = log_objectTensor[:,:,i].numpy()
