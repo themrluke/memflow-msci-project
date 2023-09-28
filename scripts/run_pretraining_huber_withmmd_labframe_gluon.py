@@ -42,6 +42,7 @@ PI = torch.pi
 def loss_fn_periodic(inp, target, loss_fn, device):
 
     # rescale to pi
+    overflow_delta = (inp[inp>PI]- PI)+(inp[inp<-PI]+PI)
     inp[inp>PI] = inp[inp>PI]-2*PI
     inp[inp<-PI] = inp[inp<-PI] + 2*PI
     
@@ -49,7 +50,7 @@ def loss_fn_periodic(inp, target, loss_fn, device):
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
     
-    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device))
+    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + overflow_delta.mean()*0.5
 
 
 def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, gluon, boost, cartesian, loss_fn,
@@ -323,7 +324,7 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                                   device, cartesian=False, eps=0.0)
 
                 boost = boost_regressed[:, [0,-1]]
-                boost = (torch.sign(boost)*torch.log(boost.abs()+1) - log_mean_boost)/log_std_boost
+                # boost = (torch.sign(boost)*torch.log(boost.abs()+1) - log_mean_boost)/log_std_boost
                 boost_notscaled = boost_regressed[:, [0,-1]]
                 boost = boost_notscaled.clone()
                 boost[:,0] = torch.log(boost_notscaled[:,0] + 1)

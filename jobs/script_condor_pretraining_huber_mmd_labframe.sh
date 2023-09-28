@@ -8,7 +8,7 @@ cd /afs/cern.ch/work/d/dvalsecc/private/MEM/MEMFlow
 pip install -e .
 
        
-python scripts/run_pretraining_huber_withmmd_labframe_gluon.py  \
+python scripts/run_pretraining_huber_withmmd_labframe_eregr.py  \
        --path-config  /afs/cern.ch/work/d/dvalsecc/private/MEM/MEMFlow/configs/$1 \
        --output-dir  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/$2 \
        --on-GPU
