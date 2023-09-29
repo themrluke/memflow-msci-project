@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 import numpy as np
-
+from itertools import chain
 
 class ConditioningTransformerLayer(nn.Module):
     def __init__(self, no_jets, no_lept, input_features, 
@@ -76,9 +76,13 @@ class ConditioningTransformerLayer(nn.Module):
         self.register_buffer('four', 4*torch.ones(1, 1))
         
 
-    def reset_parameters(self):
-        self.lin_input.reset_parameters()
-        self.lin_boost.reset_parameters()
+    def disable_latent_training(self):
+        if self.use_latent:
+            for param in chain(self.latent_decoder.parameters(),
+                               self.transformer_decoders[-1].parameters(),
+                               self.output_projs[-1].parameters(),
+                               self.latent_proj.parameters()):
+                param.requires_grad = False
 
     def forward(self, batch_recoParticles, batch_boost, mask_recoParticles, mask_boost):
 

@@ -131,7 +131,8 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
     # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=10)
+    scheduler = CosineAnnealingLR(optimizer,  T_max=config.training_params.cosine_scheduler.Tmax,
+                                  eta_min=config.training_params.cosine_scheduler.eta_min)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
     #                                                        factor=config.training_params.reduce_on_plateau.factor,
     #                                                        patience=config.training_params.reduce_on_plateau.patience,
@@ -371,7 +372,8 @@ def TrainingAndValidLoop(config, device, model, trainingLoader, validLoader, out
                 valid_mmd_gluon += mmd_loss_gluon.item()
                 valid_mmd_boost += mmd_loss_boost.item()
                 valid_mmd_all += mmd_loss_all.item()
-                valid_loss_final += mdmm_return.value.item()
+                valid_loss_final += regr_loss.item()   # using only the main loss, not MDMM
+                # valid_loss_final += mdmm_return.value.item()
 
                 particle_list = [higgs, thad, tlep, gluon]
                 

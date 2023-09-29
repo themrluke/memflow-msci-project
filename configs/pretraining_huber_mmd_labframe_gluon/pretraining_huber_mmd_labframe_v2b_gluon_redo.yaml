@@ -1,0 +1,73 @@
+name: spanet_labframe
+version: v2b-gluon-redo
+description: 'Like v2-eregr with gluon losses'
+#input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_labframe_part1.parquet
+input_dataset: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
+cartesian: false
+noProv: true
+input_shape:
+  number_jets: 16
+  number_lept: 1
+  input_features: 7  # now with 3 prov probabilities
+scaling_params:
+  log_mean: [4.6710e+00, 2.8028e-05, 7.9478e-04]
+  log_std: [0.9195, 1.2910, 1.8139]
+training_params:
+  lr: 0.001
+  batch_size_training: 1800
+  batch_size_validation: 2048
+  subsplit: 8
+  nepochs: 1000
+  training_sample: 0.9
+  validation_sample: 0.1
+  sampling_points_loss: 150
+  percentage_sampling_epoch: 0.2
+  sampling_points: 100
+  nEpochsPatience: 40
+  eps: 1.0e-05
+  mmd_kernel: "multiscale"
+  huber_delta: 1.
+  order:
+  - 0
+  - 1
+  - 2
+  - 3
+  sampling_Forward: false
+  reduce_on_plateau:
+    factor: 0.5
+    patience: 5
+    threshold: 1e-3
+  cosine_scheduler:
+    Tmax : 10
+    eta_min: 5e-5
+conditioning_transformer:
+  out_features: [3,3,3,1]
+  hidden_features: 64
+  dim_feedforward_transformer: 512
+  nhead_encoder: 8
+  no_layers_encoder: 4
+  nhead_decoder: 4
+  no_layers_decoder: 4
+  aggregate: false
+  no_decoders: 4
+  use_latent: true
+  no_layers_decoder_latent: 2
+  out_features_latent: 6
+unfolding_flow:
+  nfeatures: 10
+  ncond: 32
+  ntransforms: 10
+  hiddenMLP_NoLayers: 4
+  hiddenMLP_LayerDim: 128
+  bins: 35
+  autoregressive: false
+  base: DiagNormal
+  base_first_arg: 0
+  base_second_arg: 0.3
+  bound: 1.5
+MDMM:
+  max_mmd: 0.004
+  scale_mmd : 1
+  dumping_mmd: 1.
+
+comet_token: uaitssszWuWAaWQkBrDXdlJBt

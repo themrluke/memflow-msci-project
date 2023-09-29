@@ -5,7 +5,7 @@
 #SBATCH --partition=gpu
 #SBATCH --nodes=1                        # request to run job on single node
 #SBATCH --ntasks=3                      # request 10 CPU's (t3gpu01/02: balance between CPU and GPU : 5CPU/1GPU)
-#SBATCH --gres=gpu:3                     # request  for two GPU's on machine, this is total  amount of GPUs for job
+#SBATCH --gres=gpu:2                     # request  for two GPU's on machine, this is total  amount of GPUs for job
 #SBATCH --mem=15G                        # memory (per job)
 #SBATCH --time=07-00:00
 #SBATCH --gres-flags=disable-binding

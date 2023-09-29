@@ -153,10 +153,9 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             self.logScaled_data_boost = torch.load(
                 self.processed_file_names("LogScaled_boost"))
 
-        if torch.cuda.is_available():
-            print("Parton: Move tensors to GPU memory")
-            for field in self.parton_list:
-                setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
+        print(f"Parton: Move tensors to device ({dev}) memory")
+        for field in self.parton_list:
+            setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
             
         if dtype != None:
             for field in self.parton_list:
