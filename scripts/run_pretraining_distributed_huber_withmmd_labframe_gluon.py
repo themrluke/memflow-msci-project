@@ -439,7 +439,7 @@ def train(config,  model, train_dataset, val_dataset,
                 valid_mmd_gluon += mmd_loss_gluon.item()
                 valid_mmd_boost += mmd_loss_boost.item()
                 valid_mmd_all += mmd_loss_all.item()
-                valid_loss_final += mdmm_return.value.item()
+                valid_loss_final += regr_loss.item()   # using only the main loss, not MDMM
 
                 particle_list = [higgs, thad, tlep, gluon]
                 
