@@ -114,6 +114,10 @@ class Dataset_PartonLevel(Dataset):
             self.processed_file_names("H_thad_tlep_ISR_cartesian"))
         self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
             self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
+
+        tensors_bydefault = ['mask_partons', 'data_partons', 'mask_lepton_partons', 'data_lepton_partons',
+                            'mask_boost', 'data_boost', 'data_higgs_t_tbar_ISR', 'data_higgs_t_tbar_ISR_cartesian',
+                            'data_higgs_t_tbar_ISR_cartesian_onShell']
         
         if 'phasespace_intermediateParticles' in self.parton_list:
             print("Load phasespace_intermediateParticles")
@@ -153,14 +157,18 @@ class Dataset_PartonLevel(Dataset):
             self.logScaled_data_higgs_t_tbar_ISR = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
 
-        if dev==torch.device('cuda') and torch.cuda.is_available():
+        if torch.cuda.is_available():
             print("Parton: Move tensors to GPU memory")
             for field in self.parton_list:
+                setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
+            for field in tensors_bydefault:
                 setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
             
         if dtype != None:
             for field in self.parton_list:
-                setattr(self, field, getattr(self, field).to(dtype)) # move elements from reco_list to GPU memory
+                setattr(self, field, getattr(self, field).to(dtype))
+            for field in tensors_bydefault:
+                setattr(self, field, getattr(self, field).to(dtype))
 
     @property
     def raw_file_names(self):
