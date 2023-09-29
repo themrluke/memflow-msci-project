@@ -104,7 +104,7 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
                                             torch.load(self.processed_file_names('scaledLogRecoParticles'))
 
-        if dev==torch.device('cuda') and torch.cuda.is_available():
+        if torch.cuda.is_available():
             print("Parton: Move tensors to GPU memory")
             for field in self.reco_list:
                 setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory

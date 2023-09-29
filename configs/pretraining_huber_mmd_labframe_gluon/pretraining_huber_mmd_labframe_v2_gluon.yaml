@@ -1,8 +1,8 @@
 name: spanet_labframe
-version: v2-gluon
+version: v2-gluon-redo
 description: 'Like v2-eregr with gluon losses'
-input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_labframe_part1.parquet
-#input_dataset: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
+#input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_labframe_part1.parquet
+input_dataset: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1
 cartesian: false
 noProv: true
 input_shape:
@@ -13,8 +13,8 @@ scaling_params:
   log_mean: [4.6710e+00, 2.8028e-05, 7.9478e-04]
   log_std: [0.9195, 1.2910, 1.8139]
 training_params:
-  lr: 0.0005
-  batch_size_training: 1024
+  lr: 0.0001
+  batch_size_training: 1800
   batch_size_validation: 2048
   subsplit: 8
   nepochs: 1000
@@ -37,6 +37,9 @@ training_params:
     factor: 0.5
     patience: 5
     threshold: 1e-3
+  cosine_scheduler:
+    Tmax : 5
+    eta_min: 1e-6
 conditioning_transformer:
   out_features: [3,3,3,1]
   hidden_features: 64
@@ -63,7 +66,7 @@ unfolding_flow:
   base_second_arg: 0.3
   bound: 1.5
 MDMM:
-  max_mmd: 0.003
+  max_mmd: 0.004
   scale_mmd : 1
   dumping_mmd: 1.
 
