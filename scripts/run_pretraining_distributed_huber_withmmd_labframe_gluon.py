@@ -211,10 +211,10 @@ def train( device, name_dir, config,  outputDir,
                                         'mean_log_data_boost',
                                         'std_log_data_boost'])
 
-    log_mean_parton = train_dataset.parton_data.mean_log_data_higgs_t_tbar_ISR.to(device)
-    log_std_parton = train_dataset.parton_data.std_log_data_higgs_t_tbar_ISR.to(device)
-    log_mean_boost = train_dataset.parton_data.mean_log_data_boost.to(device)
-    log_std_boost = train_dataset.parton_data.std_log_data_boost.to(device)
+    log_mean_parton = train_dataset.parton_data.mean_log_data_higgs_t_tbar_ISR
+    log_std_parton = train_dataset.parton_data.std_log_data_higgs_t_tbar_ISR
+    log_mean_boost = train_dataset.parton_data.mean_log_data_boost
+    log_std_boost = train_dataset.parton_data.std_log_data_boost
 
     # Datasets
     trainingLoader = DataLoader(

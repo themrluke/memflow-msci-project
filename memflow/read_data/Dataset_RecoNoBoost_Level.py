@@ -64,6 +64,8 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         self.mask_lepton, self.data_lepton = torch.load(self.processed_file_names("lepton_reco"))
         self.mask_met, self.data_met = torch.load(self.processed_file_names("met"))
         self.mask_boost, self.data_boost = torch.load(self.processed_file_names("boost"))
+        tensors_bydefault = ['mask_jets', 'data_jets', 'mask_lepton', 'data_lepton',
+                            'mask_met', 'data_met', 'mask_boost', 'data_boost']
         
         print("Reading reco_level Files")
         if 'recoParticlesCartesian' in self.reco_list:
@@ -104,13 +106,19 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
                                             torch.load(self.processed_file_names('scaledLogRecoParticles'))
 
-        print(f"Reco: Move tensors to device ({dev}) memory")
-        for field in self.reco_list:
-            setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
-            
+
         if dtype != None:
             for field in self.reco_list:
                 setattr(self, field, getattr(self, field).to(dtype))
+            for field in tensors_bydefault:
+                setattr(self, field, getattr(self, field).to(dtype))
+
+        print(f"Reco: Move tensors to device ({dev}) memory")
+        for field in self.reco_list:
+            setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
+        for field in tensors_bydefault:
+            setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
+            
             
 
     @property
