@@ -1,5 +1,7 @@
 from comet_ml import Experiment
 from comet_ml.integration.pytorch import log_model
+
+import torch
 from memflow.read_data.dataset_all import DatasetCombined
 
 from memflow.unfolding_network.conditional_transformer import ConditioningTransformerLayer
@@ -8,7 +10,6 @@ from memflow.unfolding_flow.mmd_loss import MMD
 from memflow.unfolding_flow.utils import Compute_ParticlesTensor
 
 import numpy as np
-import torch
 from torch import optim
 from torch.utils.data import DataLoader
 import torch.nn as nn
@@ -46,15 +47,16 @@ PI = torch.pi
 
 # torch.autograd.set_detect_anomaly(True)
 
-
-def ddp_setup(rank, world_size):
+def ddp_setup(rank, world_size, port):
     """
     Args:
         rank: Unique identifier of each process
         world_size: Total number of processes
     """
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = f"12357"
+    import socket
+    print("Setting up ddp for device: ", rank)
+    os.environ["MASTER_ADDR"] = socket.gethostname()
+    os.environ["MASTER_PORT"] = f"{port}"
     init_process_group(backend="nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
@@ -111,15 +113,14 @@ def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, g
         return  (lossH + lossThad + lossTlep + lossGluon + lossBoost)/13
 
 
-def compute_mmd_loss(mmd_input, mmd_target, kernel, device, total=False, split=False):
+def compute_mmd_loss(mmd_input, mmd_target, kernel, device, dtype, total=False, split=False):
     mmds = []
     for particle in range(len(mmd_input)):
-        mmds.append(MMD(mmd_input[particle], mmd_target[particle], kernel, device))
-
+        mmds.append(MMD(mmd_input[particle], mmd_target[particle], kernel, device, dtype))
     # total MMD
     if total:
-        mmds.append(MMD(torch.cat(mmd_input, dim=1), torch.cat(mmd_target, dim=1), kernel, device))
-        
+        mmds.append(MMD(torch.cat(mmd_input, dim=1), torch.cat(mmd_target, dim=1), kernel, device, dtype))
+
     if split:
         return mmds
     else:
@@ -127,12 +128,12 @@ def compute_mmd_loss(mmd_input, mmd_target, kernel, device, total=False, split=F
 
     
 
-def train( device, name_dir, config,  outputDir,
+def train( device, name_dir, config,  outputDir, dtype,
            world_size=None, device_ids=None):
     # device is device when not distributed and rank when distributed
     print("START OF RANK:", device)
     if world_size is not None:
-        ddp_setup(device, world_size)
+        ddp_setup(device, world_size, config.ddp_port)
 
     device_id = device_ids[device] if device_ids is not None else device
 
@@ -142,7 +143,8 @@ def train( device, name_dir, config,  outputDir,
             api_key=config.comet_token,
             project_name="memflow",
             workspace="valsdav",
-            auto_output_logging = "simple"
+            auto_output_logging = "simple",
+            # disabled=True
         )
         exp.add_tags([config.name,config.version])
         exp.log_parameters(config.training_params)
@@ -166,7 +168,7 @@ def train( device, name_dir, config,  outputDir,
                                     use_latent=config.conditioning_transformer.use_latent,
                                     out_features_latent=config.conditioning_transformer.out_features_latent,
                                     no_layers_decoder_latent=config.conditioning_transformer.no_layers_decoder_latent,     
-                                    dtype=torch.float64) 
+                                         dtype=dtype) 
 
     model = model.to(device)
     model.disable_latent_training()
@@ -188,7 +190,7 @@ def train( device, name_dir, config,  outputDir,
 
     #print("Loading datasets")
     train_dataset = DatasetCombined(config.input_dataset_train,dev=device,
-                           dtype=torch.float64, boost_CM=False,
+                           dtype=dtype, boost_CM=False,
                            reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                       'mask_jets','mask_met',
                                       'mask_boost', 'scaledLogBoost'],
@@ -200,7 +202,7 @@ def train( device, name_dir, config,  outputDir,
                                         'std_log_data_boost'])
 
     val_dataset = DatasetCombined(config.input_dataset_validation,dev=device,
-                           dtype=torch.float64, boost_CM=False,
+                           dtype=dtype, boost_CM=False,
                            reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                       'mask_jets','mask_met',
                                       'mask_boost', 'scaledLogBoost'],
@@ -242,8 +244,11 @@ def train( device, name_dir, config,  outputDir,
                     )
 
     # Create the optimizer
-    MDMM_module = mdmm.MDMM([constraint]) # support many constraints TODO: use a constraint for every particle
-    
+    if dtype == torch.float32:
+        MDMM_module = mdmm.MDMM([constraint]).float() # support many constraints TODO: use a constraint for every particle
+    else:
+        MDMM_module = mdmm.MDMM([constraint])
+
     loss_fn = torch.nn.HuberLoss(delta=config.training_params.huber_delta)
 
     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
@@ -282,7 +287,7 @@ def train( device, name_dir, config,  outputDir,
             ii+=1
 
             optimizer.zero_grad()
-
+            
             (logScaled_partons, logScaled_boost,
             logScaled_reco, mask_lepton_reco, 
             mask_jets, mask_met, 
@@ -315,32 +320,27 @@ def train( device, name_dir, config,  outputDir,
             gluon = (gluon - log_mean_parton) / log_std_parton
                         
             MMD_input = [higgs, thad, tlep, gluon, boost]
-
-            # compute gluon
-            #HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(out, log_mean,
-                                                                                         # log_std, device,
-                                                                                         # cartesian=False,
-                                                                                         # eps=1e-5)
-            #gluon = HttISR_regressed[:,-3:]
             MMD_target = [logScaled_partons[:,0],
                           logScaled_partons[:,1],
                           logScaled_partons[:,2],
                           logScaled_partons[:,3],
                           logScaled_boost]
 
-            lossH, lossThad, lossTlep, lossGluon, lossBoost = compute_regr_losses(logScaled_partons, logScaled_boost,
-                                                                                                      higgs, thad, tlep, gluon, boost,
-                                                            config.cartesian, loss_fn,
-                                                            scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
-                                                            split=True,
-                                                            device=device)
+            lossH, lossThad, lossTlep, lossGluon, lossBoost = compute_regr_losses(logScaled_partons,
+                                                                                  logScaled_boost,
+                                                                                  higgs, thad,
+                                                                                  tlep, gluon, boost,
+                                                                                  config.cartesian, loss_fn,
+                                                                                  scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
+                                                                                  split=True,
+                                                                                  device=device)
             regr_loss =  (lossH + lossThad + lossTlep+ lossGluon+ lossBoost)/13
                     
-            mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, True, False)])
+            mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, dtype, True, False)])
 
             loss_final = mdmm_return.value
             #print(f"MMD loss: {mdmm_return.fn_values}, huber loss {regr_loss.item()}, loss tot{loss_final.item()}")
-            
+
             loss_final.backward()
             optimizer.step()
 
@@ -350,7 +350,9 @@ def train( device, name_dir, config,  outputDir,
                  mmd_loss_tlep,
                  mmd_loss_gluon,
                  mmd_loss_boost,
-                 mmd_loss_all) = compute_mmd_loss(MMD_input, MMD_target, kernel=config.training_params.mmd_kernel, device=device,total=True, split=True)
+                 mmd_loss_all) = compute_mmd_loss(MMD_input, MMD_target,
+                                                  kernel=config.training_params.mmd_kernel,
+                                                  device=device,total=True, dtype=dtype, split=True)
                 
                 if exp is not None and device==0 or world_size is None:
                     if i % 10 == 0:
@@ -437,30 +439,19 @@ def train( device, name_dir, config,  outputDir,
                 
             
                 MMD_input = [higgs, thad, tlep, gluon, boost]
-                
-                # MMD_input = torch.cat((higgs.unsqueeze(1),
-                #                        thad.unsqueeze(1),
-                #                        tlep.unsqueeze(1)), dim=1)
-                # # compute gluon
-                # HttISR_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_numpy(out, log_mean,
-                #                                                                          log_std, device,
-                #                                                                          cartesian=False,
-                #                                                                          eps=1e-5)
-                # gluon = HttISR_regressed[:,-3:]
-                
-                # MMD_target = logScaled_partons[:,0:3]
                 MMD_target = [logScaled_partons[:,0],
                           logScaled_partons[:,1],
                           logScaled_partons[:,2],
                           logScaled_partons[:,3],
                           logScaled_boost]
 
-                lossH, lossThad, lossTlep, lossGluon, lossBoost = compute_regr_losses(logScaled_partons,logScaled_boost,
-                                                                           higgs, thad, tlep,gluon, boost,
-                                                                 config.cartesian, loss_fn,
-                                                    scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
-                                                           split=True,
-                                                           device=device)
+                lossH, lossThad, lossTlep, lossGluon, lossBoost = compute_regr_losses(logScaled_partons,
+                                                                                      logScaled_boost,
+                                                                                      higgs, thad, tlep,gluon, boost,
+                                                                                      config.cartesian, loss_fn,
+                                                                                      scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
+                                                                                      split=True,
+                                                                                      device=device)
 
                 regr_loss =  (lossH + lossThad + lossTlep+lossGluon + lossBoost)/13
 
@@ -477,7 +468,7 @@ def train( device, name_dir, config,  outputDir,
                 
                 mmd_loss = (mmd_loss_H+ mmd_loss_thad + mmd_loss_tlep + mmd_loss_gluon +  mmd_loss_boost + mmd_loss_all)/6
                                 
-                mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device,True, False)])
+                mdmm_return = MDMM_module(regr_loss, [(MMD_input, MMD_target, config.training_params.mmd_kernel, device, dtype, True, False)])
 
                 valid_loss_huber += regr_loss.item()
                 valid_lossH += lossH.item()/3
@@ -600,22 +591,6 @@ if __name__ == '__main__':
     print("Actual devices: ", actual_devices)
     world_size = len(actual_devices)
 
-
-    # torch.utils.data.random_split(
-    #         data, [conf.training_params.training_sample, conf.training_params.validation_sample],
-    #         generator=torch.Generator().manual_seed(1))
-    
-    # train_loader = DataLoader(dataset=train_subset,
-    #                           shuffle=True,
-    #                           batch_size=conf.training_params.batch_size_training
-    #                           shuffle=False if world_size is not None else True, 
-    #                           sampler=DistributedSampler(train_subset) if world_size is not None else None,
-    #                           )
-    # val_loader = DataLoader(dataset=val_subset,
-    #                         shuffle=True,
-    #                         batch_size=conf.training_params.batch_size_validation)
-
-    # Initialize model
     
     outputDir = os.path.abspath(outputDir)
     latentSpace = conf.conditioning_transformer.use_latent
@@ -626,7 +601,11 @@ if __name__ == '__main__':
     with open(f"{name_dir}/config_{conf.name}_{conf.version}.yaml", "w") as fo:
         fo.write(OmegaConf.to_yaml(conf)) 
 
-
+    if conf.training_params.dtype == "float32":
+        dtype = torch.float32
+    elif conf.training_params.dtype == "float64":
+        dtype = torch.float64
+        
     
     if args.distributed:
         
@@ -635,14 +614,14 @@ if __name__ == '__main__':
         print(f"Devices dict: {dev_dct}")
         mp.spawn(
             train,
-            args=(name_dir, conf,  outputDir,
+            args=(name_dir, conf,  outputDir, dtype,
                     world_size, dev_dct),
             nprocs=world_size,
             # join=True
         )
     else:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        train(device,name_dir, conf,  outputDir)
+        train(device,name_dir, conf,  outputDir, dtype)
     
     print(f"preTraining finished succesfully! Version: {conf.version}")
     

@@ -37,28 +37,32 @@ class ConditioningTransformerLayer(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_features,
                                                    dim_feedforward= dim_feedforward_transformer,
                                                    nhead=nhead_encoder,
-                                                   batch_first=True)
+                                                   batch_first=True,
+                                                   dtype=dtype)
 
         self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=no_layers_encoder)
+                                        encoder_layer, num_layers=no_layers_encoder)
 
       
         self.aggregate = aggregate
         if self.aggregate:
-
-            self.output_proj = nn.Linear(in_features=hidden_features, out_features=out_features-2)
+            self.output_proj = nn.Linear(in_features=hidden_features, out_features=out_features-2,dtype=dtype)
         else:
             # do not aggregate but use the transformer encoder output to produce more decoded outputs\
-            self.output_projs = nn.ModuleList([nn.Linear(in_features=hidden_features, out_features=out_features[i]) #out_features is an array
+            self.output_projs = nn.ModuleList([nn.Linear(in_features=hidden_features,
+                                                         out_features=out_features[i],
+                                                         dtype=dtype) #out_features is an array
                                                for i in range(no_decoders)])
             
             decoder_layer = nn.TransformerEncoderLayer(d_model=hidden_features,
                                                    dim_feedforward= dim_feedforward_transformer,
                                                    nhead=nhead_decoder,
-                                                   batch_first=True)
+                                                   batch_first=True,
+                                                   dtype=dtype)
 
        
-            self.transformer_decoders = nn.ModuleList([nn.TransformerEncoder(decoder_layer, num_layers=no_layers_decoder)
+            self.transformer_decoders = nn.ModuleList([nn.TransformerEncoder(decoder_layer,
+                                                                             num_layers=no_layers_decoder)
                                        for i in range(no_decoders)])
 
             if self.use_latent:
@@ -67,13 +71,14 @@ class ConditioningTransformerLayer(nn.Module):
                 self.out_features_latent = out_features_latent
                 self.no_layers_decoder_latent = no_layers_decoder_latent
                 self.latent_decoder = nn.TransformerEncoder(decoder_layer, num_layers=no_layers_decoder_latent)
-                self.latent_proj = nn.Linear(in_features=hidden_features, out_features=out_features_latent)
+                self.latent_proj = nn.Linear(in_features=hidden_features,
+                                             out_features=out_features_latent,dtype=dtype)
             
         
-        self.register_buffer('ones', torch.ones(no_jets, 1))
-        self.register_buffer('two', 2*torch.ones(no_lept, 1))
-        self.register_buffer('three', 3*torch.ones(1, 1))
-        self.register_buffer('four', 4*torch.ones(1, 1))
+        self.register_buffer('ones', torch.ones(no_jets, 1, dtype=dtype))
+        self.register_buffer('two', 2*torch.ones(no_lept, 1,dtype=dtype))
+        self.register_buffer('three', 3*torch.ones(1, 1,dtype=dtype))
+        self.register_buffer('four', 4*torch.ones(1, 1,dtype=dtype))
         
 
     def disable_latent_training(self):
@@ -85,7 +90,7 @@ class ConditioningTransformerLayer(nn.Module):
                 param.requires_grad = False
 
     def forward(self, batch_recoParticles, batch_boost, mask_recoParticles, mask_boost):
-
+        
         batch_size = batch_recoParticles.size(0)
 
         input_afterLin = self.gelu(self.lin_input(batch_recoParticles) * mask_recoParticles[:, :, None])
@@ -105,6 +110,7 @@ class ConditioningTransformerLayer(nn.Module):
             (mask_boost, mask_recoParticles), dim=1)
 
         tmask  = transformer_mask == 0
+
         transformer_output = self.transformer_encoder(
             transformer_input, src_key_padding_mask=tmask)
         

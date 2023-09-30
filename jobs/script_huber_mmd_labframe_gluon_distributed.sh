@@ -7,7 +7,8 @@ source /tmp/myenv/bin/activate
 
 pip install -e .
 
-python scripts/run_pretraining_huber_withmmd_labframe_gluon.py  \
+python scripts/run_pretraining_distributed_huber_withmmd_labframe_gluon.py  \
        --path-config  /work/dvalsecc/MEM/MEMFlow/configs/$1 \
-       --output-dir  /work/dvalsecc/MEM/models_archive/t3machine_v3/$2          --huberLoss --on-GPU
+       --output-dir  /work/dvalsecc/MEM/models_archive/$2 \
+       --on-GPU --distributed
      

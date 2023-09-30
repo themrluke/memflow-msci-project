@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-def MMD(x, y, kernel, device):
+def MMD(x, y, kernel, device, dtype):
     """Emprical maximum mean discrepancy. The lower the result
        the more evidence that distributions are the same.
 
@@ -18,9 +18,9 @@ def MMD(x, y, kernel, device):
     dyy = ry.t() + ry - 2. * yy # Used for B in (1)
     dxy = rx.t() + ry - 2. * zz # Used for C in (1)
 
-    XX, YY, XY = (torch.zeros(xx.shape).to(device),
-                  torch.zeros(xx.shape).to(device),
-                  torch.zeros(xx.shape).to(device))
+    XX, YY, XY = (torch.zeros(xx.shape).to(device, dtype),
+                  torch.zeros(xx.shape).to(device, dtype),
+                  torch.zeros(xx.shape).to(device, dtype))
 
     if kernel == "multiscale":
 

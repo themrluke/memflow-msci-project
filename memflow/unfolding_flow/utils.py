@@ -197,7 +197,7 @@ class Compute_ParticlesTensor:
         gluon_cartesian = torch.stack((gluon_E, gluon_px, gluon_py, gluon_pz), dim=1)
         
         if cartesian:
-            data_regressed = torch.stack((higgs_cartesian, thad_cartesian, tlep_cartesian, gluon_cartesian), dim=1)
+            data_regressed_new = torch.stack((higgs_cartesian, thad_cartesian, tlep_cartesian, gluon_cartesian), dim=1)
             # order: by default higgs/thad/tlep/glISR
             # but for glISR negative masses in Rambo ==> can switch the order of the data_regressed
             # I changed to do this permutation of the particles inside the get_PS
@@ -206,11 +206,10 @@ class Compute_ParticlesTensor:
             gluon_eta = -torch.log(torch.tan(torch.atan2(gluon_pt, gluon_pz)/2))
             gluon_phi = torch.atan2(gluon_py, gluon_px)
             gluon = torch.stack((gluon_pt, gluon_eta, gluon_phi), dim=1)
-            data_regressed = torch.stack((higgs, thad, tlep, gluon), dim=1)
+            data_regressed_new = torch.stack((higgs, thad, tlep, gluon), dim=1)
             
-        boost_regressed = gluon_cartesian + higgs_cartesian + thad_cartesian + tlep_cartesian
-        
-        return data_regressed, boost_regressed
+        boost_regressed_new = gluon_cartesian + higgs_cartesian + thad_cartesian + tlep_cartesian
+        return data_regressed_new, boost_regressed_new
 
     def get_PS(data_HttISR, boost_reco, order=[0,1,2,3], target_mass=torch.Tensor([[M_HIGGS, M_TOP, M_TOP, M_GLUON]])):
 
