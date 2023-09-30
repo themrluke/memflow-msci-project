@@ -585,7 +585,6 @@ if __name__ == '__main__':
     env_var = os.environ.get("CUDA_VISIBLE_DEVICES")
     if env_var:
         actual_devices = env_var.split(",")
-        actual_devices = [int(d) for d in actual_devices]
     else:
         actual_devices = list(range(torch.cuda.device_count()))
     print("Actual devices: ", actual_devices)
