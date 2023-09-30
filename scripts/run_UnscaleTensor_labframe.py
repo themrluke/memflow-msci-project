@@ -59,7 +59,7 @@ def UnscaleTensor(config, model, dataLoader, Nsamples, outputDir, batch_size, de
             #     no_particles = len(out)
 
 
-            data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab_numpy(out, log_mean_parton,
+            data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab(out, log_mean_parton,
                                   log_std_parton,
                                   log_mean_boost, log_std_boost,
                                 device, cartesian=True, eps=1e-5)
@@ -217,10 +217,10 @@ if __name__ == '__main__':
     print(f"parameters total:{count_parameters(model)}")
     model.eval()
     UnscaleTensor(conf, model, data_loader, len(data), outputDir, batch_size, device,
-                  data.parton_lab.mean_log_data_higgs_t_tbar_ISR,
-                  data.parton_lab.std_log_data_higgs_t_tbar_ISR,
-                             data.parton_lab.mean_log_data_boost,
-                             data.parton_lab.std_log_data_boost)
+                  data.partons_lab.mean_log_data_higgs_t_tbar_ISR,
+                  data.partons_lab.std_log_data_higgs_t_tbar_ISR,
+                             data.partons_lab.mean_log_data_boost,
+                             data.partons_lab.std_log_data_boost)
         
     
     print("Unscale tensor finished!")

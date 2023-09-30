@@ -37,7 +37,7 @@ class Dataset_PartonLevel(Dataset):
                             'data_higgs_t_tbar_ISR_cartesian_onShell']
         
         
-        print("\nPartonLevel")
+        print("PartonLevel CM")
         self.debug = debug
 
         self.root = root
@@ -388,7 +388,7 @@ class Dataset_PartonLevel(Dataset):
 
         logit_ps = torch.logit(ps)
         ps_mean = logit_ps.nanmean(0)
-        ps_scale = torch.sqrt(torch.nanmean(torch.pow(logit_ps, 2), 0) - torch.pow(ps_mean,2)) / 5 # to stay in -1,1 range
+        ps_scale = torch.sqrt(torch.nanmean(torch.pow(logit_ps, 2), 0) - torch.pow(ps_mean,2)) * 5 # to stay in -1,1 range
         logit_ps_scaled = (logit_ps - ps_mean) / ps_scale
     
         torch.save(ps, self.processed_file_names(
@@ -596,7 +596,9 @@ class Dataset_PartonLevel(Dataset):
              if field not in ['mean_log_data_higgs_t_tbar_ISR_cartesian',
                               'std_log_data_higgs_t_tbar_ISR_cartesian',
                               'mean_log_data_higgs_t_tbar_ISR',
-                              'std_log_data_higgs_t_tbar_ISR']:
+                              'std_log_data_higgs_t_tbar_ISR',
+                              'mean_phasespace_intermediateParticles_onShell_logit',
+                              'std_phasespace_intermediateParticles_onShell_logit']:
                  out.append(getattr(self, field)[index])
         return out
 

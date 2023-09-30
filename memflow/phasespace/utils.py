@@ -125,7 +125,6 @@ def boost_tt(inputt, boost_vector, gamma=-1.0):
     returns to (M,0,0,0).
     Version for a batch
     """
-
     b2 = square_t(boost_vector)
     if gamma < 0.0:
         gamma = 1.0 / torch.sqrt(1.0 - b2)
