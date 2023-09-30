@@ -31,6 +31,11 @@ class Dataset_PartonLevel(Dataset):
             "H_thad_tlep_ISR": ["pt", "eta", "phi", "mass"],
             "H_thad_tlep_ISR_cartesian": ["E", "px", "py", "pz"]
         }
+
+        tensors_bydefault = ['mask_partons', 'data_partons', 'mask_lepton_partons', 'data_lepton_partons',
+                            'mask_boost', 'data_boost', 'data_higgs_t_tbar_ISR', 'data_higgs_t_tbar_ISR_cartesian',
+                            'data_higgs_t_tbar_ISR_cartesian_onShell']
+        
         
         print("\nPartonLevel")
         self.debug = debug
@@ -115,10 +120,6 @@ class Dataset_PartonLevel(Dataset):
         self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
             self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
 
-        tensors_bydefault = ['mask_partons', 'data_partons', 'mask_lepton_partons', 'data_lepton_partons',
-                            'mask_boost', 'data_boost', 'data_higgs_t_tbar_ISR', 'data_higgs_t_tbar_ISR_cartesian',
-                            'data_higgs_t_tbar_ISR_cartesian_onShell']
-        
         if 'phasespace_intermediateParticles' in self.parton_list:
             print("Load phasespace_intermediateParticles")
             self.phasespace_intermediateParticles = torch.load(
@@ -135,8 +136,14 @@ class Dataset_PartonLevel(Dataset):
             print("Load phasespace_intermediateParticles_onShell_logit")
             self.phasespace_intermediateParticles_onShell_logit = torch.load(
                 self.processed_file_names("phasespace_intermediateParticles_onShell_logit"))
+            self.phasespace_intermediateParticles_onShell_logit_scaled = torch.load(
+                self.processed_file_names("phasespace_intermediateParticles_onShell_logit_scaled"))
+            self.mean_phasespace_intermediateParticles_onShell_logit, \
+                self.std_phasespace_intermediateParticles_onShell_logit = torch.load(
+                    self.processed_file_names("mean_std_phasespace_intermediateParticles_onShell_logit"))
             self.phasespace_rambo_detjacobian_onShell = torch.load(
                 self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
+            
 
         if 'phasespace_rambo_detjacobian' in self.parton_list:
             print("Load phasespace_rambo_detjacobian")
@@ -157,19 +164,18 @@ class Dataset_PartonLevel(Dataset):
             self.logScaled_data_higgs_t_tbar_ISR = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
 
-        if torch.cuda.is_available():
-            print("Parton: Move tensors to GPU memory")
-            for field in self.parton_list:
-                setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
-            for field in tensors_bydefault:
-                setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
-            
-        if dtype != None:
-            for field in self.parton_list:
+        if dtype != None:            
+           for field in self.parton_list:
                 setattr(self, field, getattr(self, field).to(dtype))
-            for field in tensors_bydefault:
-                setattr(self, field, getattr(self, field).to(dtype))
+           for field in tensors_bydefault:
+               setattr(self, field, getattr(self, field).to(dtype))
 
+        print(f"Parton: Move tensors to device ({dev}) memory")
+        for field in self.parton_list:
+            setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
+        for field in tensors_bydefault:
+            setattr(self, field, getattr(self, field).to(dev)) # move elements from reco_list to GPU memory
+            
     @property
     def raw_file_names(self):
         return [self.root]
@@ -296,12 +302,13 @@ class Dataset_PartonLevel(Dataset):
         top_leptonic = self.get_top_leptonic()
         gluon_ISR = self.gluon_ISR
 
-        boost = higgs + top_hadronic + top_leptonic + gluon_ISR
+        # residual boost
+        boost_residual = higgs + top_hadronic + top_leptonic + gluon_ISR
 
-        higgs = higgs.boost_p4(boost.neg3D)
-        top_hadronic = top_hadronic.boost_p4(boost.neg3D)
-        top_leptonic = top_leptonic.boost_p4(boost.neg3D)
-        gluon_ISR = gluon_ISR.boost_p4(boost.neg3D)
+        higgs = higgs.boost_p4(boost_residual.neg3D)
+        top_hadronic = top_hadronic.boost_p4(boost_residual.neg3D)
+        top_leptonic = top_leptonic.boost_p4(boost_residual.neg3D)
+        gluon_ISR = gluon_ISR.boost_p4(boost_residual.neg3D)
 
         # Don't need to boost in CM frame because the partons/leptons are already boosted
 
@@ -328,12 +335,12 @@ class Dataset_PartonLevel(Dataset):
         top_leptonic = self.get_top_leptonic()
         gluon_ISR = self.gluon_ISR
 
-        boost = higgs + top_hadronic + top_leptonic + gluon_ISR
+        boost_residual = higgs + top_hadronic + top_leptonic + gluon_ISR
 
-        higgs = higgs.boost_p4(boost.neg3D)
-        top_hadronic = top_hadronic.boost_p4(boost.neg3D)
-        top_leptonic = top_leptonic.boost_p4(boost.neg3D)
-        gluon_ISR = gluon_ISR.boost_p4(boost.neg3D)
+        higgs = higgs.boost_p4(boost_residual.neg3D)
+        top_hadronic = top_hadronic.boost_p4(boost_residual.neg3D)
+        top_leptonic = top_leptonic.boost_p4(boost_residual.neg3D)
+        gluon_ISR = gluon_ISR.boost_p4(boost_residual.neg3D)
 
         # Don't need to boost in CM frame because the partons/leptons are already boosted
         intermediate = [higgs, top_hadronic, top_leptonic, gluon_ISR]
@@ -378,12 +385,24 @@ class Dataset_PartonLevel(Dataset):
         x2 = (incoming_p_boost[:, 0, 0] - incoming_p_boost[:, 0, 3]) / E_CM
         ps, detjinv = phasespace.get_ps_from_momenta(
             self.data_higgs_t_tbar_ISR_cartesian_onShell, x1, x2)
+
+        logit_ps = torch.logit(ps)
+        ps_mean = logit_ps.nanmean(0)
+        ps_scale = torch.sqrt(torch.nanmean(torch.pow(logit_ps, 2), 0) - torch.pow(ps_mean,2)) / 5 # to stay in -1,1 range
+        logit_ps_scaled = (logit_ps - ps_mean) / ps_scale
     
         torch.save(ps, self.processed_file_names(
             "phasespace_intermediateParticles_onShell"))
         
-        torch.save(torch.logit(ps), self.processed_file_names(
+        torch.save(logit_ps, self.processed_file_names(
             "phasespace_intermediateParticles_onShell_logit"))
+
+        torch.save(logit_ps_scaled, self.processed_file_names(
+            "phasespace_intermediateParticles_onShell_logit_scaled"))
+
+        torch.save((ps_mean,ps_scale), self.processed_file_names(
+            "mean_std_phasespace_intermediateParticles_onShell_logit"
+        ))
         
         torch.save(detjinv, self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
 
@@ -461,6 +480,16 @@ class Dataset_PartonLevel(Dataset):
             "Log_mean_std_H_thad_tlep_ISR"))
         torch.save(scaledIntermediateParticles, self.processed_file_names(
             "LogScaled_H_thad_tlep_ISR"))
+
+        # Scaling also the boost
+        boost_output = torch.cat((torch.from_numpy(self.boost.E.to_numpy()).unsqueeze(1),
+                                  torch.from_numpy(self.boost.pz.to_numpy()).unsqueeze(1)), 1)
+        boost_output[:,0] = torch.log(1+boost_output[:,0])
+        mean_boost = torch.mean(boost_output, dim=0)
+        std_boost = torch.std(boost_output, dim=0)
+        scaled_boost_output = (boost_output - mean_boost)/std_boost
+        torch.save((mean_boost, std_boost), self.processed_file_names("Log_mean_std_boost"))
+        torch.save(scaled_boost_output, self.processed_file_names("LogScaled_boost"))
         
         
     def get_Higgs(self):
@@ -560,11 +589,16 @@ class Dataset_PartonLevel(Dataset):
                     # no index for mean/std because size is [4]
                     self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian,
                     self.logScaled_data_higgs_t_tbar_ISR_cartesian[index])
-        
-        
-        return [getattr(self, field)[index] if field != 'mean_log_data_higgs_t_tbar_ISR_cartesian' \
-                    and field != 'std_log_data_higgs_t_tbar_ISR_cartesian' \
-                    else getattr(self, field) for field in self.parton_list]
+
+
+        out = [ ]
+        for field in self.parton_list:
+             if field not in ['mean_log_data_higgs_t_tbar_ISR_cartesian',
+                              'std_log_data_higgs_t_tbar_ISR_cartesian',
+                              'mean_log_data_higgs_t_tbar_ISR',
+                              'std_log_data_higgs_t_tbar_ISR']:
+                 out.append(getattr(self, field)[index])
+        return out
 
     def __len__(self):
         size = len(self.mask_partons)

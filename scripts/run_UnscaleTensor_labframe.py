@@ -129,7 +129,8 @@ if __name__ == '__main__':
     
     # READ data
     if (conf.cartesian):
-        data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64, boost_CM=False,
+        data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64,
+                               datasets=["partons_lab", "reco_lab"],
                                 reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'scaledLogBoost'
@@ -139,7 +140,8 @@ if __name__ == '__main__':
                                              'mean_log_data_boost',
                                              'std_log_data_boost'])
     else:
-        data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64, boost_CM=False,
+        data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64,
+                               datasets=["partons_lab", "reco_lab"],
                                 reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'scaledLogBoost'
@@ -215,10 +217,10 @@ if __name__ == '__main__':
     print(f"parameters total:{count_parameters(model)}")
     model.eval()
     UnscaleTensor(conf, model, data_loader, len(data), outputDir, batch_size, device,
-                  data.parton_data.mean_log_data_higgs_t_tbar_ISR,
-                  data.parton_data.std_log_data_higgs_t_tbar_ISR,
-                             data.parton_data.mean_log_data_boost,
-                             data.parton_data.std_log_data_boost)
+                  data.parton_lab.mean_log_data_higgs_t_tbar_ISR,
+                  data.parton_lab.std_log_data_higgs_t_tbar_ISR,
+                             data.parton_lab.mean_log_data_boost,
+                             data.parton_lab.std_log_data_boost)
         
     
     print("Unscale tensor finished!")

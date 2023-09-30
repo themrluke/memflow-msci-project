@@ -31,6 +31,12 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             "H_thad_tlep_ISR": ["pt", "eta", "phi", "mass"],
             "H_thad_tlep_ISR_cartesian": ["E", "px", "py", "pz"]
         }
+
+        tensors_bydefault = ['mask_partons', 'data_partons', 'mask_lepton_partons', 'data_lepton_partons',
+                            'mask_boost', 'data_boost', 'data_higgs_t_tbar_ISR', 'data_higgs_t_tbar_ISR_cartesian',
+                            'data_higgs_t_tbar_ISR_cartesian_onShell']
+        
+
         
         print("\nPartonLevel")
         self.debug = debug
@@ -115,10 +121,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
             self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
 
-        tensors_bydefault = ['mask_partons', 'data_partons', 'mask_lepton_partons', 'data_lepton_partons',
-                            'mask_boost', 'data_boost', 'data_higgs_t_tbar_ISR', 'data_higgs_t_tbar_ISR_cartesian',
-                            'data_higgs_t_tbar_ISR_cartesian_onShell']
-        
         if 'phasespace_intermediateParticles' in self.parton_list:
             print("Load phasespace_intermediateParticles")
             self.phasespace_intermediateParticles = torch.load(

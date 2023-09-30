@@ -189,7 +189,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     #print("Loading datasets")
     train_dataset = DatasetCombined(config.input_dataset_train,dev=device,
-                           dtype=dtype, boost_CM=False,
+                           dtype=dtype, datasets=["partons_lab", "reco_lab"],
                            reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                       'mask_jets','mask_met',
                                       'mask_boost', 'scaledLogBoost'],
@@ -201,7 +201,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                         'std_log_data_boost'])
 
     val_dataset = DatasetCombined(config.input_dataset_validation,dev=device,
-                           dtype=dtype, boost_CM=False,
+                           dtype=dtype, datasets=["partons_lab", "reco_lab"],
                            reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                       'mask_jets','mask_met',
                                       'mask_boost', 'scaledLogBoost'],
@@ -212,10 +212,10 @@ def train( device, name_dir, config,  outputDir, dtype,
                                         'mean_log_data_boost',
                                         'std_log_data_boost'])
 
-    log_mean_parton = train_dataset.parton_data.mean_log_data_higgs_t_tbar_ISR
-    log_std_parton = train_dataset.parton_data.std_log_data_higgs_t_tbar_ISR
-    log_mean_boost = train_dataset.parton_data.mean_log_data_boost
-    log_std_boost = train_dataset.parton_data.std_log_data_boost
+    log_mean_parton = train_dataset.parton_lab.mean_log_data_higgs_t_tbar_ISR
+    log_std_parton = train_dataset.parton_lab.std_log_data_higgs_t_tbar_ISR
+    log_mean_boost = train_dataset.parton_lab.mean_log_data_boost
+    log_std_boost = train_dataset.parton_lab.std_log_data_boost
 
     # Datasets
     trainingLoader = DataLoader(
