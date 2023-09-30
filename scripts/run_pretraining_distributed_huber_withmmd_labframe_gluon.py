@@ -16,7 +16,6 @@ import torch.nn as nn
 from torch.nn.functional import normalize
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-import cloudpickle
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from math import floor
@@ -550,7 +549,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             if early_stopper.early_stop(valid_loss_final/N_valid,
                                     model.state_dict(), optimizer.state_dict(), modelName, exp):
                 print(f"Model converges at epoch {e} !!!")         
-            break
+                break
 
         # Step the scheduler at the end of the val
         scheduler.step()

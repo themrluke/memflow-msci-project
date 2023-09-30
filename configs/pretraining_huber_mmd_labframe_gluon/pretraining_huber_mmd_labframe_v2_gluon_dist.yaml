@@ -1,10 +1,9 @@
 name: spanet_labframe
 version: v2-gluon-dist
 description: 'Like v2-eregr with gluon losses'
-#input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_labframe_part1.parquet
-input_dataset_train: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
-input_dataset_validation: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
-input_dataset_test: /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part2.parquet         
+input_dataset_train: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
+input_dataset_validation: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
+input_dataset_test: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part2.parquet       
 cartesian: false
 ddp_port: 12346
 noProv: true
@@ -18,7 +17,7 @@ scaling_params:
 training_params:
   dtype: "float64"
   lr: 0.001
-  batch_size_training: 700
+  batch_size_training: 1024
   batch_size_validation: 2048
   subsplit: 8
   nepochs: 1000
