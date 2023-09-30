@@ -464,6 +464,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                             kernel=config.training_params.mmd_kernel,
                                                    device=device,
                                                    total=True,
+                                                   dtype=dtype,
                                                    split=True)
                 
                 mmd_loss = (mmd_loss_H+ mmd_loss_thad + mmd_loss_tlep + mmd_loss_gluon +  mmd_loss_boost + mmd_loss_all)/6
