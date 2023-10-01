@@ -1,0 +1,65 @@
+name: nopretrain
+version: v1
+description: ''
+input_dataset: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1.parquet
+cartesian: false
+noProv: true
+input_shape:
+  number_jets: 16
+  number_lept: 1
+  input_features: 7
+scaling_params:
+  log_mean: []
+  log_std: []
+training_params:
+  lr: 0.001
+  batch_size_training: 1024
+  batch_size_validation: 1024
+  subsplit: 8
+  nepochs: 1000
+  training_sample: 0.8
+  validation_sample: 0.2
+  sampling_points_loss: 150
+  percentage_sampling_epoch: 0.2
+  sampling_points: 100
+  nEpochsPatience: 40
+  early_stop_delta: 0.0001
+  eps: 1.0e-05
+  order:
+  - 0
+  - 1
+  - 2
+  - 3
+  sampling_Forward: false
+  reduce_on_plateau:
+    factor: 0.5
+    patience: 5
+    threshold: 0.001
+conditioning_transformer:
+  out_features: 32
+  hidden_features: 128
+  dim_feedforward_transformer: 1024
+  nhead_encoder: 8
+  no_layers_encoder: 8
+  nhead_decoder: 8
+  no_layers_decoder: 6
+  aggregate: true
+  no_decoders: 3
+  use_latent: true
+unfolding_flow:
+  nfeatures: 10
+  ncond: 32
+  ntransforms: 10
+  hiddenMLP_NoLayers: 4
+  hiddenMLP_LayerDim: 128
+  bins: 40
+  autoregressive: false
+  rand_perm: true
+  base: DiagNormal
+  base_first_arg: 0
+  base_second_arg: 4
+  bound: 10
+MDMM:
+  eps_stdMean: 1.5
+  eps_regression: 0.8
+comet_token: uaitssszWuWAaWQkBrDXdlJBt

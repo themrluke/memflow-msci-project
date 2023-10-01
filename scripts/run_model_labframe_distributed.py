@@ -62,16 +62,16 @@ def ddp_setup(rank, world_size, port):
 
 
 def loss_fn_periodic(inp, target, loss_fn, device):
-
-    # rescale to pi
-    # overflow_delta = (inp[inp>PI]- PI).mean()+(inp[inp<-PI]+PI).mean()
+    # penalty term for going further than PI
+    overflow_delta = torch.clamp(inp - PI, min=0.).mean()  - torch.clamp(inp + PI, max=0.).mean()
+    # rescale to pi for the loss itself
     inp[inp>PI] = inp[inp>PI]-2*PI
     inp[inp<-PI] = inp[inp<-PI] + 2*PI
     
     deltaPhi = target - inp
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
-    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device))# + overflow_delta*0.5
+    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + overflow_delta
 
 
 def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, gluon, boost, cartesian, loss_fn,
@@ -79,7 +79,7 @@ def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, g
     lossH = 0.
     lossThad = 0.
     lossTlep = 0.
-    lossGluon = 0.
+    lossGluon = 0. 
 
     if cartesian:
         lossH = loss_fn(logScaled_partons[:,0], higgs)
@@ -232,6 +232,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         exp.add_tags([config.name,config.version])
         exp.log_parameters(config.training_params)
         exp.log_parameters(config.conditioning_transformer)
+        exp.log_parameters(config.unfolding_flow)
         exp.log_parameters(config.MDMM)
         exp.log_parameters({"model_param_tot":count_parameters(model)})
         exp.log_parameters({"model_param_conditioner":count_parameters(model.cond_transformer)})
@@ -308,7 +309,9 @@ def train( device, name_dir, config,  outputDir, dtype,
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                               factor=config.training_params.reduce_on_plateau.factor,
                                                               patience=config.training_params.reduce_on_plateau.patience,
-                                                              threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
+                                                              threshold=config.training_params.reduce_on_plateau.threshold,
+                                                               min_lr=config.training_params.reduce_on_plateau.get("min_lr", 1e-7),
+                                                               verbose=True)
     
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
