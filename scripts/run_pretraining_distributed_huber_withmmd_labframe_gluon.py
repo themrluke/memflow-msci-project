@@ -253,13 +253,13 @@ def train( device, name_dir, config,  outputDir, dtype,
     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
     # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
-    scheduler = CosineAnnealingLR(optimizer,
-                                  T_max=config.training_params.cosine_scheduler.Tmax,
-                                  eta_min=config.training_params.cosine_scheduler.eta_min)
-    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-    #                                                       factor=config.training_params.reduce_on_plateau.factor,
-    #                                                       patience=config.training_params.reduce_on_plateau.patience,
-    #                                                       threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
+    # scheduler = CosineAnnealingLR(optimizer,
+    #                               T_max=config.training_params.cosine_scheduler.Tmax,
+    #                               eta_min=config.training_params.cosine_scheduler.eta_min)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                          factor=config.training_params.reduce_on_plateau.factor,
+                                                          patience=config.training_params.reduce_on_plateau.patience,
+                                                          threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
     
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
@@ -552,11 +552,11 @@ def train( device, name_dir, config,  outputDir, dtype,
                 break
 
         # Step the scheduler at the end of the val
-        after_N_epochs = config.training_params.cosine_scheduler.get("after_N_epochs", 0)
-        if e > after_N_epochs:
-            scheduler.step()
+        # after_N_epochs = config.training_params.cosine_scheduler.get("after_N_epochs", 0)
+        # if e > after_N_epochs:
+        #     scheduler.step()
         
-        # scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
+        scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
         
 
     # writer.close()

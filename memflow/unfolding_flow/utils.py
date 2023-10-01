@@ -168,7 +168,7 @@ class Compute_ParticlesTensor:
                                   device, cartesian=True, eps=1e-5,
                                   return_both=False):
 
-        boost = cond_X[-1]
+        boost = cond_X[3] # there was a bug here using -1, now fixed
         Htt = torch.stack((cond_X[0], cond_X[1],cond_X[2]), dim=1)
 
         unscaledlog = Htt*log_std_parton + log_mean_parton
@@ -235,24 +235,18 @@ class Compute_ParticlesTensor:
         x1 = (boost_reco[:, 0] + boost_reco[:, 3]) / E_CM
         x2 = (boost_reco[:, 0] - boost_reco[:, 3]) / E_CM
 
-        mask1 = x1 < 0
-        mask2 = x2 < 0
-        if (mask1.any() or mask2.any()):
-            print("ERROR: x1 or x2 lower than 0")
-            exit(0)
+        mask_x1 = x1 < 0
+        mask_x2 = x2 < 0
 
         n = 4
         nDimPhaseSpace = 8
-
         masses_t = target_mass[:,perm]
-        #print(masses_t.shape)
 
         P = data_HttISR.clone()  # copy the final state particless
         
         # Check if we are in the CM
         ref_lab = torch.sum(P, axis=1)
-        if not ((utils.rho2_t(ref_lab) < 1e-3).any()):
-            raise Exception("Momenta batch not in the CM, failing to convert back to PS point")
+        mask_not_cm = (utils.rho2_t(ref_lab) < 1e-2)
         
         # We start getting M and then K
         M = torch.tensor(
@@ -310,15 +304,17 @@ class Compute_ParticlesTensor:
 
         detjinv_regressed = 0
 
-        maskr_0 = r < 0
-        maskr_1 = r > 1
-        
-        if (maskr_0.any() or maskr_1.any()):
-            print("ERROR: r lower than 0")
-            print(r[maskr_0])
-            print(r[maskr_1])
-            exit(0)
+        ## Improve error handling 
+        # mask_ps = (r<0) | (r>1)
+        # if (maskr_0.any() or maskr_1.any()):
+        #     print("ERROR: r lower than 0")
+        #     print(r[maskr_0])
+        #     print(r[maskr_1])
+        #     exit(0)
 
-        x1 = x1.unsqueeze(dim=1)
-        x2 = x2.unsqueeze(dim=1)
-        return torch.cat((r, x1, x2), axis=1), detjinv_regressed
+        mask_problematic = mask_x1 #|mask_x2| mask_not_cm|mask_ps |r<0 | r>1
+
+        # get x1 x2 in the uniform space
+        r_x1x2, jacx1x2 = utils.get_uniform_from_x1x2(x1, x2, target_mass.sum(), E_CM )
+
+        return torch.cat((r, r_x1x2), axis=1), detjinv_regressed*jacx1x2, mask_problematic

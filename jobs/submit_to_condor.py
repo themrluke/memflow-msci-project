@@ -1,8 +1,17 @@
 import htcondor
 import sys
+import argparse
 
-model = sys.argv[1]
-version = sys.argv[2]
+parser = argparse.ArgumentParser()
+parser.add_argument('--model', type=str, required=True)
+parser.add_argument('--version', type=str, required=True)
+parser.add_argument('--dry', action="store_true")
+parser.add_argument('--ngpu', type=int, default=1)
+args = parser.parse_args()
+
+model = args.model
+version = args.version
+dry = args.dry
 
 col = htcondor.Collector()
 credd = htcondor.Credd()
@@ -20,8 +29,6 @@ if model == "huber_mmd":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['request_cpus'] = '3'
-    sub['request_gpus'] = '1'
     sub['arguments'] = f"pretraining_huber_mmd/pretraining_huber_mmd_v{version}.yaml flow_pretraining_huber_mmd"
 
     
@@ -33,8 +40,6 @@ elif model == "mmd_huber":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['request_cpus'] = '3'
-    sub['request_gpus'] = '1'
     sub['arguments'] = f"pretraining_mmd_huber/pretraining_mmd_huber_v{version}.yaml flow_pretraining_mmd_huber"  
 
 elif model == "huber_mmd_labframe":
@@ -45,8 +50,6 @@ elif model == "huber_mmd_labframe":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"testmatch"'
-    sub['request_cpus'] = '3'
-    sub['request_gpus'] = '1'
     sub['arguments'] = f"pretraining_huber_mmd_labframe/pretraining_huber_mmd_labframe_v{version}.yaml flow_pretraining_huber_mmd_labframe"
 
 elif model == "huber_mmd_labframe_gluon":
@@ -57,8 +60,6 @@ elif model == "huber_mmd_labframe_gluon":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"testmatch"'
-    sub['request_cpus'] = '3'
-    sub['request_gpus'] = '1'
     sub['arguments'] = f"pretraining_huber_mmd_labframe_gluon/pretraining_huber_mmd_labframe_v{version}.yaml flow_pretraining_huber_mmd_labframe_gluon"
 
 elif model == "huber_mmd_labframe_gluon_distributed":
@@ -69,9 +70,18 @@ elif model == "huber_mmd_labframe_gluon_distributed":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"testmatch"'
-    sub['request_cpus'] = '3'
-    sub['request_gpus'] = '1'
     sub['arguments'] = f"pretraining_huber_mmd_labframe_gluon/pretraining_huber_mmd_labframe_v{version}.yaml flow_pretraining_huber_mmd_labframe_gluon/distrubuted_lxplus"
+
+
+elif model == "flow_labframe":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_flow_labframe.sh"
+    sub['Error'] = f"{basedir}/jobs/error/flow-pretrain-labframe-v{version}-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/flow-pretrain-labframe-v{version}-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/flow-pretrain-labframe-v{version}-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"flow_pretrain_labframe_logit/flow_pretrain_labframe_logit_v{version}.yaml flow_pretrain_labframe_logit"
 
 
 elif model == "flow_nopretrain":
@@ -82,18 +92,18 @@ elif model == "flow_nopretrain":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['request_cpus'] = '3'
-    sub['request_gpus'] = '1'
     sub['arguments'] = f"flow_nopretrain_spanet_logit/flow_nopretrain_v{version}.yaml flow_nopretrain_spanet_logit"
 
 
-# General 
-sub['requirements'] = 'regexp("A100", TARGET.CUDADeviceName)'
+# General
+sub['request_cpus'] = f"{args.ngpu*3}"
+sub['request_gpus'] = f"{args.ngpu}"
+sub['requirements'] = 'regexp("A100", TARGET.CUDADeviceName) || regexp("V100", TARGET.CUDADeviceName)'
 
 print(sub)
+if not dry:
+    schedd = htcondor.Schedd()
+    with schedd.transaction() as txn:
+        cluster_id = sub.queue(txn)
 
-schedd = htcondor.Schedd()
-with schedd.transaction() as txn:
-    cluster_id = sub.queue(txn)
-     
-print(cluster_id)
+    print(f"Submitted to {cluster_id:=}")

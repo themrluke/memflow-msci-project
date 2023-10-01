@@ -38,7 +38,6 @@ class Dataset_RecoLevel_NoBoost(Dataset):
 
         allObjects = self.object_types[:]
         allObjects.append('recoParticles_Cartesian')
-        print("Badsedir: ", self.rootDir)
         # if build flag set or number of files in processed jets directory is 0
         if (build or  len(os.listdir(self.rootDir + '/processed_jets_noBoost/')) == 0):
             self.boost = self.get_boost()

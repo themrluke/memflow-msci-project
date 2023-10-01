@@ -76,10 +76,10 @@ class UnfoldingFlow(nn.Module):
                                     use_latent=cond_use_latent,
                                     out_features_latent=cond_out_features_latent,
                                     no_layers_decoder_latent=cond_no_layers_decoder_latent, 
-                                    dtype=dtype)
+                                    dtype=dtype).to(device)
 
         if load_conditioning_model:
-            state_dict = torch.load(pretrained_model, map_location=device)
+            state_dict = torch.load(pretrained_model, map_location=device if isinstance(device, torch.device) else torch.device(device))
             self.cond_transformer.load_state_dict(state_dict['model_state_dict'])   
         
         self.flow = zuko.flows.NSF(features=flow_nfeatures,
@@ -91,7 +91,7 @@ class UnfoldingFlow(nn.Module):
                               base=eval(flow_base),
                               base_args=[torch.ones(flow_nfeatures)*flow_base_first_arg, torch.ones(flow_nfeatures)*flow_base_second_arg],
                                    univariate_kwargs={"bound": flow_bound }, # Keeping the flow in the [-B,B] box.
-                              passes= 2 if not flow_autoregressive else flow_nfeatures)
+                              passes= 2 if not flow_autoregressive else flow_nfeatures).to(device)
 
         
     def forward(self,  logScaled_reco, data_boost_reco,
@@ -142,8 +142,8 @@ class UnfoldingFlow(nn.Module):
 
 
         # Compute PS
-        ps, detjinv_rambo =  particle_tools.get_PS(data_regressed_cm, boost_regressed)
-        
+        ps, detjinv_rambo_regr, mask_problematic =  particle_tools.get_PS(data_regressed_cm, boost_regressed)
+
         # Now logit and scale PS
         logit_ps = torch.logit(ps)
         logit_ps_scaled = (logit_ps - self.scaling_partons_CM_ps[0] ) / self.scaling_partons_CM_ps[1]
@@ -156,4 +156,4 @@ class UnfoldingFlow(nn.Module):
         if flow_eval == "normalizing":
             flow_prob = self.flow(flow_cond_vector).log_prob(ps_target)
 
-            return [higgs, thad, tlep, gluon, boost], ps, logit_ps_scaled, flow_prob
+            return [higgs, thad, tlep, gluon, boost], ps, logit_ps_scaled, flow_cond_vector, flow_prob, mask_problematic

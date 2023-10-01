@@ -84,8 +84,6 @@ class ConditioningTransformerLayer(nn.Module):
     def disable_latent_training(self):
         if self.use_latent:
             for param in chain(self.latent_decoder.parameters(),
-                               self.transformer_decoders[-1].parameters(),
-                               self.output_projs[-1].parameters(),
                                self.latent_proj.parameters()):
                 param.requires_grad = False
 

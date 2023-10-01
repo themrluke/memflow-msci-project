@@ -131,22 +131,22 @@ if __name__ == '__main__':
     if (conf.cartesian):
         data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64,
                                datasets=["partons_lab", "reco_lab"],
-                                reco_list=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
+                                reco_list_lab=['scaledLogRecoParticlesCartesian', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'scaledLogBoost'
                                           ],
-                                parton_list=[ 'mean_log_data_higgs_t_tbar_ISR',
+                                parton_list_lab=[ 'mean_log_data_higgs_t_tbar_ISR',
                                              'std_log_data_higgs_t_tbar_ISR',
                                              'mean_log_data_boost',
                                              'std_log_data_boost'])
     else:
         data = DatasetCombined(conf.input_dataset_validation, dev=device, dtype=torch.float64,
                                datasets=["partons_lab", "reco_lab"],
-                                reco_list=['scaledLogRecoParticles', 'mask_lepton', 
+                                reco_list_lab=['scaledLogRecoParticles', 'mask_lepton', 
                                             'mask_jets','mask_met',
                                             'mask_boost', 'scaledLogBoost'
                                           ],
-                                parton_list=[ 'mean_log_data_higgs_t_tbar_ISR',
+                                parton_list_lab=[ 'mean_log_data_higgs_t_tbar_ISR',
                                              'std_log_data_higgs_t_tbar_ISR',
                                              'mean_log_data_boost',
                                              'std_log_data_boost'])

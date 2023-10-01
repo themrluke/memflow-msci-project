@@ -136,22 +136,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     device_id = device_ids[device] if device_ids is not None else device
 
-    if device == 0 or world_size is None:
-        # Loading comet_ai logging
-        exp = Experiment(
-            api_key=config.comet_token,
-            project_name="memflow",
-            workspace="valsdav",
-            auto_output_logging = "simple",
-            # disabled=True
-        )
-        exp.add_tags([config.name,config.version])
-        exp.log_parameters(config.training_params)
-        exp.log_parameters(config.conditioning_transformer)
-        exp.log_parameters(config.MDMM) 
-    else:
-        exp = None
-
+ 
     modelName = f"{name_dir}/model_{config.name}_{config.version}.pt"
 
     #print("Loading datasets")
@@ -202,39 +187,59 @@ def train( device, name_dir, config,  outputDir, dtype,
                     scaling_boost_lab = [log_mean_boost, log_std_boost],
                     scaling_partons_CM_ps = [mean_ps, scale_ps],
 
-                    no_jets=conf.input_shape.number_jets,
-                    no_lept=conf.input_shape.number_lept,
-                    input_features=conf.input_shape.input_features,
-                    cond_hiddenFeatures=conf.conditioning_transformer.hidden_features,
-                    cond_dimFeedForward=conf.conditioning_transformer.dim_feedforward_transformer,
-                    cond_outFeatures=conf.conditioning_transformer.out_features,
-                    cond_nheadEncoder=conf.conditioning_transformer.nhead_encoder,
-                    cond_NoLayersEncoder=conf.conditioning_transformer.no_layers_encoder,
-                    cond_nheadDecoder=conf.conditioning_transformer.nhead_decoder,
-                    cond_NoLayersDecoder=conf.conditioning_transformer.no_layers_decoder,
-                    cond_NoDecoders=conf.conditioning_transformer.no_decoders,
-                    cond_aggregate=conf.conditioning_transformer.aggregate,
-                    cond_use_latent=conf.conditioning_transformer.use_latent,
+                    no_jets=config.input_shape.number_jets,
+                    no_lept=config.input_shape.number_lept,
+                    input_features=config.input_shape.input_features,
+                    cond_hiddenFeatures=config.conditioning_transformer.hidden_features,
+                    cond_dimFeedForward=config.conditioning_transformer.dim_feedforward_transformer,
+                    cond_outFeatures=config.conditioning_transformer.out_features,
+                    cond_nheadEncoder=config.conditioning_transformer.nhead_encoder,
+                    cond_NoLayersEncoder=config.conditioning_transformer.no_layers_encoder,
+                    cond_nheadDecoder=config.conditioning_transformer.nhead_decoder,
+                    cond_NoLayersDecoder=config.conditioning_transformer.no_layers_decoder,
+                    cond_NoDecoders=config.conditioning_transformer.no_decoders,
+                    cond_aggregate=config.conditioning_transformer.aggregate,
+                    cond_use_latent=config.conditioning_transformer.use_latent,
                     cond_out_features_latent=config.conditioning_transformer.out_features_latent,
                     cond_no_layers_decoder_latent=config.conditioning_transformer.no_layers_decoder_latent,   
         
-                    flow_nfeatures=conf.unfolding_flow.nfeatures,
-                    flow_ncond=conf.unfolding_flow.ncond, 
-                    flow_ntransforms=conf.unfolding_flow.ntransforms,
-                    flow_hiddenMLP_NoLayers=conf.unfolding_flow.hiddenMLP_NoLayers, 
-                    flow_hiddenMLP_LayerDim=conf.unfolding_flow.hiddenMLP_LayerDim,
-                    flow_bins=conf.unfolding_flow.bins,
-                    flow_autoregressive=conf.unfolding_flow.autoregressive,
-                    flow_base=conf.unfolding_flow.base,
-                    flow_base_first_arg=conf.unfolding_flow.base_first_arg,
-                    flow_base_second_arg=conf.unfolding_flow.base_second_arg,
-                    flow_bound=conf.unfolding_flow.bound,
-                    randPerm=conf.unfolding_flow.randPerm,
+                    flow_nfeatures=config.unfolding_flow.nfeatures,
+                    flow_ncond=config.unfolding_flow.ncond, 
+                    flow_ntransforms=config.unfolding_flow.ntransforms,
+                    flow_hiddenMLP_NoLayers=config.unfolding_flow.hiddenMLP_NoLayers, 
+                    flow_hiddenMLP_LayerDim=config.unfolding_flow.hiddenMLP_LayerDim,
+                    flow_bins=config.unfolding_flow.bins,
+                    flow_autoregressive=config.unfolding_flow.autoregressive,
+                    flow_base=config.unfolding_flow.base,
+                    flow_base_first_arg=config.unfolding_flow.base_first_arg,
+                    flow_base_second_arg=config.unfolding_flow.base_second_arg,
+                    flow_bound=config.unfolding_flow.bound,
+                    randPerm=config.unfolding_flow.randPerm,
                     device=device,
                     dtype=dtype,
                     eps=config.training_params.eps)
 
+    # Experiment logging
+    if device == 0 or world_size is None:
+        # Loading comet_ai logging
+        exp = Experiment(
+            api_key=config.comet_token,
+            project_name="memflow",
+            workspace="valsdav",
+            auto_output_logging = "simple",
+            # disabled=True
+        )
+        exp.add_tags([config.name,config.version])
+        exp.log_parameters(config.training_params)
+        exp.log_parameters(config.conditioning_transformer)
+        exp.log_parameters(config.MDMM)
+        exp.log_parameters({"model_param_tot":count_parameters(model)})
+        exp.log_parameters({"model_param_conditioner":count_parameters(model.cond_transformer)})
+        exp.log_parameters({"model_param_flow":count_parameters(model.flow)})
+    else:
+        exp = None
 
+    # Setting up DDP
     model = model.to(device)
 
     if world_size is not None:
@@ -249,7 +254,6 @@ def train( device, name_dir, config,  outputDir, dtype,
     else:
         ddp_model = model
 
-       
 
     # Datasets
     trainingLoader = DataLoader(
@@ -294,13 +298,17 @@ def train( device, name_dir, config,  outputDir, dtype,
     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
     # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
-    scheduler = CosineAnnealingLR(optimizer,
+    scheduler_type = config.training_params.scheduler
+    
+    if scheduler_type == "cosine_scheduler":
+        scheduler = CosineAnnealingLR(optimizer,
                                   T_max=config.training_params.cosine_scheduler.Tmax,
                                   eta_min=config.training_params.cosine_scheduler.eta_min)
-    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-    #                                                       factor=config.training_params.reduce_on_plateau.factor,
-    #                                                       patience=config.training_params.reduce_on_plateau.patience,
-    #                                                       threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
+    elif scheduler_type == "reduce_on_plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                              factor=config.training_params.reduce_on_plateau.factor,
+                                                              patience=config.training_params.reduce_on_plateau.patience,
+                                                              threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
     
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
@@ -340,7 +348,9 @@ def train( device, name_dir, config,  outputDir, dtype,
                 logScaled_reco = logScaled_reco[:,:,:-1]
             
             # The provenance is remove in the model
-            data_regressed, ps_regr, logit_ps_regr, flow_logprob = ddp_model(logScaled_reco,
+            (data_regressed, ps_regr,
+                 logit_ps_regr, flow_cond_vector,
+                 flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
                                                                           data_boost_reco,
                                                                           mask_recoParticles,
                                                                           mask_boost_reco,
@@ -361,7 +371,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
 
             inf_mask = torch.isinf(flow_logprob)
-            loss_main = -flow_logprob[torch.logical_not(inf_mask)].mean()
+            loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
                     
             mdmm_return = MDMM_module(loss_main, [
                 # huberloos
@@ -421,6 +431,10 @@ def train( device, name_dir, config,  outputDir, dtype,
                         exp.log_metric('loss_tot_train', loss_final.item(),step=ii)
                         exp.log_metric('loss_flow', loss_main.item(), step=ii)
                         exp.log_metric('flow_ninf_train', inf_mask.sum(), step=ii)
+                        exp.log_metric('flow_nproblems', mask_problematic.sum(), step=ii )
+                        # Log the average difference of ps points
+                        exp.log_metric('train_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
+                        exp.log_metric('train_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
                 
 
         ### END of training 
@@ -444,7 +458,8 @@ def train( device, name_dir, config,  outputDir, dtype,
         valid_mmd_boost = 0.
         valid_mmd_all = 0.
         valid_loss_flow = 0.
-        valid_ninf_flow = 0.
+        valid_ninf_flow = 0
+        valid_nproblems = 0
         
         # validation loop (don't update weights and gradients)
         print("Before validation loop")
@@ -467,7 +482,9 @@ def train( device, name_dir, config,  outputDir, dtype,
                 if True:
                     logScaled_reco = logScaled_reco[:,:,:-1]
 
-                data_regressed, ps_regr, logit_ps_regr, flow_logprob  = ddp_model(logScaled_reco,
+                (data_regressed, ps_regr,
+                 logit_ps_regr, flow_cond_vector,
+                 flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
                                                                                       data_boost_reco,
                                                                                       mask_recoParticles,
                                                                                       mask_boost_reco,
@@ -487,7 +504,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                               logScaled_boost]
 
                 inf_mask = torch.isinf(flow_logprob)
-                loss_main = -flow_logprob[torch.logical_not(inf_mask)].mean()
+                loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
 
                 
                 lossH, lossThad, lossTlep, lossGluon, lossBoost = compute_regr_losses(logScaled_partons,
@@ -505,7 +522,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                  mmd_loss_tlep,
                  mmd_loss_gluon,
                  mmd_loss_boost,
-                 mmd_loss_all)= compute_mmd_loss(MMD_input, MMD_target,
+                 mmd_loss_all)= compute_mmd_regr_loss(MMD_input, MMD_target,
                             kernel=config.training_params.mmd_kernel,
                                                    device=device,
                                                    total=True,
@@ -516,6 +533,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                 
                 valid_loss_flow += loss_main.item()
                 valid_ninf_flow += inf_mask.sum()
+                valid_nproblems += mask_problematic.sum()
                 valid_loss_huber += regr_loss.item()
                 valid_lossH += lossH.item()/3
                 valid_lossTlep += lossTlep.item()/3
@@ -541,7 +559,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                             fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                             h = ax.hist2d(logScaled_partons[:,particle,feature].detach().cpu().numpy(),
                                           particle_list[particle][:,feature].cpu().detach().numpy().flatten(),
-                                          bins=40, range=((-3, 3),(-3, 3)), cmin=1)
+                                          bins=30, range=((-2.5, 2.5),(-2.5, 2.5)), cmin=1)
                             fig.colorbar(h[3], ax=ax)
                             exp.log_figure(f"particle_2D_{particle}_{feature}", fig,step=e)
 
@@ -560,7 +578,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                         h = ax.hist2d(logScaled_boost[:,feature].detach().cpu().numpy(),
                                       boost[:,feature].cpu().detach().numpy().flatten(),
-                                      bins=40, range=(ranges_boost[feature],ranges_boost[feature] ), cmin=1)
+                                      bins=30, range=(ranges_boost[feature],ranges_boost[feature] ), cmin=1)
                         fig.colorbar(h[3], ax=ax)
                         exp.log_figure(f"boost_2D_{feature}", fig,step=e)
 
@@ -574,13 +592,46 @@ def train( device, name_dir, config,  outputDir, dtype,
                         ax.set_xlabel(f"boost feature {feature}")
                         exp.log_figure(f"boost_1D_{feature}", fig, step=e)
 
-                    #Plots for the flow quality
-                    
+                    # Plots for the flow quality
+                    # plots of regressed ps
+                    for k in range(10):
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        h = ax.hist2d(ps_target_scaled[:,k].cpu().numpy(),
+                                      logit_ps_regr[:,k].cpu().numpy(),
+                                      bins=40, range=((-0.75, 0.75),(-0.75,0.75)), cmin=1)
+                        fig.colorbar(h[3], ax=ax)
+                        exp.log_figure(f"ps_regr_CM_2D_{k}", fig,step=e)
 
+
+                    # Sampling
+                    N_samples = config.training_params.sampling_points
+                    ps_samples = model.flow(flow_cond_vector).sample((N_samples,)).cpu()
+                    for x in range(10):
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        h = ax.hist2d(ps_target_scaled.cpu()[:,x].tile(N_samples,1,1).flatten().numpy(),
+                                        ps_samples[:,:,x].flatten().numpy(),
+                                        bins=50, range=((-1, 1),(-1, 1)),cmin=1)
+                        fig.colorbar(h[3], ax=ax)
+                        exp.log_figure(f"ps_sampled_2D_{x}", fig, step=e)
+
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        h = ax.hist2d(ps_target_scaled.cpu()[:,x].tile(N_samples,1,1).flatten().numpy(),
+                                        ps_samples[:,:,x].flatten().numpy(),
+                                        bins=50, range=((-1, 1),(-1, 1)), norm=LogNorm() )
+                        fig.colorbar(h[3], ax=ax)
+                        exp.log_figure(f"ps_sampled_2D_{x}_log", fig, step=e)
+
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        h = ax.hist(
+                            (ps_target_scaled.cpu()[:,x].tile(N_samples,1,1) - ps_samples[:,:,x]).flatten().numpy(),
+                            range=(-1,1),   bins=50)
+                        exp.log_figure(f"ps_1D_{x}", fig, step=e)
+                    
 
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("loss_total_val", valid_loss_final/N_valid, epoch=e )
-            exp.log_metric("flow_ninf_val", valid_ninf_flow/N_valid, epoch=e)
+            exp.log_metric("flow_ninf_val", valid_ninf_flow, epoch=e)
+            exp.log_metric("flow_nproblems", valid_nproblems, epoch=e)
             exp.log_metric("loss_mmd_val", valid_loss_mmd/N_valid,epoch=e)
             exp.log_metric('loss_huber_val', valid_loss_huber/N_valid,epoch= e)
             exp.log_metric('loss_huber_val_H', valid_lossH/N_valid,epoch= e)
@@ -594,6 +645,8 @@ def train( device, name_dir, config,  outputDir, dtype,
             exp.log_metric("loss_mmd_val_gluon", valid_mmd_gluon/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_boost", valid_mmd_boost/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_all", valid_mmd_all/N_valid,epoch= e)
+            exp.log_metric('val_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
+            exp.log_metric('val_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
 
         if device == 0 or world_size is None:
             if early_stopper.early_stop(valid_loss_final/N_valid,
@@ -602,7 +655,14 @@ def train( device, name_dir, config,  outputDir, dtype,
                 break
 
         # Step the scheduler at the end of the val
-        scheduler.step()
+        if scheduler_type == "cosine_scheduler":
+            after_N_epochs = config.training_params.cosine_scheduler.get("after_N_epochs", 0)
+            if e > after_N_epochs:
+                scheduler.step()
+                
+        elif scheduler_type == "reduce_on_plateau":
+            # Step the scheduler at the end of the val
+            scheduler.step()
 
         # scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
         
@@ -656,8 +716,7 @@ if __name__ == '__main__':
         dtype = torch.float64
         
     
-    if args.distributed:
-        
+    if len(actual_devices) >1 and args.distributed:
         # make a dictionary with k: rank, v: actual device
         dev_dct = {i: actual_devices[i] for i in range(world_size)}
         print(f"Devices dict: {dev_dct}")
@@ -670,7 +729,7 @@ if __name__ == '__main__':
         )
     else:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        train(device,name_dir, conf,  outputDir, dtype)
+        train(device, name_dir, conf,  outputDir, dtype)
     
     print(f"preTraining finished succesfully! Version: {conf.version}")
     
