@@ -381,12 +381,19 @@ class Dataset_PartonLevel(Dataset):
         phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], final_masses=mass, dev="cpu")
 
         incoming_p_boost = self.data_boost
-        x1 = (incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM
-        x2 = (incoming_p_boost[:, 0, 0] - incoming_p_boost[:, 0, 3]) / E_CM
+
+        # Check for miniaml energy requirement. There is one event out of 2M which <1GeV difference
+        incoming_p_boost[:, 0, 0]  = torch.where(torch.sqrt(incoming_p_boost[:, 0, 0]**2 - incoming_p_boost[:, 0, 3]**2) < mass.sum(),
+                                     torch.sqrt(incoming_p_boost[:, 0, 3]**2 + mass.sum()**2 + 1e-3),
+                                     incoming_p_boost[:, 0, 0])
+ 
+        x1 = torch.clamp((incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM, min=0., max=1.)
+        x2 = torch.clamp((incoming_p_boost[:, 0, 0] - incoming_p_boost[:, 0, 3]) / E_CM, min=0., max=1.)
+            
         ps, detjinv = phasespace.get_ps_from_momenta(
             self.data_higgs_t_tbar_ISR_cartesian_onShell, x1, x2)
 
-        logit_ps = torch.logit(ps)
+        logit_ps = torch.logit(ps, eps=5e-5)
         ps_mean = logit_ps.nanmean(0)
         ps_scale = torch.sqrt(torch.nanmean(torch.pow(logit_ps, 2), 0) - torch.pow(ps_mean,2)) * 5 # to stay in -1,1 range
         logit_ps_scaled = (logit_ps - ps_mean) / ps_scale

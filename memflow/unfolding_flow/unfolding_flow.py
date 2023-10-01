@@ -47,7 +47,7 @@ class UnfoldingFlow(nn.Module):
                  dtype=torch.float32,
                  pretrained_model='',
                  load_conditioning_model=False,
-                 eps=1e-5):
+                 eps=1e-4):
 
         super(UnfoldingFlow, self).__init__()
 
@@ -76,10 +76,10 @@ class UnfoldingFlow(nn.Module):
                                     use_latent=cond_use_latent,
                                     out_features_latent=cond_out_features_latent,
                                     no_layers_decoder_latent=cond_no_layers_decoder_latent, 
-                                    dtype=dtype).to(device)
+                                    dtype=dtype)
 
         if load_conditioning_model:
-            state_dict = torch.load(pretrained_model, map_location=device if isinstance(device, torch.device) else torch.device(device))
+            state_dict = torch.load(pretrained_model, map_location="cpu")
             self.cond_transformer.load_state_dict(state_dict['model_state_dict'])   
         
         self.flow = zuko.flows.NSF(features=flow_nfeatures,
@@ -91,7 +91,7 @@ class UnfoldingFlow(nn.Module):
                               base=eval(flow_base),
                               base_args=[torch.ones(flow_nfeatures)*flow_base_first_arg, torch.ones(flow_nfeatures)*flow_base_second_arg],
                                    univariate_kwargs={"bound": flow_bound }, # Keeping the flow in the [-B,B] box.
-                              passes= 2 if not flow_autoregressive else flow_nfeatures).to(device)
+                              passes= 2 if not flow_autoregressive else flow_nfeatures)
 
         
     def forward(self,  logScaled_reco, data_boost_reco,
@@ -120,17 +120,23 @@ class UnfoldingFlow(nn.Module):
                                                                                          self.scaling_partons_lab[1],
                                                                                          self.scaling_boost_lab[0],
                                                                                          self.scaling_boost_lab[1],
-                                                                                         self.device, cartesian=True, eps=self.eps,
+                                                                                         self.device, cartesian=True,
+                                                                                         eps=self.eps,
                                                                                          return_both=True)
 
         # Move to CM
+        # Rescaling boost and gluon to return the scaled vectors for  regression losses
+        # In principle there should be no problem here, but let's just keep it
+        mask_wrong_boostE = torch.sqrt(boost_regressed[:, 0]**2 - boost_regressed[:, 3]**2) < particle_tools.M_MIN_TOT
+        # print("N. events with wrong regressed boost", mask_wrong_boostE.sum())
+        boost_regressed[mask_wrong_boostE, 0] = torch.sqrt(boost_regressed[mask_wrong_boostE, 3]**2 +  particle_tools.M_MIN_TOT**2 + 1e-3)
+
+        # Note that we are not constraining x1x2 to be <1 . It is numerically constrained in get_PS
         boost_vectors_B  = ps_utils.boostVector_t(boost_regressed).unsqueeze(1) # [B, 1, 3]
         data_regressed_cm = ps_utils.boost_tt(data_regressed_lab , -boost_vectors_B) #[ B, 4particles,4]
 
-        # Rescaling boost and gluon to return the scaled vectors for  regression losses
         
-        boost = boost_regressed[:, [0,-1]]
-        boost_notscaled = boost_regressed[:, [0,-1]]
+        boost_notscaled = boost_regressed[:, [0,-1]] # Only E and pz components are used for the 
         boost = boost_notscaled.clone()
         boost[:,0] = torch.log(boost_notscaled[:,0] + 1)
         boost = (boost - self.scaling_boost_lab[0]) / self.scaling_boost_lab[1]
@@ -144,8 +150,12 @@ class UnfoldingFlow(nn.Module):
         # Compute PS
         ps, detjinv_rambo_regr, mask_problematic =  particle_tools.get_PS(data_regressed_cm, boost_regressed)
 
+        if ((ps<0)|(ps>1)).any():
+            print("WRONG REGRESSED PS")
+            breakpoint()
+
         # Now logit and scale PS
-        logit_ps = torch.logit(ps)
+        logit_ps = torch.logit(ps, eps=5e-5) 
         logit_ps_scaled = (logit_ps - self.scaling_partons_CM_ps[0] ) / self.scaling_partons_CM_ps[1]
 
         # now we can concatenate the latent

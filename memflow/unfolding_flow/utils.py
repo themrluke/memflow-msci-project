@@ -7,7 +7,9 @@ import memflow.phasespace.utils as utils
 
 M_HIGGS = 125.25
 M_TOP = 172.5
-M_GLUON = 1e-3
+M_GLUON = 1e-5
+
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -16,6 +18,8 @@ def to_flat_tensor(X, fields, axis=1, allow_missing=False):
     return torch.tensor(np.stack([ak.to_numpy(getattr(X,f), allow_missing=allow_missing) for f in fields], axis=axis))
 
 class Compute_ParticlesTensor:
+
+    M_MIN_TOT = M_HIGGS + 2*M_TOP + M_GLUON
 
     def get_HttISR(cond_X, log_mean, log_std, device):
 
@@ -165,7 +169,7 @@ class Compute_ParticlesTensor:
     def get_HttISR_fromlab(cond_X, log_mean_parton,
                                   log_std_parton,
                                   log_mean_boost, log_std_boost,
-                                  device, cartesian=True, eps=1e-5,
+                                  device, cartesian=True, eps=1e-4,
                                   return_both=False):
 
         boost = cond_X[3] # there was a bug here using -1, now fixed
@@ -230,14 +234,14 @@ class Compute_ParticlesTensor:
         perm = torch.LongTensor(order)
         data_HttISR = data_HttISR[:,perm,:]
 
-        # boost_reco = boost_reco.squeeze(dim=1)
         # check order of components of boost_reco
         x1 = (boost_reco[:, 0] + boost_reco[:, 3]) / E_CM
         x2 = (boost_reco[:, 0] - boost_reco[:, 3]) / E_CM
-
-        mask_x1 = x1 < 0
-        mask_x2 = x2 < 0
-
+        # the input validation is done here!! Check your vectors!!!
+        mask_problems = (x1>1.)| (x1<0.) | (x2<0.) | (x1>1.)
+        x1 = torch.clamp(x1, min=0., max=1.)
+        x2 = torch.clamp(x2, min=0., max=1.)
+        
         n = 4
         nDimPhaseSpace = 8
         masses_t = target_mass[:,perm]
@@ -246,7 +250,8 @@ class Compute_ParticlesTensor:
         
         # Check if we are in the CM
         ref_lab = torch.sum(P, axis=1)
-        mask_not_cm = (utils.rho2_t(ref_lab) < 1e-2)
+        mask_not_cm = (utils.rho2_t(ref_lab) > 1e-5)
+        mask_problems |= mask_not_cm
         
         # We start getting M and then K
         M = torch.tensor(
@@ -305,16 +310,14 @@ class Compute_ParticlesTensor:
         detjinv_regressed = 0
 
         ## Improve error handling 
-        # mask_ps = (r<0) | (r>1)
+        mask_problems  |= (r<0).any(1) | (r>1).any(1)
         # if (maskr_0.any() or maskr_1.any()):
         #     print("ERROR: r lower than 0")
         #     print(r[maskr_0])
         #     print(r[maskr_1])
         #     exit(0)
 
-        mask_problematic = mask_x1 #|mask_x2| mask_not_cm|mask_ps |r<0 | r>1
-
         # get x1 x2 in the uniform space
         r_x1x2, jacx1x2 = utils.get_uniform_from_x1x2(x1, x2, target_mass.sum(), E_CM )
 
-        return torch.cat((r, r_x1x2), axis=1), detjinv_regressed*jacx1x2, mask_problematic
+        return torch.cat((r, r_x1x2), axis=1), detjinv_regressed*jacx1x2, mask_problems

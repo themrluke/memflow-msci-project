@@ -370,7 +370,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                           logScaled_boost]
 
 
-            inf_mask = torch.isinf(flow_logprob)
+            inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
             loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
                     
             mdmm_return = MDMM_module(loss_main, [
@@ -434,6 +434,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                         exp.log_metric('flow_nproblems', mask_problematic.sum(), step=ii )
                         # Log the average difference of ps points
                         exp.log_metric('train_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
+                        exp.log_metric('val_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).std().mean(), step=ii)
                         exp.log_metric('train_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
                 
 
@@ -485,12 +486,12 @@ def train( device, name_dir, config,  outputDir, dtype,
                 (data_regressed, ps_regr,
                  logit_ps_regr, flow_cond_vector,
                  flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
-                                                                                      data_boost_reco,
-                                                                                      mask_recoParticles,
-                                                                                      mask_boost_reco,
-                                                                                      ps_target_scaled,
-                                                                                      disableGradTransformer=False,
-                                                                                      flow_eval="normalizing")
+                                                               data_boost_reco,
+                                                               mask_recoParticles,
+                                                               mask_boost_reco,
+                                                               ps_target_scaled,
+                                                               disableGradTransformer=False,
+                                                               flow_eval="normalizing")
                     
                 higgs = data_regressed[0] 
                 thad = data_regressed[1]
@@ -503,7 +504,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                               logScaled_partons[:,2], logScaled_partons[:,3],
                               logScaled_boost]
 
-                inf_mask = torch.isinf(flow_logprob)
+                inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
                 loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
 
                 
@@ -646,6 +647,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             exp.log_metric("loss_mmd_val_boost", valid_mmd_boost/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_all", valid_mmd_all/N_valid,epoch= e)
             exp.log_metric('val_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
+            exp.log_metric('val_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).abs().std(), step=ii)
             exp.log_metric('val_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
 
         if device == 0 or world_size is None:
@@ -662,9 +664,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                 
         elif scheduler_type == "reduce_on_plateau":
             # Step the scheduler at the end of the val
-            scheduler.step()
+            scheduler.step(valid_loss_final/N_valid)
 
-        # scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
         
 
     # writer.close()
