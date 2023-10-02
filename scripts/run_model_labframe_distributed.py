@@ -458,8 +458,8 @@ def train( device, name_dir, config,  outputDir, dtype,
         ### END of training 
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e, step=ii)
-            if scheduler_type != "cyclic_lr":
-                exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
+            # if scheduler_type == "cyclic_lr":
+            #     exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
 
         
         valid_loss_huber = 0.
@@ -648,8 +648,8 @@ def train( device, name_dir, config,  outputDir, dtype,
 
                         # Correlation coefficiency for each sampled PS
                         # Just take the first sample
-                        exp.log_metric(f"val_ps_sampled_corrcoef_{j}",
-                                       torch.corrcoef(torch.stack((ps_samples[0,:,j], ps_target_scaled[:,j]))), epoch=e)
+                        corr= torch.corrcoef(torch.stack((ps_samples[0,:,j], ps_target_scaled[:,j])))[0,1]
+                        exp.log_metric(f"val_ps_sampled_corrcoef_{j}", corr, epoch=e)
 
                     
 
@@ -756,7 +756,7 @@ if __name__ == '__main__':
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         train(device, name_dir, conf,  outputDir, dtype)
     
-    print(f"preTraining finished succesfully! Version: {conf.version}")
+    print(f"Flow training finished succesfully! Version: {conf.version}")
     
     
     
