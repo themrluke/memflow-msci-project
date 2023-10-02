@@ -21,3 +21,4 @@ pynvml
 jupyter
 correctionlib
 comet_ml
+h5py
