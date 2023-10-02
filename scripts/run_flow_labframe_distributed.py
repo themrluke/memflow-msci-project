@@ -189,11 +189,11 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     #print("Loading datasets")
     train_dataset = DatasetCombined(config.input_dataset_train,dev=device,
-                           dtype=dtype, datasets=["partons_lab", "reco_lab"],
-                           reco_list_lab=['scaledLogRecoParticles', 'mask_lepton', 
+                           dtype=dtype, boost_CM=False,
+                           reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                       'mask_jets','mask_met',
                                       'mask_boost', 'scaledLogBoost'],
-                           parton_list_lab=['logScaled_data_higgs_t_tbar_ISR',
+                           parton_list=['logScaled_data_higgs_t_tbar_ISR',
                                         'logScaled_data_boost',
                                         'mean_log_data_higgs_t_tbar_ISR',
                                         'std_log_data_higgs_t_tbar_ISR',
@@ -201,21 +201,21 @@ def train( device, name_dir, config,  outputDir, dtype,
                                         'std_log_data_boost'])
 
     val_dataset = DatasetCombined(config.input_dataset_validation,dev=device,
-                           dtype=dtype, datasets=["partons_lab", "reco_lab"],
-                           reco_list_lab=['scaledLogRecoParticles', 'mask_lepton', 
+                           dtype=dtype, boost_CM=False,
+                           reco_list=['scaledLogRecoParticles', 'mask_lepton', 
                                       'mask_jets','mask_met',
                                       'mask_boost', 'scaledLogBoost'],
-                           parton_list_lab=['logScaled_data_higgs_t_tbar_ISR',
+                           parton_list=['logScaled_data_higgs_t_tbar_ISR',
                                         'logScaled_data_boost',
                                         'mean_log_data_higgs_t_tbar_ISR',
                                         'std_log_data_higgs_t_tbar_ISR',
                                         'mean_log_data_boost',
                                         'std_log_data_boost'])
 
-    log_mean_parton = train_dataset.partons_lab.mean_log_data_higgs_t_tbar_ISR
-    log_std_parton = train_dataset.partons_lab.std_log_data_higgs_t_tbar_ISR
-    log_mean_boost = train_dataset.partons_lab.mean_log_data_boost
-    log_std_boost = train_dataset.partons_lab.std_log_data_boost
+    log_mean_parton = train_dataset.parton_data.mean_log_data_higgs_t_tbar_ISR
+    log_std_parton = train_dataset.parton_data.std_log_data_higgs_t_tbar_ISR
+    log_mean_boost = train_dataset.parton_data.mean_log_data_boost
+    log_std_boost = train_dataset.parton_data.std_log_data_boost
 
     # Datasets
     trainingLoader = DataLoader(
@@ -252,31 +252,15 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
-
-    # Scheduler selection
-    scheduler_type = config.training_params.scheduler
-     
-    if scheduler_type == "cosine_scheduler":
-        scheduler = CosineAnnealingLR(optimizer,
+    # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
+    scheduler = CosineAnnealingLR(optimizer,
                                   T_max=config.training_params.cosine_scheduler.Tmax,
                                   eta_min=config.training_params.cosine_scheduler.eta_min)
-    elif scheduler_type == "reduce_on_plateau":
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                                                              factor=config.training_params.reduce_on_plateau.factor,
-                                                              patience=config.training_params.reduce_on_plateau.patience,
-                                                              threshold=config.training_params.reduce_on_plateau.threshold,
-                                                               min_lr=config.training_params.reduce_on_plateau.get("min_lr", 1e-7),
-                                                               verbose=True)
-    elif scheduler_type == "cyclic_lr":
-        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer,
-                                                     base_lr= config.training_params.cyclic_lr.base_lr,
-                                                     max_lr= config.training_params.cyclic_lr.max_lr,
-                                                     step_size_up=config.training_params.cyclic_lr.step_size_up,
-                                                     step_size_down=None,
-                                                      cycle_momentum=False,
-                                                     gamma=config.training_params.cyclic_lr.gamma,
-                                                     mode=config.training_params.cyclic_lr.mode,
-                                                      verbose=False)
+    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+    #                                                       factor=config.training_params.reduce_on_plateau.factor,
+    #                                                       patience=config.training_params.reduce_on_plateau.patience,
+    #                                                       threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
+    
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
 
@@ -319,7 +303,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             thad = out[1]
             tlep = out[2]
             
-            data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab(out, log_mean_parton,
+            data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab_numpy(out, log_mean_parton,
                                   log_std_parton,
                                   log_mean_boost, log_std_boost,
                                   device, cartesian=False, eps=0.0)
@@ -435,7 +419,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 thad = out[1]
                 tlep = out[2]
 
-                data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab(out, log_mean_parton,
+                data_regressed, boost_regressed = Compute_ParticlesTensor.get_HttISR_fromlab_numpy(out, log_mean_parton,
                                   log_std_parton,
                                   log_mean_boost, log_std_boost,
                                   device, cartesian=False, eps=0.0)
@@ -568,18 +552,16 @@ def train( device, name_dir, config,  outputDir, dtype,
                 break
 
         # Step the scheduler at the end of the val
-        # after_N_epochs = config.training_params.cosine_scheduler.get("after_N_epochs", 0)
-        # if e > after_N_epochs:
-        #     scheduler.step()
-        
-        scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
+        scheduler.step()
+
+        # scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
         
 
     # writer.close()
     # exp_log.end()
     destroy_process_group()
     print('preTraining finished!!')
-    
+        
 
 if __name__ == '__main__':
     
