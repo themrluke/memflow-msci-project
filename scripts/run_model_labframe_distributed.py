@@ -62,16 +62,16 @@ def ddp_setup(rank, world_size, port):
 
 
 def loss_fn_periodic(inp, target, loss_fn, device):
-
-    # rescale to pi
-    # overflow_delta = (inp[inp>PI]- PI).mean()+(inp[inp<-PI]+PI).mean()
+    # penalty term for going further than PI
+    overflow_delta = torch.clamp(inp - PI, min=0.).mean()  - torch.clamp(inp + PI, max=0.).mean()
+    # rescale to pi for the loss itself
     inp[inp>PI] = inp[inp>PI]-2*PI
     inp[inp<-PI] = inp[inp<-PI] + 2*PI
     
     deltaPhi = target - inp
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
-    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device))# + overflow_delta*0.5
+    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + overflow_delta
 
 
 def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, gluon, boost, cartesian, loss_fn,
@@ -79,7 +79,7 @@ def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, g
     lossH = 0.
     lossThad = 0.
     lossTlep = 0.
-    lossGluon = 0.
+    lossGluon = 0. 
 
     if cartesian:
         lossH = loss_fn(logScaled_partons[:,0], higgs)
@@ -232,6 +232,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         exp.add_tags([config.name,config.version])
         exp.log_parameters(config.training_params)
         exp.log_parameters(config.conditioning_transformer)
+        exp.log_parameters(config.unfolding_flow)
         exp.log_parameters(config.MDMM)
         exp.log_parameters({"model_param_tot":count_parameters(model)})
         exp.log_parameters({"model_param_conditioner":count_parameters(model.cond_transformer)})
@@ -308,7 +309,9 @@ def train( device, name_dir, config,  outputDir, dtype,
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                               factor=config.training_params.reduce_on_plateau.factor,
                                                               patience=config.training_params.reduce_on_plateau.patience,
-                                                              threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
+                                                              threshold=config.training_params.reduce_on_plateau.threshold,
+                                                               min_lr=config.training_params.reduce_on_plateau.get("min_lr", 1e-7),
+                                                               verbose=True)
     
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
@@ -370,7 +373,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                           logScaled_boost]
 
 
-            inf_mask = torch.isinf(flow_logprob)
+            inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
             loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
                     
             mdmm_return = MDMM_module(loss_main, [
@@ -434,6 +437,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                         exp.log_metric('flow_nproblems', mask_problematic.sum(), step=ii )
                         # Log the average difference of ps points
                         exp.log_metric('train_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
+                        exp.log_metric('val_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).std().mean(), step=ii)
                         exp.log_metric('train_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
                 
 
@@ -485,12 +489,12 @@ def train( device, name_dir, config,  outputDir, dtype,
                 (data_regressed, ps_regr,
                  logit_ps_regr, flow_cond_vector,
                  flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
-                                                                                      data_boost_reco,
-                                                                                      mask_recoParticles,
-                                                                                      mask_boost_reco,
-                                                                                      ps_target_scaled,
-                                                                                      disableGradTransformer=False,
-                                                                                      flow_eval="normalizing")
+                                                               data_boost_reco,
+                                                               mask_recoParticles,
+                                                               mask_boost_reco,
+                                                               ps_target_scaled,
+                                                               disableGradTransformer=False,
+                                                               flow_eval="normalizing")
                     
                 higgs = data_regressed[0] 
                 thad = data_regressed[1]
@@ -503,7 +507,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                               logScaled_partons[:,2], logScaled_partons[:,3],
                               logScaled_boost]
 
-                inf_mask = torch.isinf(flow_logprob)
+                inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
                 loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
 
                 
@@ -646,6 +650,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             exp.log_metric("loss_mmd_val_boost", valid_mmd_boost/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_all", valid_mmd_all/N_valid,epoch= e)
             exp.log_metric('val_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
+            exp.log_metric('val_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).abs().std(), step=ii)
             exp.log_metric('val_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
 
         if device == 0 or world_size is None:
@@ -662,9 +667,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                 
         elif scheduler_type == "reduce_on_plateau":
             # Step the scheduler at the end of the val
-            scheduler.step()
+            scheduler.step(valid_loss_final/N_valid)
 
-        # scheduler.step(valid_loss_final/N_valid) # reduce lr if the model is not improving anymore
         
 
     # writer.close()

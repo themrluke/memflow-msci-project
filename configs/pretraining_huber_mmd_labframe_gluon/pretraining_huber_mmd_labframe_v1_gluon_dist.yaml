@@ -18,7 +18,7 @@ scaling_params:
 training_params:
   dtype: "float64"
   lr: 0.001
-  batch_size_training: 1200
+  batch_size_training: 1024
   batch_size_validation: 2048
   subsplit: 8
   nepochs: 1000

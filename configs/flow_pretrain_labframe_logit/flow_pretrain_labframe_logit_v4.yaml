@@ -1,0 +1,95 @@
+name: flow_logit
+version: v4
+description: Like v2-eregr with gluon losses
+input_dataset_train: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
+input_dataset_validation: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
+input_dataset_test: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part2.parquet       
+
+cartesian: false
+ddp_port: 12346
+noProv: true
+
+input_shape:
+  number_jets: 16
+  number_lept: 1
+  input_features: 7
+
+training_params:
+  dtype: float64
+  lr: 0.005
+  batch_size_training: 2048
+  batch_size_validation: 2048
+  subsplit: 8
+  nepochs: 1000
+  training_sample: 0.9
+  validation_sample: 0.1
+  sampling_points_loss: 150
+  percentage_sampling_epoch: 0.2
+  sampling_points: 100
+  nEpochsPatience: 40
+  eps: 1.0e-05
+  mmd_kernel: multiscale
+  huber_delta: 1.0
+  order:
+  - 0
+  - 1
+  - 2
+  - 3
+  sampling_Forward: false
+  scheduler: "cosine_scheduler"
+  reduce_on_plateau:
+    factor: 0.5
+    patience: 5
+    threshold: 0.001
+    
+  cosine_scheduler:
+    after_N_epochs: 0
+    Tmax : 10
+    eta_min: 1e-4
+    
+  interval_logging_steps: 5
+
+    
+conditioning_transformer:
+  weights:  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/flow_pretraining_huber_mmd_labframe_gluon/bests/best_model_pretraining_spanet_labframe_gluon_boostpz_v2_bugfix_redo5_condor/model_spanet_labframe_v2-gluon-dist-redo5.pt
+  out_features: [3,3,3,1]
+  aggregate: false
+
+  hidden_features: 64
+  dim_feedforward_transformer: 512
+  nhead_encoder: 8
+  no_layers_encoder: 4
+  nhead_decoder: 4
+  no_layers_decoder: 4
+  no_decoders: 4
+  use_latent: true
+  no_layers_decoder_latent: 2
+  out_features_latent: 6
+
+  
+unfolding_flow:
+  
+  load_conditioning_model: true
+  nfeatures: 10
+  ncond: 16
+  ntransforms: 15
+  hiddenMLP_NoLayers: 5
+  hiddenMLP_LayerDim: 256
+  bins: 45
+  autoregressive: false
+  base: DiagNormal
+  base_first_arg: 0
+  base_second_arg: 0.35
+  bound: 1
+  randPerm: true
+  
+MDMM:
+  mmd_regr_max: 0.003
+  mmd_regr_scale: 1
+  mmd_regr_damping: 1
+  huber_max: 0.28 # From the trainings
+  huber_scale: 1
+  huber_damping: 1
+
+
+comet_token: uaitssszWuWAaWQkBrDXdlJBt
