@@ -71,7 +71,7 @@ def loss_fn_periodic(inp, target, loss_fn, device):
     deltaPhi = target - inp
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
-    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + overflow_delta
+    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + 5. * overflow_delta
 
 
 def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, gluon, boost, cartesian, loss_fn,
