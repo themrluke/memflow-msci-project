@@ -169,4 +169,5 @@ class UnfoldingFlow(nn.Module):
             return [higgs, thad, tlep, gluon, boost], data_regressed_cm, \
                 ps, logit_ps_scaled, flow_cond_vector, flow_prob, mask_problematic
         else:
-            return
+            return [higgs, thad, tlep, gluon, boost], data_regressed_cm, \
+                ps, logit_ps_scaled, flow_cond_vector, None, mask_problematic
