@@ -1,17 +1,21 @@
 import htcondor
 import sys
 import argparse
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--version', type=str, required=True)
 parser.add_argument('--dry', action="store_true")
 parser.add_argument('--ngpu', type=int, default=1)
+parser.add_argument("--good-gpus", action="store_true")
 args = parser.parse_args()
 
 model = args.model
 version = args.version
 dry = args.dry
+
+
 
 col = htcondor.Collector()
 credd = htcondor.Credd()
@@ -98,7 +102,14 @@ elif model == "flow_nopretrain":
 # General
 sub['request_cpus'] = f"{args.ngpu*3}"
 sub['request_gpus'] = f"{args.ngpu}"
-sub['requirements'] = 'regexp("A100", TARGET.CUDADeviceName) || regexp("V100", TARGET.CUDADeviceName)'
+if args.good_gpus:
+    sub['requirements'] = 'regexp("A100", TARGET.CUDADeviceName) || regexp("V100", TARGET.CUDADeviceName)'
+
+    
+if not os.path.exists(f"{basedir}/configs/{sub['arguments'].split()[0]}"):
+    print("Missing configuration file! The jobs has not been submitted")
+    exit(1)
+    
 
 print(sub)
 if not dry:

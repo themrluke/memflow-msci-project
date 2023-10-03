@@ -252,15 +252,31 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
-    # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
-    # scheduler = CosineAnnealingLR(optimizer,
-    #                               T_max=config.training_params.cosine_scheduler.Tmax,
-    #                               eta_min=config.training_params.cosine_scheduler.eta_min)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                                                          factor=config.training_params.reduce_on_plateau.factor,
-                                                          patience=config.training_params.reduce_on_plateau.patience,
-                                                          threshold=config.training_params.reduce_on_plateau.threshold, verbose=True)
-    
+
+    # Scheduler selection
+    scheduler_type = config.training_params.scheduler
+     
+    if scheduler_type == "cosine_scheduler":
+        scheduler = CosineAnnealingLR(optimizer,
+                                  T_max=config.training_params.cosine_scheduler.Tmax,
+                                  eta_min=config.training_params.cosine_scheduler.eta_min)
+    elif scheduler_type == "reduce_on_plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                              factor=config.training_params.reduce_on_plateau.factor,
+                                                              patience=config.training_params.reduce_on_plateau.patience,
+                                                              threshold=config.training_params.reduce_on_plateau.threshold,
+                                                               min_lr=config.training_params.reduce_on_plateau.get("min_lr", 1e-7),
+                                                               verbose=True)
+    elif scheduler_type == "cyclic_lr":
+        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer,
+                                                     base_lr= config.training_params.cyclic_lr.base_lr,
+                                                     max_lr= config.training_params.cyclic_lr.max_lr,
+                                                     step_size_up=config.training_params.cyclic_lr.step_size_up,
+                                                     step_size_down=None,
+                                                      cycle_momentum=False,
+                                                     gamma=config.training_params.cyclic_lr.gamma,
+                                                     mode=config.training_params.cyclic_lr.mode,
+                                                      verbose=False)
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
 
@@ -293,9 +309,11 @@ def train( device, name_dir, config,  outputDir, dtype,
             mask_boost_reco, data_boost_reco) = data_batch
             
             mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
+
             # remove prov
             if (config.noProv):
                 logScaled_reco = logScaled_reco[:,:,:-1]
+                # logScaled_reco = logScaled_reco[:,:,:-4] # CHANGE FOR NO PROV --> GO BACK
 
             out = ddp_model(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
 
@@ -412,6 +430,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 # remove prov
                 if (config.noProv):
                     logScaled_reco = logScaled_reco[:,:,:-1]
+                    # logScaled_reco = logScaled_reco[:,:,:-4] ## TEST! 
 
                 out = ddp_model(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
             

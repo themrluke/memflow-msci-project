@@ -71,7 +71,7 @@ def loss_fn_periodic(inp, target, loss_fn, device):
     deltaPhi = target - inp
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
-    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + overflow_delta
+    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + 5. * overflow_delta
 
 
 def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, gluon, boost, cartesian, loss_fn,
@@ -312,6 +312,17 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                               threshold=config.training_params.reduce_on_plateau.threshold,
                                                                min_lr=config.training_params.reduce_on_plateau.get("min_lr", 1e-7),
                                                                verbose=True)
+    elif scheduler_type == "cyclic_lr":
+        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer,
+                                                     base_lr= config.training_params.cyclic_lr.base_lr,
+                                                     max_lr= config.training_params.cyclic_lr.max_lr,
+                                                     step_size_up=config.training_params.cyclic_lr.step_size_up,
+                                                     step_size_down=None,
+                                                      cycle_momentum=False,
+                                                     gamma=config.training_params.cyclic_lr.gamma,
+                                                     mode=config.training_params.cyclic_lr.mode,
+                                                      verbose=False)
+        
     
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
@@ -351,9 +362,9 @@ def train( device, name_dir, config,  outputDir, dtype,
                 logScaled_reco = logScaled_reco[:,:,:-1]
             
             # The provenance is remove in the model
-            (data_regressed, ps_regr,
-                 logit_ps_regr, flow_cond_vector,
-                 flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
+            (data_regressed, data_regressed_cm,
+             ps_regr, logit_ps_regr, flow_cond_vector,
+             flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
                                                                           data_boost_reco,
                                                                           mask_recoParticles,
                                                                           mask_boost_reco,
@@ -399,6 +410,9 @@ def train( device, name_dir, config,  outputDir, dtype,
             optimizer.step()
             sum_loss += loss_final.item()
 
+            if scheduler_type == "cyclic_lr": #cycle each step
+                scheduler.step()
+
             with torch.no_grad():
                 if exp is not None and device==0 or world_size is None:
                     if i % config.training_params.interval_logging_steps == 0:
@@ -437,14 +451,15 @@ def train( device, name_dir, config,  outputDir, dtype,
                         exp.log_metric('flow_nproblems', mask_problematic.sum(), step=ii )
                         # Log the average difference of ps points
                         exp.log_metric('train_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
-                        exp.log_metric('val_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).std().mean(), step=ii)
+                        exp.log_metric('train_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).std().mean(), step=ii)
                         exp.log_metric('train_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
-                
+                        exp.log_metric("learning_rate", optimizer.param_groups[0]['lr'], step=ii)
 
         ### END of training 
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e, step=ii)
-            exp.log_metric("learning_rate", optimizer.param_groups[0]['lr'], epoch=e, step=ii)
+            # if scheduler_type == "cyclic_lr":
+            #     exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
 
         
         valid_loss_huber = 0.
@@ -486,7 +501,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 if True:
                     logScaled_reco = logScaled_reco[:,:,:-1]
 
-                (data_regressed, ps_regr,
+                (data_regressed, data_regressed_cm, ps_regr,
                  logit_ps_regr, flow_cond_vector,
                  flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
                                                                data_boost_reco,
@@ -609,27 +624,33 @@ def train( device, name_dir, config,  outputDir, dtype,
 
                     # Sampling
                     N_samples = config.training_params.sampling_points
-                    ps_samples = model.flow(flow_cond_vector).sample((N_samples,)).cpu()
-                    for x in range(10):
+                    ps_samples = model.flow(flow_cond_vector).sample((N_samples,))
+                    for j in range(10):
                         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
-                        h = ax.hist2d(ps_target_scaled.cpu()[:,x].tile(N_samples,1,1).flatten().numpy(),
-                                        ps_samples[:,:,x].flatten().numpy(),
+                        h = ax.hist2d(ps_target_scaled[:,j].tile(N_samples,1,1).flatten().cpu().numpy(),
+                                        ps_samples[:,:,j].flatten().cpu().numpy(),
                                         bins=50, range=((-1, 1),(-1, 1)),cmin=1)
                         fig.colorbar(h[3], ax=ax)
-                        exp.log_figure(f"ps_sampled_2D_{x}", fig, step=e)
+                        exp.log_figure(f"ps_sampled_2D_{j}", fig, step=e)
 
                         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
-                        h = ax.hist2d(ps_target_scaled.cpu()[:,x].tile(N_samples,1,1).flatten().numpy(),
-                                        ps_samples[:,:,x].flatten().numpy(),
+                        h = ax.hist2d(ps_target_scaled[:,j].tile(N_samples,1,1).flatten().cpu().numpy(),
+                                        ps_samples[:,:,j].flatten().cpu().numpy(),
                                         bins=50, range=((-1, 1),(-1, 1)), norm=LogNorm() )
                         fig.colorbar(h[3], ax=ax)
-                        exp.log_figure(f"ps_sampled_2D_{x}_log", fig, step=e)
+                        exp.log_figure(f"ps_sampled_2D_{j}_log", fig, step=e)
 
                         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                         h = ax.hist(
-                            (ps_target_scaled.cpu()[:,x].tile(N_samples,1,1) - ps_samples[:,:,x]).flatten().numpy(),
+                            (ps_target_scaled[:,j].tile(N_samples,1,1) - ps_samples[:,:,j]).flatten().cpu().numpy(),
                             range=(-1,1),   bins=50)
-                        exp.log_figure(f"ps_1D_{x}", fig, step=e)
+                        exp.log_figure(f"ps_1D_{j}", fig, step=e)
+
+                        # Correlation coefficiency for each sampled PS
+                        # Just take the first sample
+                        corr= torch.corrcoef(torch.stack((ps_samples[0,:,j], ps_target_scaled[:,j])))[0,1]
+                        exp.log_metric(f"val_ps_sampled_corrcoef_{j}", corr, epoch=e)
+
                     
 
         if exp is not None and device==0 or world_size is None:
@@ -735,7 +756,7 @@ if __name__ == '__main__':
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         train(device, name_dir, conf,  outputDir, dtype)
     
-    print(f"preTraining finished succesfully! Version: {conf.version}")
+    print(f"Flow training finished succesfully! Version: {conf.version}")
     
     
     

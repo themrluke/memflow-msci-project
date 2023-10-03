@@ -16,7 +16,7 @@ input_shape:
 
 training_params:
   dtype: float64
-  lr: 0.001
+  lr: 0.005
   batch_size_training: 2048
   batch_size_validation: 2048
   subsplit: 8
@@ -36,7 +36,7 @@ training_params:
   - 2
   - 3
   sampling_Forward: false
-  scheduler: "cosine_scheduler"
+  scheduler: "cyclic_lr"
   reduce_on_plateau:
     factor: 0.5
     patience: 5
@@ -46,6 +46,13 @@ training_params:
     after_N_epochs: 0
     Tmax : 10
     eta_min: 1e-5
+
+  cyclic_lr:
+    max_lr : 0.005
+    base_lr: 0.0001
+    step_size_up: 8000
+    gamma: 0.8
+    mode: exp_range
     
   interval_logging_steps: 5
 
@@ -72,22 +79,22 @@ unfolding_flow:
   load_conditioning_model: true
   nfeatures: 10
   ncond: 16
-  ntransforms: 20
+  ntransforms: 6
   hiddenMLP_NoLayers: 6
   hiddenMLP_LayerDim: 128
   bins: 40
-  autoregressive: false
+  autoregressive: true
   base: DiagNormal
   base_first_arg: 0
   base_second_arg: 0.35
-  bound: 1.2
+  bound: 1.1
   randPerm: true
   
 MDMM:
   mmd_regr_max: 0.003
   mmd_regr_scale: 1
   mmd_regr_damping: 1
-  huber_max: 0.28 # From the trainings
+  huber_max: 0.25 # From the trainings
   huber_scale: 1
   huber_damping: 1
 
