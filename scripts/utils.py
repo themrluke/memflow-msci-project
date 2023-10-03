@@ -512,6 +512,139 @@ def plot_regressionFactor(regressedVar, correctVar, targetVar, matched, limTarge
         plt.savefig(nameDir + '/' + nameFig)
     plt.show()
     
+def get_quantiles(find_quantile, interval, regressed_var):
+    if find_quantile < interval/2.:
+        quantile_left = 0.
+        find_quantile_left = np.quantile(regressed_var, quantile_left)
+        quantile_right = interval
+        find_quantile_right = np.quantile(regressed_var, quantile_right)
+
+    elif find_quantile > 1.0-interval/2.:
+        quantile_left = 1.0-interval
+        find_quantile_left = np.quantile(regressed_var, quantile_left)
+        quantile_right = 1.0
+        find_quantile_right = np.quantile(regressed_var, quantile_right)
+
+    else:
+        quantile_left = find_quantile - 0.34
+        find_quantile_left = np.quantile(regressed_var, quantile_left)
+        quantile_right = find_quantile + 0.34
+        find_quantile_right = np.quantile(regressed_var, quantile_right)
+        
+    return find_quantile_left, find_quantile_right
+    
+
+def plot_mode_quantile(regressed_var, target_var, target_values, window, nbins, range,
+                      xlabel='', ylabel=''):
+    
+    regressed_modes = []
+    quantile_right_list = []
+    quantile_left_list = []
+    quantile_right_list_95 = []
+    quantile_left_list_95 = []
+    
+    for target_value in target_values:
+        mask = ((target_var > (target_value-window)) & (target_var < (target_value+window))).to_numpy()
+
+        hist, bin_edges = np.histogram(regressed_var[mask], bins=nbins, range=range)
+        xmax_left = bin_edges[np.argmax(hist)]
+        xmax_right = bin_edges[np.argmax(hist)+1]
+        regressed_mode = (xmax_left + xmax_right)/2
+        regressed_modes.append(regressed_mode)
+
+        find_quantile = np.count_nonzero(regressed_var[mask] < regressed_mode) / len(regressed_var[mask])
+
+        find_quantile_left, find_quantile_right = get_quantiles(find_quantile=find_quantile,
+                                                                interval=0.68,
+                                                                regressed_var=regressed_var[mask])
+
+        quantile_right_list.append(find_quantile_right)
+        quantile_left_list.append(find_quantile_left)
+        
+        find_quantile_left_95, find_quantile_right_95 = get_quantiles(find_quantile=find_quantile,
+                                                                interval=0.95,
+                                                                regressed_var=regressed_var[mask])
+
+        quantile_right_list_95.append(find_quantile_right_95)
+        quantile_left_list_95.append(find_quantile_left_95)
+        
+    offset_left = np.array(regressed_modes) - np.array(quantile_left_list) # need offset
+    offset_right = np.array(quantile_right_list) - np.array(regressed_modes)
+    
+    offset_left_95 = np.array(regressed_modes) - np.array(np.array(quantile_left_list_95)) # need offset
+    offset_right_95 = np.array(quantile_right_list_95) - np.array(regressed_modes)
+    
+    regressed_modes_diff = regressed_modes - target_values
+        
+    plt.plot(target_values, regressed_modes_diff, linestyle='-', marker='o', color='k')
+        
+    plt.fill_between(target_values, regressed_modes_diff - offset_left, regressed_modes_diff + offset_right,
+                     color='r', alpha=0.2, label='68% CL')
+    plt.fill_between(target_values, regressed_modes_diff - offset_left_95, regressed_modes_diff + offset_right_95,
+                     color='b', alpha=0.2, label='95% CL')
+    plt.legend(fontsize=10)
+    plt.xlabel(xlabel, fontsize=20)
+    plt.ylabel(ylabel, fontsize=20)
+    plt.tick_params(axis='both', which='major', labelsize=14)
+    
+    plt.show()
+    
+def plot_diff_mode_quantile(regressed_var, target_var, referance_var, target_values, window, nbins, range,
+                      xlabel='', ylabel='', title=''):
+    
+    regressed_modes = []
+    quantile_right_list = []
+    quantile_left_list = []
+    quantile_right_list_95 = []
+    quantile_left_list_95 = []
+    
+    for target_value in target_values:
+        mask = ((referance_var > (target_value-window)) & (referance_var < (target_value+window))).to_numpy()
+
+        diff_var = regressed_var[mask] - target_var[mask]
+        
+        hist, bin_edges = np.histogram(diff_var, bins=nbins, range=range)
+        xmax_left = bin_edges[np.argmax(hist)]
+        xmax_right = bin_edges[np.argmax(hist)+1]
+        regressed_mode = (xmax_left + xmax_right)/2
+        regressed_modes.append(regressed_mode)
+
+        find_quantile = np.count_nonzero(diff_var < regressed_mode) / len(diff_var)
+
+        find_quantile_left, find_quantile_right = get_quantiles(find_quantile=find_quantile,
+                                                                interval=0.68,
+                                                                regressed_var=diff_var)
+
+        quantile_right_list.append(find_quantile_right)
+        quantile_left_list.append(find_quantile_left)
+        
+        find_quantile_left_95, find_quantile_right_95 = get_quantiles(find_quantile=find_quantile,
+                                                                interval=0.95,
+                                                                regressed_var=diff_var)
+
+        quantile_right_list_95.append(find_quantile_right_95)
+        quantile_left_list_95.append(find_quantile_left_95)
+        
+    offset_left = np.array(regressed_modes) - np.array(quantile_left_list) # need offset
+    offset_right = np.array(quantile_right_list) - np.array(regressed_modes)
+    
+    offset_left_95 = np.array(regressed_modes) - np.array(np.array(quantile_left_list_95)) # need offset
+    offset_right_95 = np.array(quantile_right_list_95) - np.array(regressed_modes)
+            
+    plt.plot(target_values, regressed_modes, linestyle='-', marker='o', color='k')
+        
+    plt.fill_between(target_values, regressed_modes - offset_left, regressed_modes + offset_right,
+                     color='r', alpha=0.2, label='68% CL')
+    plt.fill_between(target_values, regressed_modes - offset_left_95, regressed_modes + offset_right_95,
+                     color='b', alpha=0.2, label='95% CL')
+    plt.legend(fontsize=10)
+    plt.xlabel(xlabel, fontsize=20)
+    plt.ylabel(ylabel, fontsize=20)
+    plt.tick_params(axis='both', which='major', labelsize=14)
+    plt.title(title)
+    
+    plt.show()
+    
 class FindMasks:
 
     def higgs_mask(self, jets):
