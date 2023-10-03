@@ -9,6 +9,7 @@ parser.add_argument('--version', type=str, required=True)
 parser.add_argument('--dry', action="store_true")
 parser.add_argument('--ngpu', type=int, default=1)
 parser.add_argument("--good-gpus", action="store_true")
+parser.add_argument("--args", nargs="+", type=str, help="additional args")
 args = parser.parse_args()
 
 model = args.model
@@ -109,6 +110,17 @@ elif model == "flow_nopretrain":
     sub['arguments'] = f"flow_nopretrain_spanet_logit/flow_nopretrain_v{version}.yaml flow_nopretrain_spanet_logit"
 
 
+elif model == "flow_evaluation_labframe":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_flow_evaluation_labframe.sh"
+    sub['Error'] = f"{basedir}/jobs/error/flow-evaluation-labframe-v{version}-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/flow-evaluation-labframe-v{version}-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/flow-evaluation-labframe-v{version}-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"workday"'
+    sub['arguments'] = " ".join(args.args)
+
+
 # General
 sub['request_cpus'] = f"{args.ngpu*3}"
 sub['request_gpus'] = f"{args.ngpu}"
@@ -116,7 +128,7 @@ if args.good_gpus:
     sub['requirements'] = 'regexp("A100", TARGET.CUDADeviceName) || regexp("V100", TARGET.CUDADeviceName)'
 
     
-if not os.path.exists(f"{basedir}/configs/{sub['arguments'].split()[0]}"):
+if model != "flow_evaluation_labframe" and not os.path.exists(f"{basedir}/configs/{sub['arguments'].split()[0]}"):
     print("Missing configuration file! The jobs has not been submitted")
     exit(1)
     

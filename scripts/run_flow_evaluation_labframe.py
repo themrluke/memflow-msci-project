@@ -124,7 +124,10 @@ def validation( device, config, model_weights, outputPath, N_samples, N_events, 
     )
 
     N_eval = len(test_dataset)
-    if N_events == None:
+    if N_events != None and N_events!= -1:
+        N_eval = N_events
+
+    if N_events == -1:
         N_events = N_eval
 
 
@@ -138,7 +141,7 @@ def validation( device, config, model_weights, outputPath, N_samples, N_events, 
     # training loop    
     iterator = iter(testLoader)
     max_iter = ceil(N_eval / B)
-    for i in track(range(max_iter+1), "Evaluating"):
+    for i in track(range(max_iter-1), "Evaluating"):
         with torch.no_grad():
 
             (logScaled_partons, logScaled_boost,
@@ -164,7 +167,6 @@ def validation( device, config, model_weights, outputPath, N_samples, N_events, 
                                                                           disableGradTransformer=False,
                                                                           flow_eval="normalizing")
             ps_samples = model.flow(flow_cond_vector).sample((N_samples,))
-            breakpoint()
             if i<max_iter:
                 out_ps[i*B: (i+1)*B] = ps_regr.cpu()
                 out_partons_lab[i*B:(i+1)*B] = torch.stack(data_regressed[:-1], dim=1).cpu()
