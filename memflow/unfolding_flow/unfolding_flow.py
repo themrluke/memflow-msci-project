@@ -166,4 +166,7 @@ class UnfoldingFlow(nn.Module):
         if flow_eval == "normalizing":
             flow_prob = self.flow(flow_cond_vector).log_prob(ps_target)
 
-            return [higgs, thad, tlep, gluon, boost], ps, logit_ps_scaled, flow_cond_vector, flow_prob, mask_problematic
+            return [higgs, thad, tlep, gluon, boost], data_regressed_cm, \
+                ps, logit_ps_scaled, flow_cond_vector, flow_prob, mask_problematic
+        else:
+            return

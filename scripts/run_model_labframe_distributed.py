@@ -362,9 +362,9 @@ def train( device, name_dir, config,  outputDir, dtype,
                 logScaled_reco = logScaled_reco[:,:,:-1]
             
             # The provenance is remove in the model
-            (data_regressed, ps_regr,
-                 logit_ps_regr, flow_cond_vector,
-                 flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
+            (data_regressed, data_regressed_cm,
+             ps_regr, logit_ps_regr, flow_cond_vector,
+             flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
                                                                           data_boost_reco,
                                                                           mask_recoParticles,
                                                                           mask_boost_reco,
@@ -501,7 +501,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 if True:
                     logScaled_reco = logScaled_reco[:,:,:-1]
 
-                (data_regressed, ps_regr,
+                (data_regressed, data_regressed_cm, ps_regr,
                  logit_ps_regr, flow_cond_vector,
                  flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
                                                                data_boost_reco,

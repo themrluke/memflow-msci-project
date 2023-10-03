@@ -309,9 +309,11 @@ def train( device, name_dir, config,  outputDir, dtype,
             mask_boost_reco, data_boost_reco) = data_batch
             
             mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
+
             # remove prov
             if (config.noProv):
                 logScaled_reco = logScaled_reco[:,:,:-1]
+                # logScaled_reco = logScaled_reco[:,:,:-4] # CHANGE FOR NO PROV --> GO BACK
 
             out = ddp_model(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
 
@@ -428,6 +430,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 # remove prov
                 if (config.noProv):
                     logScaled_reco = logScaled_reco[:,:,:-1]
+                    # logScaled_reco = logScaled_reco[:,:,:-4] ## TEST! 
 
                 out = ddp_model(logScaled_reco, data_boost_reco, mask_recoParticles, mask_boost_reco)
             

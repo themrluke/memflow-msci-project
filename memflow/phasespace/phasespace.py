@@ -26,10 +26,16 @@ from particle import Particle
 #          get_pdfxQ2(pdf, pdgs[1], x2, q2)
         
     
+M_HIGGS = 125.25
+M_TOP = 172.5
+M_GLUON = 1e-5
+
+
 
 
 class PhaseSpace:
-    def __init__(self, collider_energy, initial_pdgs, final_pdgs, final_masses, pdf=None, dev=None):
+    def __init__(self, collider_energy, initial_pdgs, final_pdgs, final_masses=torch.tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON]),
+                 pdf=None, dev=None):
         if dev == None:
             self.dev = (
                 torch.device("cuda:" + str(0))
