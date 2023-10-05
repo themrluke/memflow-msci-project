@@ -99,6 +99,18 @@ elif model == "flow_labframe_psloss":
     sub['+JobFlavour'] = '"nextweek"'
     sub['arguments'] = f"flow_pretrain_labframe_psloss_logit/flow_labframe_psloss_v{version}.yaml flow_labframe_psloss_logit"
 
+
+elif model == "flow_labframe_sampling":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_flow_labframe_sampling.sh"
+    sub['Error'] = f"{basedir}/jobs/error/flow-pretrain-labframe-sampling-v{version}-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/flow-pretrain-labframe-sampling-v{version}-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/flow-pretrain-labframe-sampling-v{version}-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"flow_pretrain_labframe_sampling/flow_labframe_sampling_v{version}.yaml flow_labframe_sampling"
+
+
 elif model == "flow_nopretrain":
     sub['Executable'] = f"{basedir}/jobs/script_condor_flow_nopretrain.sh"
     sub['Error'] = f"{basedir}/jobs/error/flow-nopretrain-$(ClusterId).$(ProcId).err"

@@ -168,6 +168,10 @@ class UnfoldingFlow(nn.Module):
 
             return [higgs, thad, tlep, gluon, boost], data_regressed_cm, \
                 ps, logit_ps_scaled, flow_cond_vector, flow_prob, mask_problematic
-        else:
+
+        
+        elif flow_eval == "sampling":
+            samples = self.flow(flow_cond_vector).rsample((Nsamples,))
+            
             return [higgs, thad, tlep, gluon, boost], data_regressed_cm, \
-                ps, logit_ps_scaled, flow_cond_vector, None, mask_problematic
+                ps, logit_ps_scaled, flow_cond_vector, samples, mask_problematic
