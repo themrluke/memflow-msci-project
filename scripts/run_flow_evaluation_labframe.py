@@ -141,7 +141,7 @@ def validation( device, config, model_weights, outputPath, N_samples, N_events, 
     # training loop    
     iterator = iter(testLoader)
     max_iter = ceil(N_eval / B)
-    for i in track(range(max_iter-1), "Evaluating"):
+    for i in track(range(max_iter), "Evaluating"):
         with torch.no_grad():
 
             (logScaled_partons, logScaled_boost,
@@ -186,13 +186,13 @@ def validation( device, config, model_weights, outputPath, N_samples, N_events, 
 
             if (i+1)*B > N_events:
                 break
-
+             
     
     with h5py.File(outputPath, 'a') as f:
         # Create a dataset in the file
         out_ps = f.create_dataset("ps", (N_events, 10 ), dtype='f', data=out_ps)
         out_partons_lab =  f.create_dataset("part_lab_ptetaphi", (N_events, 4, 3 ), dtype='f', data=out_partons_lab)
-        out_partons_CM =  f.create_dataset("part_lab_Epxpypz", (N_events, 4, 4), dtype='f', data=out_partons_CM)
+        out_partons_CM =  f.create_dataset("part_CM_Epxpypz", (N_events, 4, 4), dtype='f', data=out_partons_CM)
         out_boost =  f.create_dataset("boost", (N_events, 2), dtype='f', data=out_boost)
         out_flow_prob = f.create_dataset("logprob", (N_events,), dtype='f', data=out_flow_prob)
         out_flow_samples = f.create_dataset("flow_samples", (N_events, N_samples, 10), dtype='f', data=out_flow_samples)
