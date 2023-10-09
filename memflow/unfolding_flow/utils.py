@@ -281,7 +281,9 @@ class Compute_ParticlesTensor:
             j = i - 1  # index for 0-based tensors
             # in the direct algo the u are squared.
 
-            u = (K_t[:, j]/K_t[:, j-1]) ** 2
+            # u = (K_t[:, j]/K_t[:, j-1]) ** 2
+            # NB: Removed the square factor from the implementation!
+            u = (K_t[:, j]/K_t[:, j-1])
 
             r[:, j - 1] = (n + 1 - i) * (torch.pow(u, (n - i))) - (n - i) * (
                 torch.pow(u, (n + 1 - i))

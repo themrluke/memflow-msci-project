@@ -83,7 +83,8 @@ class PhaseSpace:
                             points, #(3n-4) + 2
                             pT_mincut=-1,
                             delR_mincut=-1,
-                            rap_maxcut=-1):
+                            rap_maxcut=-1,
+                            requires_grad=False):
         '''
         The returned 4-vector momenta are in order:
         - gluon1, gluon2 in the CM (not in the lab frame!!)
@@ -96,7 +97,8 @@ class PhaseSpace:
         momenta, weight, x1, x2 = self.generator.generateKinematics_batch(
             points, pdgs=self.initial_pdgs,
             pT_mincut=pT_mincut, delR_mincut=delR_mincut,
-            rap_maxcut=rap_maxcut
+            rap_maxcut=rap_maxcut,
+            requires_grad=requires_grad
         )
         return momenta, weight, x1, x2
 

@@ -172,6 +172,7 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
         delR_mincut=-1,
         rap_maxcut=-1,
         pdgs=[0, 0],
+        requires_grad=False
     ):
         """Generate a self.n_initial -> self.n_final phase-space point
         using the random variables passed in argument, including phase space cuts and PDFs.
@@ -265,7 +266,7 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
             M[0] = E_cm
             M = torch.tensor(
                 M,
-                requires_grad=False,
+                requires_grad=requires_grad,
                 dtype=torch.double,
                 device=random_variables.device,
             )
@@ -274,25 +275,31 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
             M = [[0.0] * (self.n_final - 1)] * random_variables.shape[0]
             M = torch.tensor(
                 M,
-                requires_grad=False,
+                requires_grad=requires_grad,
                 dtype=torch.double,
                 device=random_variables.device,
             )
-            M[:, 0] = E_cm
+            with torch.no_grad():
+                M[:, 0] = E_cm
             M.to(random_variables.device)
             E_cm.to(random_variables.device)
             self.masses_t.to(random_variables.device)
+            
 
         # generate the intermediate masses and get the additional weight for massive particles
-        weight *= self.generateIntermediatesMassive_batch(M, E_cm, random_variables)
+        w, M_clone = self.generateIntermediatesMassive_batch(M, E_cm, random_variables)
+        weight *= w
+        M = M_clone
+        
         Q_t = torch.tensor(
             [0.0, 0.0, 0.0, 0.0],
-            requires_grad=False,
+            requires_grad=requires_grad,
             dtype=torch.double,
             device=random_variables.device,
         )
         Q_t = Q_t.unsqueeze(0).repeat(random_variables.shape[0], 1)
         Q_t[:, 0] = M[:, 0]
+
         M = torch.cat(
             (
                 M,
@@ -443,50 +450,63 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
 
         u = self.bisect_vec_batch(random_variables[:, : self.n_final - 2])
 
-        for i in range(2, self.n_final):
-            M_t[:, i - 1] = torch.sqrt(u[:, i - 2] * (M_t[:, i - 2] ** 2))
+        M_t_clone = M_t.clone()
+        # Adding factor 1 in front to be able to use cumprod
+        u_ = torch.cat( (torch.ones(u.shape[0],1, device=M_t.device), u), dim=1 )
+        prod_u = torch.cumprod(u_, dim=1)
+        # This is like in the RamboOnDiet paper, 
+        M_t_clone = M_t_clone[:, 0].unsqueeze(1)*prod_u
+        
+        # for i in range(2, self.n_final):
+        #     #M_t_clone[:, i - 1] = torch.sqrt(u[:, i - 2] * (M_t_clone[:, i - 2] ** 2))
+        #     ## WHY squared???
+        #     M_t_clone[:, i - 1] =u[:, i - 2] * (M_t_clone[:, i - 2])
+        # print(M_t_clone)
+        
         if not torch.is_tensor(E_cm) or len(E_cm.size()) == 0:
             return torch.tensor(
                 [self.get_flatWeights(E_cm, self.n_final)] * random_variables.shape[0],
                 dtype=torch.double,
                 device=random_variables.device,
-            )
+            ), M_t_clone
         else:
-            return self.get_flatWeights(E_cm, self.n_final)
+            return self.get_flatWeights(E_cm, self.n_final), M_t_clone
 
     def generateIntermediatesMassive_batch(self, M, E_cm, random_variables):
         """Generate intermediate masses for a massive final state. Batch version"""
+        M_clone = M.clone()
+        M_clone[:, 0] -= torch.sum(self.masses_t)
 
-        M[:, 0] -= torch.sum(self.masses_t)
-
-        weight = self.generateIntermediatesMassless_batch(M, E_cm, random_variables)
-        K_t = M.clone()
+        weight, M_clone2 = self.generateIntermediatesMassless_batch(M_clone, E_cm, random_variables)
+        M_clone = M_clone2
+        
+        K_t = M_clone.clone()
         masses_sum = torch.flip(
             torch.cumsum(torch.flip(self.masses_t, (-1,)), -1), (-1,)
         )
-        M += masses_sum[:-1].to(M.device)
+        M_clone += masses_sum[:-1]
 
         weight[:] *= 8.0 * self.rho(
-            M[:, self.n_final - 2],
+            M_clone[:, self.n_final - 2],
             self.masses_t[self.n_final - 1],
             self.masses_t[self.n_final - 2],
         )
         weight[:] *= torch.prod(
             (
                 self.rho(
-                    M[:, : self.n_final - 2],
-                    M[:, 1:],
-                    self.masses_t[: self.n_final - 2].to(M.device),
+                    M_clone[:, : self.n_final - 2],
+                    M_clone[:, 1:],
+                    self.masses_t[: self.n_final - 2],
                 )
                 / self.rho(K_t[:, : self.n_final - 2], K_t[:, 1:], 0.0)
             )
-            * (M[:, 1 : self.n_final - 1] / K_t[:, 1 : self.n_final - 1]),
+            * (M_clone[:, 1 : self.n_final - 1] / K_t[:, 1 : self.n_final - 1]),
             -1,
         )
 
-        weight[:] *= torch.pow(K_t[:, 0] / M[:, 0], 2 * self.n_final - 4)
+        weight[:] *= torch.pow(K_t[:, 0] / M_clone[:, 0], 2 * self.n_final - 4)
 
-        return weight
+        return weight, M_clone
 
     def setInitialStateMomenta_batch(self, output_momenta, E_cm):
         """Generate the initial state momenta. Batch version"""
@@ -615,7 +635,10 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
         
         # We start getting M and then K
         M = torch.tensor(
-            [0.0] * n, requires_grad=False, dtype=torch.double, device=P.device
+            [0.0] * n,
+            requires_grad=False,
+            dtype=torch.double,
+            device=P.device
         )
         M = torch.unsqueeze(M, 0).repeat(P.shape[0], 1)
         K_t = M.clone()
@@ -642,7 +665,8 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
             j = i - 1  # index for 0-based tensors
             # in the direct algo the u are squared.
 
-            u = (K_t[:, j]/K_t[:, j-1]) ** 2
+            # u = (K_t[:, j]/K_t[:, j-1]) ** 2# WHY squared???
+            u = (K_t[:, j]/K_t[:, j-1])
 
             r[:, j - 1] = (n + 1 - i) * (torch.pow(u, (n - i))) - (n - i) * (
                 torch.pow(u, (n + 1 - i))

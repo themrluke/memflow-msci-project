@@ -532,6 +532,25 @@ def get_quantiles(find_quantile, interval, regressed_var):
         find_quantile_right = np.quantile(regressed_var, quantile_right)
         
     return find_quantile_left, find_quantile_right
+
+
+from numba import jit
+@jit(nopython=True)
+def get_central_smallest_interval(array, xrange, nbins, Ntrial=10000, perc=0.68):
+    H = np.histogram(array, bins=nbins, range=xrange)
+    xmax = H[1][np.argmax(H[0])]
+    deltax = (xrange[1]-xrange[0])/(2*Ntrial)
+    
+    N = len(array)
+    xd = xmax-deltax
+    xu = xmax+deltax
+    for i in range(Ntrial):
+        q = np.sum((array>xd) &(array<xu))/ N
+        if q>=perc: 
+            break
+        xd = xd-deltax
+        xu = xu+deltax
+    return xmax, xd, xu
     
 
 def plot_mode_quantile(regressed_var, target_var, target_values, window, nbins, range,
@@ -687,3 +706,101 @@ class FindMasks:
         ISR_mask = ak.to_numpy(ISR_mask)
         
         return ISR_mask
+
+
+from numba import jit
+@jit(nopython=True)
+def get_central_smallest_interval(array, xrange, nbins, Ntrial=10000, perc=0.68):
+    H = np.histogram(array, bins=nbins, range=xrange)
+        # trying to smooth out noisy histo
+
+    xmax_l = H[1][np.argmax(H[0])-5]
+    xmax_h = H[1][np.argmax(H[0])+5]
+    xmax = np.mean(array[(array>xmax_l)&(array<xmax_h)])
+    
+    deltax = (xrange[1]-xrange[0])/(2*Ntrial)
+
+    absmax = np.quantile(array, 0.99)
+    absmin = np.quantile(array, 0.01)
+    
+    N = array.shape[0]
+    xd = xmax-deltax
+    xu = xmax+deltax
+    for i in range(Ntrial):
+        q = np.sum((array>xd) &(array<xu))/ N
+        if q>=perc: 
+            break
+        if xd > absmin:
+            xd = xd-deltax
+        if xu < absmax:
+            xu = xu+deltax
+    return xmax, xd, xu
+
+
+def plot_diff_mode_quantile(Y, X, cat_var, bins,
+                      xlabel='', ylabel='', title='', debug=False,
+                    xlim=None, ylim=None):
+    
+    Y_mode  = []
+    X_avg = []
+    quantile_right_list = []
+    quantile_left_list = []
+    quantile_right_list_95 = []
+    quantile_left_list_95 = []
+
+    for i in range(len(bins)-1):
+        mask = ((cat_var >= bins[i])&(cat_var< bins[i+1]))
+        Ymask = Y[mask]
+        X_avg.append(np.mean(X[mask]))
+
+        #print((np.min(Ymask), np.max(Ymask)))
+        mode, left, right = get_central_smallest_interval(Ymask, xrange=(np.quantile(Ymask, 0.03), np.quantile(Ymask, 0.97)),
+                                      nbins=Ymask.size//100, Ntrial=2000, perc=0.68)
+
+        _, left95, right95 = get_central_smallest_interval(Ymask, xrange=(np.quantile(Ymask, 0.03), np.quantile(Ymask, 0.97)),
+                                      nbins=Ymask.size//100, Ntrial=2000, perc=0.95)
+
+        if debug:
+            f = plt.figure()
+            plt.hist(Ymask, range=(np.quantile(Ymask, 0.03), np.quantile(Ymask, 0.97)),   bins=Ymask.size//100, histtype="step")
+            plt.axvline(left, c='r', label="0.68")
+            plt.axvline(right, c='r')
+            plt.axvline(left95, c='orange', label="0.95")
+            plt.axvline(right95, c='orange')
+            plt.axvline(mode, label="mode", c="green")
+            plt.title(f"Bins {bins[i]:.2f}-{bins[i+1]:.2}")
+            plt.legend()
+            plt.show()
+
+        
+        Y_mode.append(mode)
+        quantile_left_list.append(left)
+        quantile_right_list.append(right)
+        quantile_left_list_95.append(left95)
+        quantile_right_list_95.append(right95)
+        #print(Y_mode, left, right)
+
+    offset_left = np.array(Y_mode) - np.array(quantile_left_list) # need offset
+    offset_right = np.array(quantile_right_list) - np.array(Y_mode)
+    
+    offset_left_95 = np.array(Y_mode) - np.array(np.array(quantile_left_list_95)) # need offset
+    offset_right_95 = np.array(quantile_right_list_95) - np.array(Y_mode)
+        
+    f = plt.figure(figsize=(6,5),dpi = 100)
+    plt.plot(X_avg, Y_mode, linestyle='-', marker='o', color='k')
+    plt.grid(axis="y")
+        
+    plt.fill_between(X_avg, Y_mode - offset_left, Y_mode + offset_right,
+                     color='r', alpha=0.2, label='68% CL')
+    plt.fill_between(X_avg, Y_mode - offset_left_95, Y_mode + offset_right_95,
+                     color='b', alpha=0.2, label='95% CL')
+    plt.legend(fontsize=12)
+    plt.xlabel(xlabel, fontsize=18)
+    plt.ylabel(ylabel, fontsize=18)
+    plt.tick_params(axis='both', which='major', labelsize=14)
+    if xlim:
+        plt.xlim(*xlim)
+    if ylim:
+        plt.ylim(*ylim)
+    plt.title(title, fontsize=18)
+    
