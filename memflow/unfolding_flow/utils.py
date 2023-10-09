@@ -106,19 +106,22 @@ class Compute_ParticlesTensor:
         
         return data_regressed, boost_regressed
 
-    def get_cartesian_comp(particle, mass, device):
+    def get_cartesian_comp(particle, mass):
         # px
         Px = particle[:,0]*torch.cos(particle[:,2])
-
         # py
         Py = particle[:,0]*torch.sin(particle[:,2])
-
         # pz
         Pz = particle[:,0]*torch.sinh(particle[:,1])
-
          # E
         E = torch.sqrt(Px**2 + Py**2 + Pz**2 + mass**2)
         return torch.stack((E, Px, Py, Pz), dim=1)
+
+    def get_ptetaphi_comp(particle):
+        particle_pt = (particle[:,1]**2 + particle[:,2]**2)**0.5
+        particle_eta = -torch.log(torch.tan(torch.atan2(particle_pt, particle[:,3])/2))
+        particle_phi = torch.atan2(particle[:,2], particle[:,1])
+        return torch.stack((particle_pt, particle_eta, particle_phi), dim=1)
 
     def get_HttISR_numpy(cond_X, log_mean, log_std, device, cartesian=True, eps=0.0):
 
@@ -135,9 +138,9 @@ class Compute_ParticlesTensor:
         thad = data_regressed[:,1]
         tlep = data_regressed[:,2]
 
-        higgs_cartesian = Compute_ParticlesTensor.get_cartesian_comp(higgs, M_HIGGS, device).unsqueeze(dim=1)
-        thad_cartesian = Compute_ParticlesTensor.get_cartesian_comp(thad, M_TOP, device).unsqueeze(dim=1)
-        tlep_cartesian = Compute_ParticlesTensor.get_cartesian_comp(tlep, M_TOP, device).unsqueeze(dim=1)
+        higgs_cartesian = Compute_ParticlesTensor.get_cartesian_comp(higgs, M_HIGGS).unsqueeze(dim=1)
+        thad_cartesian = Compute_ParticlesTensor.get_cartesian_comp(thad, M_TOP).unsqueeze(dim=1)
+        tlep_cartesian = Compute_ParticlesTensor.get_cartesian_comp(tlep, M_TOP).unsqueeze(dim=1)
 
         gluon_px = -(higgs_cartesian[:,0,1] + thad_cartesian[:,0,1] + tlep_cartesian[:,0,1]).unsqueeze(dim=1)
         gluon_py = -(higgs_cartesian[:,0,2] + thad_cartesian[:,0,2] + tlep_cartesian[:,0,2]).unsqueeze(dim=1)
@@ -188,9 +191,9 @@ class Compute_ParticlesTensor:
         tlep = data_regressed[:,2]
         boost_pz = boost_regressed
 
-        higgs_cartesian = Compute_ParticlesTensor.get_cartesian_comp(higgs, M_HIGGS, device)
-        thad_cartesian = Compute_ParticlesTensor.get_cartesian_comp(thad, M_TOP, device)
-        tlep_cartesian = Compute_ParticlesTensor.get_cartesian_comp(tlep, M_TOP, device)
+        higgs_cartesian = Compute_ParticlesTensor.get_cartesian_comp(higgs, M_HIGGS)
+        thad_cartesian = Compute_ParticlesTensor.get_cartesian_comp(thad, M_TOP)
+        tlep_cartesian = Compute_ParticlesTensor.get_cartesian_comp(tlep, M_TOP)
 
         # Now gluon = boost - partons
         gluon_px = -(higgs_cartesian[:,1] + thad_cartesian[:,1] + tlep_cartesian[:,1])

@@ -94,10 +94,13 @@ class UnfoldingFlow(nn.Module):
                               passes= 2 if not flow_autoregressive else flow_nfeatures)
 
 
-    def disable_regression_conditioner_training(self):
+    def disable_conditioner_regression_training(self):
         ''' Disable the conditioner regression training, but keep the
         latent space training'''
         self.cond_transformer.disable_regression_training()
+
+    def enable_regression_training(self):
+        self.cond_transformer.enable_regression_training()
         
     def forward(self,  logScaled_reco, data_boost_reco,
                 mask_recoParticles, mask_boost_reco,

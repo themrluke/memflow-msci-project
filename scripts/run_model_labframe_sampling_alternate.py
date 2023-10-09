@@ -8,6 +8,7 @@ from memflow.unfolding_flow.unfolding_flow import UnfoldingFlow
 from memflow.unfolding_network.conditional_transformer import ConditioningTransformerLayer
 from memflow.unfolding_flow.utils import *
 from memflow.unfolding_flow.mmd_loss import MMD
+from memflow.unfolding_flow.utils import Compute_ParticlesTensor
 
 import numpy as np
 from torch import optim
@@ -33,8 +34,7 @@ from utils import constrain_energy
 from utils import total_mom
 
 from earlystop import EarlyStopper
-from memflow.unfolding_flow.utils import Compute_ParticlesTensor as partTools
-from memflow.phasespace import phasespace
+from memflow.unfolding_flow.utils import Compute_ParticlesTensor
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
@@ -44,7 +44,6 @@ from torch.profiler import profile, record_function, ProfilerActivity
 
 from random import randint
 PI = torch.pi
-E_CM = 13000
 
 # torch.autograd.set_detect_anomaly(True)
 
@@ -126,6 +125,12 @@ def compute_mmd_regr_loss(mmd_input, mmd_target, kernel, device, dtype, total=Fa
     else:
         return sum(mmds)/len(mmds)
 
+def compute_mmd_ps_samples(ps_samples, ps_target_scaled, kernel, device, dtype, is_sampling_epoch=True):
+    if is_sampling_epoch:
+        return MMD(ps_samples, ps_target_scaled, kernel, device, dtype)
+    else:
+        return 0.
+    
 
 def train( device, name_dir, config,  outputDir, dtype,
            world_size=None, device_ids=None):
@@ -153,15 +158,12 @@ def train( device, name_dir, config,  outputDir, dtype,
                                             'std_log_data_boost'],
                            parton_list_cm=['phasespace_intermediateParticles_onShell_logit',
                                            'phasespace_intermediateParticles_onShell_logit_scaled',
-                                           'logScaled_data_higgs_t_tbar_ISR',
-                                           'mean_log_data_higgs_t_tbar_ISR',
-                                        'std_log_data_higgs_t_tbar_ISR',
                                            'mean_phasespace_intermediateParticles_onShell_logit',
                                             'std_phasespace_intermediateParticles_onShell_logit'])
 
     val_dataset = DatasetCombined(config.input_dataset_validation,dev=device,
                                   dtype=dtype, datasets=['partons_lab', 'reco_lab', 'partons_CM'],
-                          reco_list_lab=['scaledLogRecoParticles', 'mask_lepton', 
+                           reco_list_lab=['scaledLogRecoParticles', 'mask_lepton', 
                                       'mask_jets','mask_met',
                                       'mask_boost', 'scaledLogBoost'],
                            parton_list_lab=['logScaled_data_higgs_t_tbar_ISR',
@@ -171,17 +173,12 @@ def train( device, name_dir, config,  outputDir, dtype,
                                         'mean_log_data_boost',
                                             'std_log_data_boost'],
                            parton_list_cm=['phasespace_intermediateParticles_onShell_logit',
-                                           'phasespace_intermediateParticles_onShell_logit_scaled',
-                                           'logScaled_data_higgs_t_tbar_ISR',
-                                           'mean_log_data_higgs_t_tbar_ISR',
-                                        'std_log_data_higgs_t_tbar_ISR',
+                                            'phasespace_intermediateParticles_onShell_logit_scaled',
                                            'mean_phasespace_intermediateParticles_onShell_logit',
-                                            'std_phasespace_intermediateParticles_onShell_logit',])
+                                            'std_phasespace_intermediateParticles_onShell_logit'])
 
-    log_mean_parton_lab = train_dataset.partons_lab.mean_log_data_higgs_t_tbar_ISR
-    log_std_parton_lab  = train_dataset.partons_lab.std_log_data_higgs_t_tbar_ISR
-    log_mean_parton_CM = train_dataset.partons_CM.mean_log_data_higgs_t_tbar_ISR
-    log_std_parton_CM  = train_dataset.partons_CM.std_log_data_higgs_t_tbar_ISR
+    log_mean_parton = train_dataset.partons_lab.mean_log_data_higgs_t_tbar_ISR
+    log_std_parton = train_dataset.partons_lab.std_log_data_higgs_t_tbar_ISR
     log_mean_boost = train_dataset.partons_lab.mean_log_data_boost
     log_std_boost = train_dataset.partons_lab.std_log_data_boost
     mean_ps = train_dataset.partons_CM.mean_phasespace_intermediateParticles_onShell_logit
@@ -191,7 +188,7 @@ def train( device, name_dir, config,  outputDir, dtype,
     model = UnfoldingFlow(
                     pretrained_model=config.conditioning_transformer.weights,
                     load_conditioning_model=config.unfolding_flow.load_conditioning_model,
-                    scaling_partons_lab = [log_mean_parton_lab, log_std_parton_lab],
+                    scaling_partons_lab = [log_mean_parton, log_std_parton],
                     scaling_boost_lab = [log_mean_boost, log_std_boost],
                     scaling_partons_CM_ps = [mean_ps, scale_ps],
 
@@ -251,8 +248,6 @@ def train( device, name_dir, config,  outputDir, dtype,
     # Setting up DDP
     model = model.to(device)
 
-    rambo = phasespace.PhaseSpace(E_CM, [21,21], [25,6,-6,21], dev=device) 
-
     if world_size is not None:
         ddp_model = DDP(
             model,
@@ -265,9 +260,6 @@ def train( device, name_dir, config,  outputDir, dtype,
     else:
         ddp_model = model
 
-    # Disablethe training of the conditioner regression if needed
-    if config.conditioning_transformer.frozen_regression:
-        ddp_model.disable_conditioner_regression_training()
 
     # Datasets
     trainingLoader = DataLoader(
@@ -300,32 +292,35 @@ def train( device, name_dir, config,  outputDir, dtype,
         scale=config.MDMM.mmd_regr_scale,
         damping=config.MDMM.mmd_regr_damping,
     )
-    constraint_samples_huber = mdmm.MaxConstraint(
-        compute_regr_losses,
-        max=config.MDMM.samples_huber_max, # to be modified based on the regression
-        scale=config.MDMM.samples_huber_scale,
-        damping=config.MDMM.samples_huber_damping,
+
+    constraint_ps_samples = mdmm.MaxConstraint(
+        compute_mmd_ps_samples,
+        max=config.MDMM.mmd_ps_samples_max,
+        scale=config.MDMM.mmd_ps_samples_scale,
+        damping=config.MDMM.mmd_ps_samples_damping
     )
-    constraint_samples_mmd = mdmm.MaxConstraint(
-        compute_mmd_regr_loss,
-        max=config.MDMM.samples_mmd_max, # to be modified based on the regression
-        scale=config.MDMM.samples_mmd_scale,
-        damping=config.MDMM.samples_mmd_damping,
-    )
+    # constraint_ps_regr_huber = mdmm.MaxConstraint(
+    #                 compute_ps_regr_loss,
+    #                 max=config.MDMM.ps_regr_max, # to be modified based on the regression
+    #                 scale=config.MDMM.ps_regr_scale,
+    #                 damping=config.MDMM.ps_regr_damping,
+    #                 )
+    # constraint_ps_regr_mmd = mdmm.MaxConstraint(
+    #                 compute_mmd_ps_regr_loss,
+    #                 max=config.MDMM.ps_mmd_max, # to be modified based on the regression
+    #                 scale=config.MDMM.ps_mmd_scale,
+    #                 damping=config.MDMM.ps_mmd_damping,
+    #                 ) 
 
     # Create the optimizer
     if dtype == torch.float32:
         MDMM_module = mdmm.MDMM([constraint_regr_huber,
                                  constraint_regr_mmd,
-                                 constraint_samples_huber,
-                                 constraint_samples_mmd,
-                                ]).float() # support many constraints TODO: use a constraint for every particle
+                                 constraint_ps_samples]).float() # support many constraints TODO: use a constraint for every particle
     else:
         MDMM_module = mdmm.MDMM([constraint_regr_huber,
                                  constraint_regr_mmd,
-                                 constraint_samples_huber,
-                                 constraint_samples_mmd,
-                                ])
+                                 constraint_ps_samples])
  
     loss_fn = torch.nn.HuberLoss(delta=config.training_params.huber_delta)
 
@@ -354,6 +349,8 @@ def train( device, name_dir, config,  outputDir, dtype,
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience,
                                  min_delta=config.training_params.get("minDeltaPatience", 1e-4))
 
+    nsteps = [0,config.training_params.nSamplingSteps] # density, training
+    current_mode = 1
         
     ii = 0
     for e in range(config.training_params.nepochs):
@@ -368,6 +365,8 @@ def train( device, name_dir, config,  outputDir, dtype,
             
 
         sum_loss = 0.
+        # Sampling loss on epoch 2
+        # print(f"Epoch {e}: sampling training: {sampling_training}")
         
         # training loop    
         print("Before training loop")
@@ -377,91 +376,82 @@ def train( device, name_dir, config,  outputDir, dtype,
             N_train += 1
             ii+=1
 
+            if nsteps[current_mode] == 0 :
+                current_mode = 0 if current_mode == 1 else 1
+                nsteps[current_mode] = config.training_params.nSamplingSteps
+
+            nsteps[current_mode] -= 1 
+            sampling_training = current_mode == 1
+                
+                
             optimizer.zero_grad()
             
             (logScaled_partons, logScaled_boost,
              logScaled_reco, mask_lepton_reco, 
              mask_jets, mask_met, 
              mask_boost_reco, data_boost_reco,
-             ps_target, ps_target_scaled,
-             logScaled_partons_CM) = data_batch
+             ps_target, ps_target_scaled) = data_batch
 
                 
             mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
             if True : # Always remove true proveance TODO REMOVE THE HACK 
                 logScaled_reco = logScaled_reco[:,:,:-1]
+
+            if sampling_training:
+                # The provenance is remove in the model
+                (data_regressed, data_regressed_cm,
+                 ps_regr, logit_ps_regr, flow_cond_vector,
+                 flow_samples, mask_problematic)   = ddp_model(logScaled_reco,
+                                                               data_boost_reco,
+                                                               mask_recoParticles,
+                                                               mask_boost_reco,
+                                                               ps_target_scaled,
+                                    disableGradConditioning=config.conditioning_transformer.frozen,
+                                                               flow_eval="sampling",
+                                                               Nsamples=1)
+                flow_samples = flow_samples.squeeze(0)
                 
-            # The provenance is remove in the model
-            (data_regressed, data_regressed_cm,
-             ps_regr, logit_ps_regr, flow_cond_vector,
-             flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
-                                                           data_boost_reco,
-                                                           mask_recoParticles,
-                                                           mask_boost_reco,
-                                                           ps_target_scaled,
-                                                           disableGradConditioning=config.conditioning_transformer.frozen,
-                                                           flow_eval="normalizing")
-                
+            else:
+                # The provenance is remove in the model
+                (data_regressed, data_regressed_cm,
+                 ps_regr, logit_ps_regr, flow_cond_vector,
+                 flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
+                                                               data_boost_reco,
+                                                               mask_recoParticles,
+                                                               mask_boost_reco,
+                                                               ps_target_scaled,
+                                         disableGradConditioning=config.conditioning_transformer.frozen,
+                                                               flow_eval="normalizing")
+
             
             higgs = data_regressed[0] 
             thad = data_regressed[1]
             tlep = data_regressed[2]
             gluon = data_regressed[3]
             boost = data_regressed[4]
-
                         
             MMD_input = data_regressed
             MMD_target = [logScaled_partons[:,0], logScaled_partons[:,1],
                           logScaled_partons[:,2], logScaled_partons[:,3],
                           logScaled_boost]
 
-            inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
-            loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
-
-            # Now getting the flow samples
-            flow_samples = model.flow(flow_cond_vector).rsample((1,)).squeeze()
-            flow_samples = torch.sigmoid(flow_samples*scale_ps + mean_ps)
-            # converting back to particles
-            momenta_sampled, _, x1sample, x2sample = rambo.get_momenta_from_ps(flow_samples, requires_grad=True)
-            higgs_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 2])
-            thad_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 3])
-            tlep_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 4])
-            gluon_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 5])
-            # Let's use x1 x2 for boost
-            boost_S = torch.stack((E_CM*torch.pow(x1sample*x2sample, 0.5), E_CM*(x1sample-x2sample)/2), dim=1)
-
-            # scaling (with the CM scaling)
-            higgs_s = higgs_S.clone()
-            thad_s = thad_S.clone()
-            tlep_s = tlep_S.clone()
-            gluon_s = gluon_S.clone()
-            higgs_s[:,0] = torch.log(higgs_S[:,0] +1)
-            higgs_s = (higgs_s - log_mean_parton_CM) / log_std_parton_CM
-            thad_s[:,0] = torch.log(thad_S[:,0] +1)
-            thad_s = (thad_s - log_mean_parton_CM) / log_std_parton_CM
-            tlep_s[:,0] = torch.log(tlep_S[:,0] +1)
-            tlep_s = (tlep_s - log_mean_parton_CM) / log_std_parton_CM
-            gluon_s[:,0] = torch.log(gluon_S[:,0] +1)
-            gluon_s = (gluon_s - log_mean_parton_CM) / log_std_parton_CM
-
-            boost_s = boost_S.clone()
-            boost_s[:,0] = torch.log(boost_S[:,0]+1)
-            boost_s = (boost_s - log_mean_boost) / log_std_boost
-
-            MMD_input_samples = [higgs_s, thad_s, tlep_s, gluon_s, boost_s]
-            MMD_target_samples = [logScaled_partons_CM[:,0], logScaled_partons_CM[:,1],
-                          logScaled_partons_CM[:,2], logScaled_partons_CM[:,3],
-                          logScaled_boost]
-            
+            if sampling_training:
+                inf_mask = torch.isinf(flow_samples) | torch.isnan(flow_samples)
+                # In the sampling direction the main loss is a distance between the sample and the target
+                loss_main = loss_fn(flow_samples, ps_target_scaled)
+            else:
+                inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
+                loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
+                flow_samples = None
                     
             mdmm_return = MDMM_module(loss_main, [
-                # huberloss samples
+                # huberloos
                 (logScaled_partons,
                  logScaled_boost,
                  higgs, thad,
                  tlep, gluon, boost,
                  config.cartesian, loss_fn,
-                 [log_mean_parton_lab[2], log_std_parton_lab[2]],   #scaling phi parton lab
+                 [log_mean_parton[2], log_std_parton[2]],   #scaling phi parton lab
                  device,
                  False #Split
                  ),
@@ -469,21 +459,20 @@ def train( device, name_dir, config,  outputDir, dtype,
                 (MMD_input, MMD_target,
                  config.training_params.mmd_kernel,
                  device, dtype, True, False),
+                # PS regr scaled
+                # (logit_ps_regr,
+                #  ps_target_scaled,
+                #  loss_fn),
+                # # PS regr mmd
+                # (logit_ps_regr,
+                #  ps_target_scaled,
+                #  config.training_params.mmd_kernel,
+                #  device, dtype),
 
-                # huberloss samples
-                (logScaled_partons_CM,
-                 logScaled_boost,
-                 higgs_s, thad_s,
-                 tlep_s, gluon_s, boost_s,
-                 config.cartesian, loss_fn,
-                 [log_mean_parton_CM[2], log_std_parton_CM[2]],   #scaling phi parton in the CM
-                 device,
-                 False #Split
-                 ),
-                #MMD rereg
-                (MMD_input_samples, MMD_target_samples,
+                # PS samples mmd loss
+                (flow_samples, ps_target_scaled,
                  config.training_params.mmd_kernel,
-                 device, dtype, False, False),
+                 device, dtype, sampling_training)
             ])
 
             # Use the mdmm constraints on the loss
@@ -506,7 +495,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 if exp is not None and device==0 or world_size is None:
                     if i % config.training_params.interval_logging_steps == 0:
                         (mmd_loss_H, mmd_loss_thad,
-                              mmd_loss_tlep,
+                         mmd_loss_tlep,
                          mmd_loss_gluon,
                          mmd_loss_boost,
                          mmd_loss_all) = compute_mmd_regr_loss(MMD_input, MMD_target,
@@ -518,62 +507,51 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                                   higgs, thad,
                                                                                   tlep, gluon, boost,
                                                                                   config.cartesian, loss_fn,
-                                                                                  scaling_phi=[log_mean_parton_lab[2], log_std_parton_lab[2]], # Added scaling for phi
+                                                                                  scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
                                                                                   split=True,
                                                                                   device=device)
+                        # loss_huber_PS_cm = compute_ps_regr_loss(logit_ps_regr,
+                        #                      ps_target_scaled,
+                        #                      loss_fn)
+                    
+                        
 
-                        (mmd_loss_H_samp, mmd_loss_thad_samp,
-                         mmd_loss_tlep_samp,
-                         mmd_loss_gluon_samp,
-                         mmd_loss_boost_samp) = compute_mmd_regr_loss(MMD_input_samples, MMD_target_samples,
-                                                               kernel=config.training_params.mmd_kernel,
-                                                               device=device,total=False, dtype=dtype, split=True)
+                        # loss_mmd_PS_cm = compute_mmd_ps_regr_loss(logit_ps_regr,
+                        #                                           ps_target_scaled,
+                        #                                           config.training_params.mmd_kernel,
+                        #                                           device, dtype)
+
+                        # total loss is split in two
+                        if sampling_training:
+                            exp.log_metric('loss_tot_train_sampling', loss_final.item(),step=ii) # including mmd
+                            exp.log_metric('loss_flow_sampling', loss_main.item(), step=ii)
+                            # compute mmd sampling
+                            mmd_loss_samples = compute_mmd_ps_samples(flow_samples, ps_target_scaled,
+                                                   config.training_params.mmd_kernel,
+                                                   device, dtype, is_sampling_epoch=True)
+                            exp.log_metric("loss_mmd_samples", mmd_loss_samples.item(), step=ii)
+                            
+                        else:
+                            exp.log_metric('loss_tot_train_density', loss_final.item(),step=ii) # including mmd
+                            exp.log_metric('loss_flow_density', loss_main.item(), step=ii)
                         
-                        lossH_samp, lossThad_samp, lossTlep_samp, lossGluon_samp, lossBoost_samp = compute_regr_losses(logScaled_partons_CM,
-                                                                                  logScaled_boost,
-                                                                                  higgs_s, thad_s,
-                                                                                  tlep_s, gluon_s, boost_s,
-                                                                                  config.cartesian, loss_fn,
-                                                                                  scaling_phi=[log_mean_parton_CM[2], log_std_parton_CM[2]], # Added scaling for phi
-                                                                                  split=True,
-                                                                                  device=device)
                         
-                        
-                        exp.log_metric('loss_tot_train', loss_final.item(),step=ii) # including mmd
-                        exp.log_metric('loss_flow', loss_main.item(), step=ii)
-                                            
                         exp.log_metric("loss_mmd_H", mmd_loss_H.item(),step=ii)
                         exp.log_metric('loss_mmd_thad', mmd_loss_thad.item(),step=ii)
                         exp.log_metric('loss_mmd_tlep', mmd_loss_tlep.item(),step=ii)
                         exp.log_metric('loss_mmd_gluon', mmd_loss_gluon.item(),step=ii)
                         exp.log_metric('loss_mmd_boost', mmd_loss_boost.item(),step=ii)
                         exp.log_metric('loss_mmd_all', mmd_loss_all.item(),step=ii)
+                        # exp.log_metric('loss_mmd_PSregr', loss_mmd_PS_cm.item(), step=ii)
+
                         exp.log_metric('loss_mmd_tot', (mmd_loss_H+mmd_loss_thad + mmd_loss_tlep + mmd_loss_boost + mmd_loss_gluon +  mmd_loss_all).item()/6,step=ii)
-
-                        exp.log_metric("loss_mmd_H_samples", mmd_loss_H_samp.item(),step=ii)
-                        exp.log_metric('loss_mmd_thad_samples', mmd_loss_thad_samp.item(),step=ii)
-                        exp.log_metric('loss_mmd_tlep_samples', mmd_loss_tlep_samp.item(),step=ii)
-                        exp.log_metric('loss_mmd_gluon_samples', mmd_loss_gluon_samp.item(),step=ii)
-                        exp.log_metric('loss_mmd_boost_samples', mmd_loss_boost_samp.item(),step=ii)
-                        exp.log_metric('loss_mmd_tot_samples', (mmd_loss_H_samp+mmd_loss_thad_samp + mmd_loss_tlep_samp +\
-                                                                mmd_loss_boost_samp + mmd_loss_gluon_samp).item()/5,step=ii)
-
                         exp.log_metric('loss_huber_H', lossH.item()/3,step=ii)
                         exp.log_metric('loss_huber_Thad', lossThad.item()/3,step=ii)
                         exp.log_metric('loss_huber_Tlep', lossTlep.item()/3,step=ii)
                         exp.log_metric('loss_huber_gluon', lossGluon.item()/3,step=ii)
                         exp.log_metric('loss_huber_boost', lossBoost.item(),step=ii)
-                        exp.log_metric('loss_huber_tot', (lossH + lossThad+ lossTlep + lossGluon+lossBoost).item()/14,step=ii)
-
-                        exp.log_metric('loss_huber_H_samples', lossH_samp.item()/3,step=ii)
-                        exp.log_metric('loss_huber_Thad_samples', lossThad_samp.item()/3,step=ii)
-                        exp.log_metric('loss_huber_Tlep_samples', lossTlep_samp.item()/3,step=ii)
-                        exp.log_metric('loss_huber_gluon_samples', lossGluon_samp.item()/3,step=ii)
-                        exp.log_metric('loss_huber_boost_samples', lossBoost_samp.item(),step=ii)
-                        exp.log_metric('loss_huber_tot_samples', (lossH_samp + lossThad_samp+ lossTlep_samp + \
-                                                                  lossGluon_samp + lossBoost_samp).item()/14,step=ii)
-
-
+                        exp.log_metric('loss_huber_tot', (lossH + lossThad+ lossTlep + lossGluon+lossBoost).item()/13,step=ii)
+                        # exp.log_metric('loss_huber_PSregr', loss_huber_PS_cm.item(), step=ii)
                         
                         exp.log_metric('flow_ninf_train', inf_mask.sum(), step=ii)
                         exp.log_metric('flow_nproblems', mask_problematic.sum(), step=ii )
@@ -591,41 +569,26 @@ def train( device, name_dir, config,  outputDir, dtype,
             #     exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
 
         
-        valid_loss = 0.
         valid_loss_huber = 0.
         valid_loss_mmd = 0.
-        
         valid_lossH = 0.
         valid_lossTlep = 0.
         valid_lossThad = 0.
         valid_lossGluon = 0.
         valid_lossBoost = 0.
-
-        
-        valid_loss_huber_samples = 0.
-        valid_loss_mmd_samples = 0.
-        valid_lossH_samples = 0.
-        valid_lossTlep_samples = 0.
-        valid_lossThad_samples = 0.
-        valid_lossGluon_samples = 0.
-        valid_lossBoost_samples = 0.
-
+        valid_loss_density = 0.
+        valid_loss_sampling = 0.
         valid_mmd_H = 0.
         valid_mmd_thad = 0.
         valid_mmd_tlep = 0.
         valid_mmd_gluon= 0.
         valid_mmd_boost = 0.
         valid_mmd_all = 0.
-
-        valid_mmd_H_samples = 0.
-        valid_mmd_thad_samples = 0.
-        valid_mmd_tlep_samples = 0.
-        valid_mmd_gluon_samples= 0.
-        valid_mmd_boost_samples = 0.
-        
         valid_loss_flow = 0.
         valid_ninf_flow = 0
         valid_nproblems = 0
+        # valid_huber_PS_cm = 0.
+        # valid_mmd_PS_cm = 0.
         valid_mmd_ps_samples = 0.
 
         
@@ -645,8 +608,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                  logScaled_reco, mask_lepton_reco, 
                  mask_jets, mask_met, 
                  mask_boost_reco, data_boost_reco,
-                 ps_target, ps_target_scaled,
-                 logScaled_partons_CM) = data_batch
+                 ps_target, ps_target_scaled) = data_batch
                 
                 mask_recoParticles = torch.cat((mask_jets, mask_lepton_reco, mask_met), dim=1)
 
@@ -654,89 +616,72 @@ def train( device, name_dir, config,  outputDir, dtype,
                 if True:
                     logScaled_reco = logScaled_reco[:,:,:-1]
 
-                # The provenance is remove in the model
-                (data_regressed, data_regressed_cm,
-                 ps_regr, logit_ps_regr, flow_cond_vector,
-                 flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
-                                                               data_boost_reco,
-                                                               mask_recoParticles,
-                                                               mask_boost_reco,
-                                                               ps_target_scaled,
-                                                               disableGradConditioning=config.conditioning_transformer.frozen,
-                                                               flow_eval="normalizing")
+                if sampling_training:
+                    # The provenance is remove in the model
+                    (data_regressed, data_regressed_cm,
+                     ps_regr, logit_ps_regr, flow_cond_vector,
+                     flow_samples, mask_problematic)   = ddp_model(logScaled_reco,
+                                                                   data_boost_reco,
+                                                                   mask_recoParticles,
+                                                                   mask_boost_reco,
+                                                                   ps_target_scaled,
+                                disableGradConditioning=config.conditioning_transformer.frozen,
+                                                                   flow_eval="sampling",
+                                                                   Nsamples=1)
+                    flow_samples = flow_samples.squeeze(0)
 
-                
+                else:
+                    # The provenance is remove in the model
+                    (data_regressed, data_regressed_cm,
+                     ps_regr, logit_ps_regr, flow_cond_vector,
+                     flow_logprob, mask_problematic)   = ddp_model(logScaled_reco,
+                                                                   data_boost_reco,
+                                                                   mask_recoParticles,
+                                                                   mask_boost_reco,
+                                                                   ps_target_scaled,
+                              disableGradConditioning=config.conditioning_transformer.frozen,
+                                                                   flow_eval="normalizing")
+
+                    
                 higgs = data_regressed[0] 
                 thad = data_regressed[1]
                 tlep = data_regressed[2]
                 gluon = data_regressed[3]
                 boost = data_regressed[4]
-                
+            
                 MMD_input = data_regressed
                 MMD_target = [logScaled_partons[:,0], logScaled_partons[:,1],
                               logScaled_partons[:,2], logScaled_partons[:,3],
                               logScaled_boost]
 
-                inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
-                loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
+                if sampling_training:
+                    inf_mask = torch.isinf(flow_samples) | torch.isnan(flow_samples)
+                    # In the sampling direction the main loss is a distance between the sample and the target
+                    loss_main = loss_fn(flow_samples, ps_target_scaled)
+                else:
+                    inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
+                    loss_main = -flow_logprob[(~inf_mask) & (~mask_problematic)].mean()
+                    flow_samples = None
 
-
-                # Now getting the flow samples
-                flow_samples = model.flow(flow_cond_vector).rsample((1,)).squeeze()
-                flow_samples = torch.sigmoid(flow_samples*scale_ps + mean_ps)
-                # converting back to particles
-                momenta_sampled, _, x1sample, x2sample = rambo.get_momenta_from_ps(flow_samples, requires_grad=True)
-                higgs_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 2])
-                thad_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 3])
-                tlep_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 4])
-                gluon_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 5])
-                # Let's use x1 x2 for boost
-                boost_S = torch.stack((E_CM*torch.pow(x1sample*x2sample, 0.5), E_CM*(x1sample-x2sample)/2), dim=1)
-                
-                # scaling (with the CM scaling)
-                higgs_s = higgs_S.clone()
-                thad_s = thad_S.clone()
-                tlep_s = tlep_S.clone()
-                gluon_s = gluon_S.clone()
-                higgs_s[:,0] = torch.log(higgs_S[:,0] +1)
-                higgs_s = (higgs_s - log_mean_parton_CM) / log_std_parton_CM
-                thad_s[:,0] = torch.log(thad_S[:,0] +1)
-                thad_s = (thad_s - log_mean_parton_CM) / log_std_parton_CM
-                tlep_s[:,0] = torch.log(tlep_S[:,0] +1)
-                tlep_s = (tlep_s - log_mean_parton_CM) / log_std_parton_CM
-                gluon_s[:,0] = torch.log(gluon_S[:,0] +1)
-                gluon_s = (gluon_s - log_mean_parton_CM) / log_std_parton_CM
-                
-                boost_s = boost_S.clone()
-                boost_s[:,0] = torch.log(boost_S[:,0]+1)
-                boost_s = (boost_s - log_mean_boost) / log_std_boost
-                
-                MMD_input_samples = [higgs_s, thad_s, tlep_s, gluon_s, boost_s]
-                MMD_target_samples = [logScaled_partons_CM[:,0], logScaled_partons_CM[:,1],
-                                      logScaled_partons_CM[:,2], logScaled_partons_CM[:,3],
-                                      logScaled_boost]
                 
                 lossH, lossThad, lossTlep, lossGluon, lossBoost = compute_regr_losses(logScaled_partons,
                                                                                       logScaled_boost,
                                                                                       higgs, thad, tlep,gluon, boost,
                                                                                       config.cartesian, loss_fn,
-                                                                                      scaling_phi=[log_mean_parton_lab[2], log_std_parton_lab[2]], # Added scaling for phi
+                                                                                      scaling_phi=[log_mean_parton[2], log_std_parton[2]], # Added scaling for phi
                                                                                       split=True,
                                                                                       device=device)
-                
-                regr_loss =  (lossH + lossThad + lossTlep+lossGluon + lossBoost)/14
 
-                lossH_samp, lossThad_samp, lossTlep_samp, lossGluon_samp, lossBoost_samp = compute_regr_losses(logScaled_partons_CM,
-                                                                                      logScaled_boost,
-                                                                                      higgs_s, thad_s, tlep_s, gluon_s, boost_s,
-                                                                                      config.cartesian, loss_fn,
-                                                                                      scaling_phi=[log_mean_parton_CM[2], log_std_parton_CM[2]], # Added scaling for phi
-                                                                                      split=True,
-                                                                                      device=device)
-                
-                regr_loss_samples =  (lossH_samp + lossThad_samp + lossTlep_samp + lossGluon_samp + lossBoost_samp)/14
+                regr_loss =  (lossH + lossThad + lossTlep+lossGluon + lossBoost)/13
 
-                
+                # loss_huber_PS_cm = compute_ps_regr_loss(logit_ps_regr,
+                #                              ps_target_scaled,
+                #                              loss_fn)
+
+                # mmd_loss_PS_cm = compute_mmd_ps_regr_loss(logit_ps_regr,
+                #                                           ps_target_scaled,
+                #                                           config.training_params.mmd_kernel,
+                #                                           device, dtype)
                 
                 (mmd_loss_H,
                  mmd_loss_thad,
@@ -749,58 +694,38 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                    total=True,
                                                    dtype=dtype,
                                                    split=True)
-                mmd_loss = (mmd_loss_H+ mmd_loss_thad + mmd_loss_tlep + mmd_loss_gluon +\
-                            mmd_loss_boost + mmd_loss_all)/6
                 
-                (mmd_loss_H_samp,
-                 mmd_loss_thad_samp,
-                 mmd_loss_tlep_samp,
-                 mmd_loss_gluon_samp,
-                 mmd_loss_boost_samp)= compute_mmd_regr_loss(MMD_input_samples, MMD_target_samples,
-                            kernel=config.training_params.mmd_kernel,
-                                                   device=device,
-                                                   total=False,
-                                                   dtype=dtype,
-                                                   split=True)
-                mmd_loss_samples = (mmd_loss_H_samp+ mmd_loss_thad_samp + mmd_loss_tlep_samp +\
-                                    mmd_loss_gluon_samp +  mmd_loss_boost_samp)/5
-                
+                mmd_loss = (mmd_loss_H+ mmd_loss_thad + mmd_loss_tlep + mmd_loss_gluon +  mmd_loss_boost + mmd_loss_all)/6
 
 
-                valid_loss += loss_main.item()
+                if sampling_training:
+                    # compute mmd sampling
+                    mmd_loss_samples = compute_mmd_ps_samples(flow_samples, ps_target_scaled,
+                                                              config.training_params.mmd_kernel,
+                                                              device, dtype, is_sampling_epoch=True)
+                    valid_mmd_ps_samples += mmd_loss_samples.item()
+                    valid_loss_sampling += loss_main.item()
+                else:
+                    valid_loss_density += loss_main.item()
 
                     
                 valid_ninf_flow += inf_mask.sum()
                 valid_nproblems += mask_problematic.sum()
-                
                 valid_loss_huber += regr_loss.item()
                 valid_lossH += lossH.item()/3
                 valid_lossTlep += lossTlep.item()/3
                 valid_lossThad += lossThad.item()/3
                 valid_lossBoost += lossBoost.item()
                 valid_lossGluon += lossGluon.item()/3
-
+                #valid_huber_PS_cm += loss_huber_PS_cm.item()
                 valid_loss_mmd += mmd_loss.item()
                 valid_mmd_H += mmd_loss_H.item()
                 valid_mmd_thad += mmd_loss_thad.item()
                 valid_mmd_tlep += mmd_loss_tlep.item()
                 valid_mmd_gluon += mmd_loss_gluon.item()
                 valid_mmd_boost += mmd_loss_boost.item()
+                # valid_mmd_PS_cm += mmd_loss_PS_cm.item()
                 valid_mmd_all += mmd_loss_all.item()
-
-                valid_loss_huber_samples += regr_loss_samples.item()
-                valid_lossH_samples += lossH_samp.item()/3
-                valid_lossTlep_samples += lossTlep_samp.item()/3
-                valid_lossThad_samples += lossThad_samp.item()/3
-                valid_lossBoost_samples += lossBoost_samp.item()
-                valid_lossGluon_samples += lossGluon_samp.item()/3
-
-                valid_loss_mmd_samples += mmd_loss_samples.item()
-                valid_mmd_H_samples += mmd_loss_H_samp.item()
-                valid_mmd_thad_samples += mmd_loss_thad_samp.item()
-                valid_mmd_tlep_samples += mmd_loss_tlep_samp.item()
-                valid_mmd_gluon_samples += mmd_loss_gluon_samp.item()
-                valid_mmd_boost_samples += mmd_loss_boost_samp.item()
                 
 
                 particle_list = [higgs, thad, tlep, gluon]
@@ -866,14 +791,14 @@ def train( device, name_dir, config,  outputDir, dtype,
                                         ps_samples[:,:,j].flatten().cpu().numpy(),
                                         bins=50, range=((-1, 1),(-1, 1)),cmin=1)
                         fig.colorbar(h[3], ax=ax)
-                        exp.log_figure(f"ps_S_2D_{j}", fig, step=e)
+                        exp.log_figure(f"ps_sampled_2D_{j}", fig, step=e)
 
                         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                         h = ax.hist2d(ps_target_scaled[:,j].tile(N_samples,1,1).flatten().cpu().numpy(),
                                         ps_samples[:,:,j].flatten().cpu().numpy(),
                                         bins=50, range=((-1, 1),(-1, 1)), norm=LogNorm() )
                         fig.colorbar(h[3], ax=ax)
-                        exp.log_figure(f"ps_S_2D_{j}_log", fig, step=e)
+                        exp.log_figure(f"ps_sampled_2D_{j}_log", fig, step=e)
 
                         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
                         h = ax.hist(
@@ -889,42 +814,28 @@ def train( device, name_dir, config,  outputDir, dtype,
                     
 
         if exp is not None and device==0 or world_size is None:
-            exp.log_metric("loss_total_val", valid_loss/(N_valid), epoch=e )
+            exp.log_metric("loss_val_sampling", valid_loss_sampling/(N_valid/2), epoch=e )
+            exp.log_metric("loss_val_density", valid_loss_density/(N_valid/2), epoch=e )
 
             
             exp.log_metric("flow_ninf_val", valid_ninf_flow, epoch=e)
             exp.log_metric("flow_nproblems", valid_nproblems, epoch=e)
-            
+            exp.log_metric("loss_mmd_val", valid_loss_mmd/N_valid,epoch=e)
             exp.log_metric('loss_huber_val', valid_loss_huber/N_valid,epoch= e)
             exp.log_metric('loss_huber_val_H', valid_lossH/N_valid,epoch= e)
             exp.log_metric('loss_huber_val_Tlep', valid_lossTlep/N_valid,epoch= e)
             exp.log_metric('loss_huber_val_Thad', valid_lossThad/N_valid,epoch= e)
             exp.log_metric('loss_huber_val_Gluon', valid_lossGluon/N_valid,epoch= e)
             exp.log_metric('loss_huber_val_boost', valid_lossBoost/N_valid,epoch= e)
-
-            exp.log_metric('loss_huber_val_samples', valid_loss_huber_samples/N_valid,epoch= e)
-            exp.log_metric('loss_huber_val_H_samples', valid_lossH_samples/N_valid,epoch= e)
-            exp.log_metric('loss_huber_val_Tlep_samples', valid_lossTlep_samples/N_valid,epoch= e)
-            exp.log_metric('loss_huber_val_Thad_samples', valid_lossThad_samples/N_valid,epoch= e)
-            exp.log_metric('loss_huber_val_Gluon_samples', valid_lossGluon_samples/N_valid,epoch= e)
-            exp.log_metric('loss_huber_val_boost_samples', valid_lossBoost_samples/N_valid,epoch= e)
-
-            exp.log_metric("loss_mmd_val", valid_loss_mmd/N_valid,epoch=e)
+            # exp.log_metric('loss_huber_val_PS_cm', valid_huber_PS_cm/N_valid, epoch=e)
             exp.log_metric("loss_mmd_val_H", valid_mmd_H/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_thad", valid_mmd_thad/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_tlep", valid_mmd_tlep/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_gluon", valid_mmd_gluon/N_valid,epoch= e)
+            exp.log_metric("loss_mmd_samples", valid_mmd_ps_samples/(N_valid/2), epoch=e)
+            # exp.log_metric('loss_mmd_val_PS_cm', valid_mmd_PS_cm/N_valid, epoch=e)
             exp.log_metric("loss_mmd_val_boost", valid_mmd_boost/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_all", valid_mmd_all/N_valid,epoch= e)
-
-            exp.log_metric("loss_mmd_val_samples", valid_loss_mmd_samples/N_valid,epoch=e)
-            exp.log_metric("loss_mmd_val_H_samples", valid_mmd_H_samples/N_valid,epoch= e)
-            exp.log_metric("loss_mmd_val_thad_samples", valid_mmd_thad_samples/N_valid,epoch= e)
-            exp.log_metric("loss_mmd_val_tlep_samples", valid_mmd_tlep_samples/N_valid,epoch= e)
-            exp.log_metric("loss_mmd_val_gluon_samples", valid_mmd_gluon_samples/N_valid,epoch= e)
-            exp.log_metric("loss_mmd_val_boost_samples", valid_mmd_boost_samples/N_valid,epoch= e)
-
-            
             exp.log_metric('val_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
             exp.log_metric('val_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).abs().std(), step=ii)
             exp.log_metric('val_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
