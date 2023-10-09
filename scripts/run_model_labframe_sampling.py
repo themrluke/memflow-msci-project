@@ -63,7 +63,7 @@ def ddp_setup(rank, world_size, port):
 
 def loss_fn_periodic(inp, target, loss_fn, device):
     # penalty term for going further than PI
-    overflow_delta = torch.clamp(inp - PI, min=0.).mean()  - torch.clamp(inp + PI, max=0.).mean()
+    # overflow_delta = torch.clamp(inp - PI, min=0.).mean()  - torch.clamp(inp + PI, max=0.).mean()
     # rescale to pi for the loss itself
     inp[inp>PI] = inp[inp>PI]-2*PI
     inp[inp<-PI] = inp[inp<-PI] + 2*PI
@@ -71,7 +71,7 @@ def loss_fn_periodic(inp, target, loss_fn, device):
     deltaPhi = target - inp
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
-    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + 5. * overflow_delta
+    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) #+ 10. * overflow_delta
 
 
 def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, gluon, boost, cartesian, loss_fn,
@@ -326,8 +326,6 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
-    for gr in optimizer.param_groups:
-        gr["initial_lr"] = config.training_params.lr
 
     scheduler_type = config.training_params.scheduler
     
@@ -339,6 +337,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                verbose=True,
                                                                **config.training_params.reduce_on_plateau)
     elif scheduler_type == "cyclic_lr":
+        for gr in optimizer.param_groups:
+            gr["initial_lr"] = config.training_params.lr
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer,
                                                      step_size_down=None,
                                                      cycle_momentum=False,
@@ -349,6 +349,9 @@ def train( device, name_dir, config,  outputDir, dtype,
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience,
                                  min_delta=config.training_params.get("minDeltaPatience", 1e-4))
 
+    nsteps = [0,config.training_params.nSamplingSteps] # density, training
+    current_mode = 1
+        
     ii = 0
     for e in range(config.training_params.nepochs):
           
@@ -363,7 +366,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
         sum_loss = 0.
         # Sampling loss on epoch 2
-        sampling_training = e % 2 == 0 
+        # print(f"Epoch {e}: sampling training: {sampling_training}")
         
         # training loop    
         print("Before training loop")
@@ -373,7 +376,14 @@ def train( device, name_dir, config,  outputDir, dtype,
             N_train += 1
             ii+=1
 
+            if nsteps[current_mode] == 0 :
+                current_mode = 0 if current_mode == 1 else 1
+                nsteps[current_mode] = config.training_params.nSamplingSteps
 
+            nsteps[current_mode] -= 1 
+            sampling_training = current_mode == 1
+                
+                
             optimizer.zero_grad()
             
             (logScaled_partons, logScaled_boost,
@@ -396,7 +406,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                mask_recoParticles,
                                                                mask_boost_reco,
                                                                ps_target_scaled,
-                                                               disableGradTransformer=False,
+                                    disableGradConditioning=config.conditioning_transformer.frozen,
                                                                flow_eval="sampling",
                                                                Nsamples=1)
                 flow_samples = flow_samples.squeeze(0)
@@ -410,7 +420,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                mask_recoParticles,
                                                                mask_boost_reco,
                                                                ps_target_scaled,
-                                                               disableGradTransformer=False,
+                                         disableGradConditioning=config.conditioning_transformer.frozen,
                                                                flow_eval="normalizing")
 
             
@@ -566,7 +576,8 @@ def train( device, name_dir, config,  outputDir, dtype,
         valid_lossThad = 0.
         valid_lossGluon = 0.
         valid_lossBoost = 0.
-        valid_loss_final = 0.
+        valid_loss_density = 0.
+        valid_loss_sampling = 0.
         valid_mmd_H = 0.
         valid_mmd_thad = 0.
         valid_mmd_tlep = 0.
@@ -587,6 +598,9 @@ def train( device, name_dir, config,  outputDir, dtype,
         
         for i, data_batch in enumerate(validLoader):
             N_valid +=1
+
+            sampling_training = i % 2 == 0   # Half sampling and half density
+            
             # Move data to device
             with torch.no_grad():
 
@@ -611,7 +625,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                    mask_recoParticles,
                                                                    mask_boost_reco,
                                                                    ps_target_scaled,
-                                                                   disableGradTransformer=False,
+                                disableGradConditioning=config.conditioning_transformer.frozen,
                                                                    flow_eval="sampling",
                                                                    Nsamples=1)
                     flow_samples = flow_samples.squeeze(0)
@@ -625,7 +639,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                    mask_recoParticles,
                                                                    mask_boost_reco,
                                                                    ps_target_scaled,
-                                                                   disableGradTransformer=False,
+                              disableGradConditioning=config.conditioning_transformer.frozen,
                                                                    flow_eval="normalizing")
 
                     
@@ -690,8 +704,11 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                               config.training_params.mmd_kernel,
                                                               device, dtype, is_sampling_epoch=True)
                     valid_mmd_ps_samples += mmd_loss_samples.item()
-                                
-                valid_loss_flow += loss_main.item()
+                    valid_loss_sampling += loss_main.item()
+                else:
+                    valid_loss_density += loss_main.item()
+
+                    
                 valid_ninf_flow += inf_mask.sum()
                 valid_nproblems += mask_problematic.sum()
                 valid_loss_huber += regr_loss.item()
@@ -710,7 +727,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                 # valid_mmd_PS_cm += mmd_loss_PS_cm.item()
                 valid_mmd_all += mmd_loss_all.item()
                 
-                valid_loss_final += loss_main.item()   # using only the main loss, not MDMM
 
                 particle_list = [higgs, thad, tlep, gluon]
                 
@@ -798,10 +814,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                     
 
         if exp is not None and device==0 or world_size is None:
-            if sampling_training:
-                exp.log_metric("loss_tot_val_sampling", valid_loss_final/N_valid, epoch=e )
-            else:
-                exp.log_metric("loss_tot_val_density", valid_loss_final/N_valid, epoch=e )
+            exp.log_metric("loss_val_sampling", valid_loss_sampling/(N_valid/2), epoch=e )
+            exp.log_metric("loss_val_density", valid_loss_density/(N_valid/2), epoch=e )
 
             
             exp.log_metric("flow_ninf_val", valid_ninf_flow, epoch=e)
@@ -818,6 +832,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             exp.log_metric("loss_mmd_val_thad", valid_mmd_thad/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_tlep", valid_mmd_tlep/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_gluon", valid_mmd_gluon/N_valid,epoch= e)
+            exp.log_metric("loss_mmd_samples", valid_mmd_ps_samples/(N_valid/2), epoch=e)
             # exp.log_metric('loss_mmd_val_PS_cm', valid_mmd_PS_cm/N_valid, epoch=e)
             exp.log_metric("loss_mmd_val_boost", valid_mmd_boost/N_valid,epoch= e)
             exp.log_metric("loss_mmd_val_all", valid_mmd_all/N_valid,epoch= e)
@@ -826,7 +841,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             exp.log_metric('val_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
 
         if device == 0 or world_size is None:
-            if early_stopper.early_stop(valid_loss_final/N_valid,
+            if early_stopper.early_stop(valid_loss_density/(N_valid/2),
                                     model.state_dict(), optimizer.state_dict(), modelName, exp):
                 print(f"Model converges at epoch {e} !!!")         
                 break
@@ -834,7 +849,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         # Step the scheduler at the end of the val
         if scheduler_type == "reduce_on_plateau":
             # Step the scheduler at the end of the val
-            scheduler.step(valid_loss_final/N_valid)
+            scheduler.step(valid_loss_density/(N_valid/2))
 
         
 

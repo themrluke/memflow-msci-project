@@ -1,5 +1,5 @@
 name: flow_sampling
-version: v1
+version: v5-onlysampling
 description: Like v2-eregr with gluon losses
 input_dataset_train: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
 input_dataset_validation: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
@@ -16,14 +16,15 @@ input_shape:
 
 training_params:
   dtype: float64
-  lr: 0.001
+  lr: 0.002
   batch_size_training: 2048
   batch_size_validation: 2048
   subsplit: 8
   nepochs: 1000
   training_sample: 0.9
   validation_sample: 0.1
-  nSamplingSteps: 10  
+  nSamplingSteps: 10000000
+  sampling_points: 100
   nEpochsPatience: 400
   minDeltaPatience: 0.001
   eps: 1.0e-05
@@ -35,31 +36,30 @@ training_params:
   - 2
   - 3
   sampling_Forward: false
-  scheduler: "reduce_on_plateau"
+  scheduler: "cosine_scheduler"
   reduce_on_plateau:
     factor: 0.5
     patience: 10
-    threshold: 0.5
+    threshold: 0.4
     min_lr : 1e-6    
   cosine_scheduler:
-    after_N_epochs: 0
-    Tmax : 10
-    eta_min: 3e-5
+    T_max : 8000
+    eta_min: 1e-4
   cyclic_lr:
     max_lr : 0.001
     base_lr: 0.0001
-    step_size_up: 16000
-    last_epoch: 16000
+    step_size_up: 15000
+    last_epoch: 15000
     mode: triangular2
     
-  interval_logging_steps: 1
+  interval_logging_steps: 3
 
     
 conditioning_transformer:
-  weights:  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/flow_pretraining_huber_mmd_labframe_gluon/bests/best_model_pretraining_spanet_labframe_gluon_boostpz_v2_bugfix_redo5_condor/model_spanet_labframe_v2-gluon-dist-redo5.pt
+  weights:  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/flow_pretraining_huber_mmd_labframe_gluon/bests/best_model_pretraining_spanet_labframe_gluon_boostpz_v2-gluon_final/model_spanet_labframe_v2-gluon-final.pt
+  frozen: true
   out_features: [3,3,3,1]
   aggregate: false
-
   hidden_features: 64
   dim_feedforward_transformer: 512
   nhead_encoder: 8
@@ -80,7 +80,7 @@ unfolding_flow:
   ntransforms: 15
   hiddenMLP_NoLayers: 4
   hiddenMLP_LayerDim: 256
-  bins: 30
+  bins: 40
   autoregressive: false
   base: DiagNormal
   base_first_arg: 0
@@ -89,15 +89,15 @@ unfolding_flow:
   randPerm: true
   
 MDMM:
-  mmd_regr_max: 0.001
-  mmd_regr_scale: 10
+  mmd_regr_max: 0.003
+  mmd_regr_scale: 1
   mmd_regr_damping: 1
   
   huber_max: 0.25 # From the trainings
-  huber_scale: 10
+  huber_scale: 2
   huber_damping: 1
 
-  mmd_ps_samples_max: 0.003
+  mmd_ps_samples_max: 0.001
   mmd_ps_samples_scale: 1.
   mmd_ps_samples_damping: 1.
 

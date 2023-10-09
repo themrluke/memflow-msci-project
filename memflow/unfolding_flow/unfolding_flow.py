@@ -93,13 +93,19 @@ class UnfoldingFlow(nn.Module):
                                    univariate_kwargs={"bound": flow_bound }, # Keeping the flow in the [-B,B] box.
                               passes= 2 if not flow_autoregressive else flow_nfeatures)
 
+
+    def disable_regression_conditioner_training(self):
+        ''' Disable the conditioner regression training, but keep the
+        latent space training'''
+        self.cond_transformer.disable_regression_training()
         
     def forward(self,  logScaled_reco, data_boost_reco,
                 mask_recoParticles, mask_boost_reco,
-                ps_target,  order=[0,1,2,3], disableGradTransformer=False,
+                ps_target,  order=[0,1,2,3], disableGradConditioning =False,
                 flow_eval="normalizing", Nsamples=0):
 
-        if disableGradTransformer:
+
+        if disableGradConditioning:  # do no train cond transformer at all with sampling epoch
             with torch.no_grad():
                 cond_X = self.cond_transformer(logScaled_reco, data_boost_reco,
                                                mask_recoParticles,

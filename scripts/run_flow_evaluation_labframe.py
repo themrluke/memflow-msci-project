@@ -164,7 +164,7 @@ def validation( device, config, model_weights, outputPath, N_samples, N_events, 
                                                                           mask_recoParticles,
                                                                           mask_boost_reco,
                                                                           ps_target_scaled,
-                                                                          disableGradTransformer=False,
+                                                                          disableGradConditioning=False,
                                                                           flow_eval="normalizing")
             ps_samples = model.flow(flow_cond_vector).sample((N_samples,))
             if i<max_iter:

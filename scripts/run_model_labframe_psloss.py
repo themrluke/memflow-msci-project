@@ -63,7 +63,7 @@ def ddp_setup(rank, world_size, port):
 
 def loss_fn_periodic(inp, target, loss_fn, device):
     # penalty term for going further than PI
-    overflow_delta = torch.clamp(inp - PI, min=0.).mean()  - torch.clamp(inp + PI, max=0.).mean()
+    # overflow_delta = torch.clamp(inp - PI, min=0.).mean()  - torch.clamp(inp + PI, max=0.).mean()
     # rescale to pi for the loss itself
     inp[inp>PI] = inp[inp>PI]-2*PI
     inp[inp<-PI] = inp[inp<-PI] + 2*PI
@@ -71,7 +71,7 @@ def loss_fn_periodic(inp, target, loss_fn, device):
     deltaPhi = target - inp
     deltaPhi = torch.where(deltaPhi > PI, deltaPhi - 2*PI, deltaPhi)
     deltaPhi = torch.where(deltaPhi <= -PI, deltaPhi + 2*PI, deltaPhi)
-    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) + 5. * overflow_delta
+    return loss_fn(deltaPhi, torch.zeros(deltaPhi.shape, device=device)) #+ 10. * overflow_delta
 
 
 def compute_regr_losses(logScaled_partons, logScaled_boost, higgs, thad, tlep, gluon, boost, cartesian, loss_fn,
@@ -318,37 +318,31 @@ def train( device, name_dir, config,  outputDir, dtype,
                                  constraint_ps_regr_mmd])
 
     loss_fn = torch.nn.HuberLoss(delta=config.training_params.huber_delta)
-
-    # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
+     # optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
     optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
-    # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
+
     scheduler_type = config.training_params.scheduler
     
     if scheduler_type == "cosine_scheduler":
         scheduler = CosineAnnealingLR(optimizer,
-                                  T_max=config.training_params.cosine_scheduler.Tmax,
-                                  eta_min=config.training_params.cosine_scheduler.eta_min)
+                                  **config.training_params.cosine_scheduler)
     elif scheduler_type == "reduce_on_plateau":
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                                                              factor=config.training_params.reduce_on_plateau.factor,
-                                                              patience=config.training_params.reduce_on_plateau.patience,
-                                                              threshold=config.training_params.reduce_on_plateau.threshold,
-                                                               min_lr=config.training_params.reduce_on_plateau.get("min_lr", 1e-7),
-                                                               verbose=True)
+                                                               verbose=True,
+                                                               **config.training_params.reduce_on_plateau)
     elif scheduler_type == "cyclic_lr":
+        for gr in optimizer.param_groups:
+            gr["initial_lr"] = config.training_params.lr
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer,
-                                                     base_lr= config.training_params.cyclic_lr.base_lr,
-                                                     max_lr= config.training_params.cyclic_lr.max_lr,
-                                                     step_size_up=config.training_params.cyclic_lr.step_size_up,
                                                      step_size_down=None,
-                                                      cycle_momentum=False,
-                                                     gamma=config.training_params.cyclic_lr.gamma,
-                                                     mode=config.training_params.cyclic_lr.mode,
-                                                      verbose=False)
+                                                     cycle_momentum=False,
+                                                     **config.training_params.cyclic_lr
+                                                     )
+
         
+    early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience,
+                             min_delta=config.training_params.get("minDeltaPatience", 1e-4))
     
-    
-    early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
 
     ii = 0
     for e in range(config.training_params.nepochs):
@@ -392,7 +386,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                           mask_recoParticles,
                                                                           mask_boost_reco,
                                                                           ps_target_scaled,
-                                                                          disableGradTransformer=False,
+                                                                          disableGradConditioning=False,
                                                                           flow_eval="normalizing")
 
             higgs = data_regressed[0] 
@@ -443,8 +437,14 @@ def train( device, name_dir, config,  outputDir, dtype,
             optimizer.step()
             sum_loss += loss_final.item()
 
+            # Scheduler step
             if scheduler_type == "cyclic_lr": #cycle each step
                 scheduler.step()
+
+            if scheduler_type == "cosine_scheduler":
+                after_N_epochs = config.training_params.cosine_scheduler.get("after_N_epochs", 0)
+                if e > after_N_epochs:
+                    scheduler.step()
 
             with torch.no_grad():
                 if exp is not None and device==0 or world_size is None:
@@ -556,7 +556,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                                mask_recoParticles,
                                                                mask_boost_reco,
                                                                ps_target_scaled,
-                                                               disableGradTransformer=False,
+                                                               disableGradConditioning=False,
                                                                flow_eval="normalizing")
                     
                 higgs = data_regressed[0] 
@@ -741,13 +741,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                 print(f"Model converges at epoch {e} !!!")         
                 break
 
-        # Step the scheduler at the end of the val
-        if scheduler_type == "cosine_scheduler":
-            after_N_epochs = config.training_params.cosine_scheduler.get("after_N_epochs", 0)
-            if e > after_N_epochs:
-                scheduler.step()
                 
-        elif scheduler_type == "reduce_on_plateau":
+        if scheduler_type == "reduce_on_plateau":
             # Step the scheduler at the end of the val
             scheduler.step(valid_loss_final/N_valid)
 

@@ -87,6 +87,19 @@ class ConditioningTransformerLayer(nn.Module):
                                self.latent_proj.parameters()):
                 param.requires_grad = False
 
+    def disable_regression_training(self):
+        for p in self.parameters():
+            p.requires_grad = False
+        # Now activating only the latent space gradients
+        if self.use_latent:
+            for param in chain(self.latent_decoder.parameters(),
+                               self.latent_proj.parameters()):
+                param.requires_grad = True
+
+    def enable_regression_training(self):
+        for p in self.parameters():
+            p.requires_grad = True
+
     def forward(self, batch_recoParticles, batch_boost, mask_recoParticles, mask_boost):
         
         batch_size = batch_recoParticles.size(0)
