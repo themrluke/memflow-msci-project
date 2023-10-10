@@ -590,7 +590,7 @@ def plot_mode_quantile(regressed_var, target_var, target_values, window, nbins, 
     plt.show()
     
 def plot_diff_mode_quantile(regressed_var, target_var, referance_var, target_values, window, nbins, range,
-                      xlabel='', ylabel='', title=''):
+                      xlabel='', ylabel='', title='', eta=False, name=''):
     
     regressed_modes = []
     quantile_right_list = []
@@ -637,12 +637,22 @@ def plot_diff_mode_quantile(regressed_var, target_var, referance_var, target_val
                      color='r', alpha=0.2, label='68% CL')
     plt.fill_between(target_values, regressed_modes - offset_left_95, regressed_modes + offset_right_95,
                      color='b', alpha=0.2, label='95% CL')
+    
+    if eta:
+        plt.axvline(x=-1.5, linestyle='--', color='k', alpha=0.2,)
+        plt.axvline(x=+1.5, linestyle='--', color='k', alpha=0.2,)
+        plt.axvline(x=-3, linestyle='--', color='b', alpha=0.2,)
+        plt.axvline(x=+3, linestyle='--', color='b', alpha=0.2,)
+        
     plt.legend(fontsize=10)
     plt.xlabel(xlabel, fontsize=20)
     plt.ylabel(ylabel, fontsize=20)
     plt.tick_params(axis='both', which='major', labelsize=14)
-    plt.title(title)
-    
+    plt.title(title, fontsize=14)
+    plt.tight_layout()
+    if name != '':
+        plt.savefig(name)
+        
     plt.show()
     
 class FindMasks:
