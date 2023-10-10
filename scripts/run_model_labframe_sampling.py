@@ -248,6 +248,11 @@ def train( device, name_dir, config,  outputDir, dtype,
     else:
         exp = None
 
+    
+    # Disablethe training of the conditioner regression if needed
+    if config.conditioning_transformer.frozen_regression:
+        model.disable_conditioner_regression_training()
+
     # Setting up DDP
     model = model.to(device)
 
@@ -264,10 +269,6 @@ def train( device, name_dir, config,  outputDir, dtype,
         model = ddp_model.module
     else:
         ddp_model = model
-
-    # Disablethe training of the conditioner regression if needed
-    if config.conditioning_transformer.frozen_regression:
-        ddp_model.disable_conditioner_regression_training()
 
     # Datasets
     trainingLoader = DataLoader(
@@ -428,7 +429,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             tlep_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 4])
             gluon_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 5])
             # Let's use x1 x2 for boost
-            boost_S = torch.stack((E_CM*torch.pow(x1sample*x2sample, 0.5), E_CM*(x1sample-x2sample)/2), dim=1)
+            boost_S = torch.stack((E_CM*(x1sample+x2sample)/2, E_CM*(x1sample-x2sample)/2), dim=1)
 
             # scaling (with the CM scaling)
             higgs_s = higgs_S.clone()
@@ -573,7 +574,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                         exp.log_metric('loss_huber_tot_samples', (lossH_samp + lossThad_samp+ lossTlep_samp + \
                                                                   lossGluon_samp + lossBoost_samp).item()/14,step=ii)
 
-
                         
                         exp.log_metric('flow_ninf_train', inf_mask.sum(), step=ii)
                         exp.log_metric('flow_nproblems', mask_problematic.sum(), step=ii )
@@ -691,7 +691,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 tlep_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 4])
                 gluon_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 5])
                 # Let's use x1 x2 for boost
-                boost_S = torch.stack((E_CM*torch.pow(x1sample*x2sample, 0.5), E_CM*(x1sample-x2sample)/2), dim=1)
+                boost_S = torch.stack((E_CM*(x1sample+x2sample)/2, E_CM*(x1sample-x2sample)/2), dim=1)
                 
                 # scaling (with the CM scaling)
                 higgs_s = higgs_S.clone()
@@ -804,6 +804,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 
 
                 particle_list = [higgs, thad, tlep, gluon]
+                particle_list_CM = [higgs_s, thad_s, tlep_s, gluon_s]
                 
                 if i == 0 and ( exp is not None and device==0 or world_size is None):
                     for particle in range(len(particle_list)): # 4 or 3 particles: higgs/thad/tlep/gluonISR
@@ -846,6 +847,48 @@ def train( device, name_dir, config,  outputDir, dtype,
                         ax.set_xlabel(f"boost feature {feature}")
                         exp.log_figure(f"boost_1D_{feature}", fig, step=e)
 
+                    # Samples in the CM 1D plots
+                    for particle in range(len(particle_list_CM)): # 4 or 3 particles: higgs/thad/tlep/gluonISR
+                        
+                        # 4 or 3 features
+                        for feature in range(3):  
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            h = ax.hist2d(logScaled_partons_CM[:,particle,feature].detach().cpu().numpy(),
+                                          particle_list_CM[particle][:,feature].cpu().detach().numpy().flatten(),
+                                          bins=30, range=((-2.5, 2.5),(-2.5, 2.5)), cmin=1)
+                            fig.colorbar(h[3], ax=ax)
+                            exp.log_figure(f"particle_sampled_2D_{particle}_{feature}", fig,step=e)
+
+                    
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            ax.hist(logScaled_partons_CM[:,particle,feature].detach().cpu().numpy(),
+                                          bins=30, range=(-2, 2), label="truth", histtype="step")
+                            ax.hist(particle_list_CM[particle][:,feature].cpu().detach().numpy().flatten(),
+                                          bins=30, range=(-2, 2), label="regressed",histtype="step")
+                            ax.legend()
+                            ax.set_xlabel(f"particle {particle} feature {feature}")
+                            exp.log_figure(f"particle_sampled_1D_{particle}_{feature}", fig, step=e)
+
+                    ranges_boost = [(-3,3),(-2,2)]
+                    for feature in range(2):
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        h = ax.hist2d(logScaled_boost[:,feature].detach().cpu().numpy(),
+                                      boost_s[:,feature].cpu().detach().numpy().flatten(),
+                                      bins=30, range=(ranges_boost[feature],ranges_boost[feature] ), cmin=1)
+                        fig.colorbar(h[3], ax=ax)
+                        exp.log_figure(f"boost_sampled_2D_{feature}", fig,step=e)
+
+
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        ax.hist(logScaled_boost[:,feature].detach().cpu().numpy(),
+                                      bins=30, range=ranges_boost[feature], label="truth", histtype="step")
+                        ax.hist(boost_s[:,feature].cpu().detach().numpy().flatten(),
+                                      bins=30, range=ranges_boost[feature], label="regressed",histtype="step")
+                        ax.legend()
+                        ax.set_xlabel(f"boost feature {feature}")
+                        exp.log_figure(f"boost_sampled_1D_{feature}", fig, step=e)
+
+                        
                     # Plots for the flow quality
                     # plots of regressed ps
                     for k in range(10):
@@ -930,7 +973,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             exp.log_metric('val_PSregr_mmd', MMD(logit_ps_regr, ps_target_scaled, config.training_params.mmd_kernel, device, dtype), step=ii)
 
         if device == 0 or world_size is None:
-            if early_stopper.early_stop(valid_loss_density/(N_valid/2),
+            if early_stopper.early_stop(valid_loss/N_valid,
                                     model.state_dict(), optimizer.state_dict(), modelName, exp):
                 print(f"Model converges at epoch {e} !!!")         
                 break
@@ -938,7 +981,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         # Step the scheduler at the end of the val
         if scheduler_type == "reduce_on_plateau":
             # Step the scheduler at the end of the val
-            scheduler.step(valid_loss_density/(N_valid/2))
+            scheduler.step(valid_loss/N_valid)
 
         
 
