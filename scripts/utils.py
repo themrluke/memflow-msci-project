@@ -739,7 +739,7 @@ def get_central_smallest_interval(array, xrange, nbins, Ntrial=10000, perc=0.68)
 
 def plot_diff_mode_quantile(Y, X, cat_var, bins,
                       xlabel='', ylabel='', title='', debug=False,
-                    xlim=None, ylim=None):
+                    xlim=None, ylim=None, nbins_mode=100):
     
     Y_mode  = []
     X_avg = []
@@ -755,10 +755,10 @@ def plot_diff_mode_quantile(Y, X, cat_var, bins,
 
         #print((np.min(Ymask), np.max(Ymask)))
         mode, left, right = get_central_smallest_interval(Ymask, xrange=(np.quantile(Ymask, 0.03), np.quantile(Ymask, 0.97)),
-                                      nbins=Ymask.size//100, Ntrial=2000, perc=0.68)
+                                      nbins=Ymask.size//nbins_mode, Ntrial=2000, perc=0.68)
 
         _, left95, right95 = get_central_smallest_interval(Ymask, xrange=(np.quantile(Ymask, 0.03), np.quantile(Ymask, 0.97)),
-                                      nbins=Ymask.size//100, Ntrial=2000, perc=0.95)
+                                      nbins=Ymask.size//nbins_mode, Ntrial=2000, perc=0.95)
 
         if debug:
             f = plt.figure()
