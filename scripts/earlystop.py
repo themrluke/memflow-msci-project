@@ -1,5 +1,5 @@
 import torch
-from comet_ml.integration.pytorch import log_model
+#from comet_ml.integration.pytorch import log_model
 
 class EarlyStopper:
     def __init__(self, patience=1, min_delta=0):

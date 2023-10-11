@@ -105,6 +105,10 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
                                             torch.load(self.processed_file_names('scaledLogRecoParticles'))
 
+        if 'scaledLogEnEtaPhi' in self.reco_list:
+            print("Load scaledLogEnEtaPhi")
+            self.scaledLogEnEtaPhi, self.meanEnEtaPhi, self.stdEnEtaPhi = torch.load(self.processed_file_names('scaledLogEnEtaPhi'))
+
 
         if dtype != None:
             for field in self.reco_list:
@@ -318,6 +322,21 @@ class Dataset_RecoLevel_NoBoost(Dataset):
                        self.processed_file_names('scaledLogRecoParticlesCartesian'))
         torch.save((scaledLogRecoParticles, LogRecoParticles, meanRecoParticles, stdRecoParticles),
                        self.processed_file_names('scaledLogRecoParticles'))
+
+        # need tensor E, eta, phi
+        scaledEnergy = scaledLogRecoParticlesCartesian[:,:,0].unsqueeze(dim=2)
+        scaledEtaPhi = scaledLogRecoParticles[:,:,1:3]
+        scaledLogEnEtaPhi = torch.cat((scaledEnergy, scaledEtaPhi, recoParticles[:,:,3:]), dim=2)
+
+        meanEnergy = meanRecoCartesian[0].unsqueeze(dim=0)
+        stdEnergy = stdRecoCartesian[0].unsqueeze(dim=0)
+        meanEtaPhi = meanRecoParticles[1:3]
+        stdEtaPhi = stdRecoParticles[1:3]
+        meanEnEtaPhi = torch.cat((meanEnergy, meanEtaPhi), dim=0)
+        stdEnEtaPhi = torch.cat((stdEnergy, stdEtaPhi), dim=0)
+
+        torch.save((scaledLogEnEtaPhi, meanEnEtaPhi, stdEnEtaPhi), self.processed_file_names('scaledLogEnEtaPhi'))
+
 
     def __getitem__(self, index):
         
