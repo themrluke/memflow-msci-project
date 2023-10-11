@@ -1,5 +1,5 @@
 name: flow_sampling
-version: v1-sampling
+version: v1-sampling-regr
 description: Sampling training
 input_dataset_train: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
 input_dataset_validation: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
@@ -59,7 +59,7 @@ training_params:
 conditioning_transformer:
   weights:  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/flow_pretraining_huber_mmd_labframe_gluon/bests/best_model_pretraining_spanet_labframe_gluon_boostpz_v2-gluon_final/model_spanet_labframe_v2-gluon-final.pt
   frozen: false
-  frozen_regression: true
+  frozen_regression: false
   out_features: [3,3,3,1]
   aggregate: false
 

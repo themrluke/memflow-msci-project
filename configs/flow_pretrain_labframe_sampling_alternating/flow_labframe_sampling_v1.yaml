@@ -1,6 +1,6 @@
 name: flow_sampling
-version: v1-sampling
-description: Sampling training
+version: v1
+description: Like v2-eregr with gluon losses
 input_dataset_train: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
 input_dataset_validation: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
 input_dataset_test: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part2.parquet       
@@ -23,8 +23,7 @@ training_params:
   nepochs: 1000
   training_sample: 0.9
   validation_sample: 0.1
-  nSamplingSteps: 10
-  sampling_points: 100
+  nSamplingSteps: 10  
   nEpochsPatience: 400
   minDeltaPatience: 0.001
   eps: 1.0e-05
@@ -53,13 +52,11 @@ training_params:
     last_epoch: 16000
     mode: triangular2
     
-  interval_logging_steps: 5
+  interval_logging_steps: 1
 
     
 conditioning_transformer:
-  weights:  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/flow_pretraining_huber_mmd_labframe_gluon/bests/best_model_pretraining_spanet_labframe_gluon_boostpz_v2-gluon_final/model_spanet_labframe_v2-gluon-final.pt
-  frozen: false
-  frozen_regression: true
+  weights:  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/flow_pretraining_huber_mmd_labframe_gluon/bests/best_model_pretraining_spanet_labframe_gluon_boostpz_v2_bugfix_redo5_condor/model_spanet_labframe_v2-gluon-dist-redo5.pt
   out_features: [3,3,3,1]
   aggregate: false
 
@@ -100,14 +97,9 @@ MDMM:
   huber_scale: 10
   huber_damping: 1
 
-  samples_mmd_max: 0.003
-  samples_mmd_scale: 1
-  samples_mmd_damping: 1
-  
-  samples_huber_max: 0.25 # From the trainings
-  samples_huber_scale: 10
-  samples_huber_damping: 1
-
+  mmd_ps_samples_max: 0.003
+  mmd_ps_samples_scale: 1.
+  mmd_ps_samples_damping: 1.
 
 
 comet_token: uaitssszWuWAaWQkBrDXdlJBt

@@ -350,6 +350,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                      cycle_momentum=False,
                                                      **config.training_params.cyclic_lr
                                                      )
+    elif scheduler_type == "exponential":
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=config.training_params.exponential.gamma)
         
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience,
@@ -422,8 +424,11 @@ def train( device, name_dir, config,  outputDir, dtype,
             # Now getting the flow samples
             flow_samples = model.flow(flow_cond_vector).rsample((1,)).squeeze()
             flow_samples = torch.sigmoid(flow_samples*scale_ps + mean_ps)
+
+            # Checking for problematic points
+            samples_mask = flow_samples.isnan().sum(1) == 0 # by event
             # converting back to particles
-            momenta_sampled, _, x1sample, x2sample = rambo.get_momenta_from_ps(flow_samples, requires_grad=True)
+            momenta_sampled, _, x1sample, x2sample = rambo.get_momenta_from_ps(flow_samples[samples_mask], requires_grad=True)
             higgs_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 2])
             thad_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 3])
             tlep_S = partTools.get_ptetaphi_comp(momenta_sampled[:, 4])
@@ -450,9 +455,11 @@ def train( device, name_dir, config,  outputDir, dtype,
             boost_s = (boost_s - log_mean_boost) / log_std_boost
 
             MMD_input_samples = [higgs_s, thad_s, tlep_s, gluon_s, boost_s]
-            MMD_target_samples = [logScaled_partons_CM[:,0], logScaled_partons_CM[:,1],
-                          logScaled_partons_CM[:,2], logScaled_partons_CM[:,3],
-                          logScaled_boost]
+            MMD_target_samples = [logScaled_partons_CM[samples_mask,0], logScaled_partons_CM[samples_mask,1],
+                          logScaled_partons_CM[samples_mask,2], logScaled_partons_CM[samples_mask,3],
+                                  logScaled_boost[samples_mask]]
+
+            
             
                     
             mdmm_return = MDMM_module(loss_main, [
@@ -472,8 +479,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                  device, dtype, True, False),
 
                 # huberloss samples
-                (logScaled_partons_CM,
-                 logScaled_boost,
+                (logScaled_partons_CM[samples_mask],
+                 logScaled_boost[samples_mask],
                  higgs_s, thad_s,
                  tlep_s, gluon_s, boost_s,
                  config.cartesian, loss_fn,
@@ -491,8 +498,20 @@ def train( device, name_dir, config,  outputDir, dtype,
             loss_final = mdmm_return.value
 
             loss_final.backward()
-            optimizer.step()
-            sum_loss += loss_final.item()
+
+            # Check for nan
+            valid_gradients = True
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    valid_gradients = not (torch.isnan(param.grad).any())
+                    if not valid_gradients:
+                        break
+            if not valid_gradients:
+                print("detected inf or nan values in gradients. not updating model parameters")
+                optimizer.zero_grad()
+            else:
+                optimizer.step()
+                sum_loss += loss_final.item()
 
             # Scheduler step
             if scheduler_type == "cyclic_lr": #cycle each step
@@ -577,6 +596,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                         
                         exp.log_metric('flow_ninf_train', inf_mask.sum(), step=ii)
                         exp.log_metric('flow_nproblems', mask_problematic.sum(), step=ii )
+                        exp.log_metric("flow_samples_nproblems", (~samples_mask).sum(), step=ii)
                         # Log the average difference of ps points
                         exp.log_metric('train_PSregr_avgdiff', (logit_ps_regr - ps_target_scaled).abs().mean(), step=ii)
                         exp.log_metric('train_PSregr_stddiff', (logit_ps_regr - ps_target_scaled).std().mean(), step=ii)
@@ -982,6 +1002,8 @@ def train( device, name_dir, config,  outputDir, dtype,
         if scheduler_type == "reduce_on_plateau":
             # Step the scheduler at the end of the val
             scheduler.step(valid_loss/N_valid)
+        elif scheduler_type == "exponential":
+            scheduler.step()
 
         
 

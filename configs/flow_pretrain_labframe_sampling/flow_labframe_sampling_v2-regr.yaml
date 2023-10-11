@@ -1,5 +1,5 @@
 name: flow_sampling
-version: v1-sampling
+version: v2-sampling-regr
 description: Sampling training
 input_dataset_train: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
 input_dataset_validation: /eos/user/d/dvalsecc/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
@@ -17,7 +17,7 @@ input_shape:
 training_params:
   dtype: float64
   lr: 0.001
-  batch_size_training: 2048
+  batch_size_training: 1024
   batch_size_validation: 2048
   subsplit: 8
   nepochs: 1000
@@ -59,7 +59,7 @@ training_params:
 conditioning_transformer:
   weights:  /eos/user/d/dvalsecc/www/ttHbbAnalysis/MEMFlow/models_archive/flow_pretraining_huber_mmd_labframe_gluon/bests/best_model_pretraining_spanet_labframe_gluon_boostpz_v2-gluon_final/model_spanet_labframe_v2-gluon-final.pt
   frozen: false
-  frozen_regression: true
+  frozen_regression: false
   out_features: [3,3,3,1]
   aggregate: false
 
@@ -80,11 +80,11 @@ unfolding_flow:
   load_conditioning_model: true
   nfeatures: 10
   ncond: 16
-  ntransforms: 15
+  ntransforms: 10
   hiddenMLP_NoLayers: 4
   hiddenMLP_LayerDim: 256
-  bins: 30
-  autoregressive: false
+  bins: 40
+  autoregressive: true
   base: DiagNormal
   base_first_arg: 0
   base_second_arg: 0.35
