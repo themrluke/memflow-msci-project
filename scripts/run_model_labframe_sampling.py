@@ -352,7 +352,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                      )
     elif scheduler_type == "exponential":
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=config.training_params.exponential.gamma)
-        
+    elif scheduler_type == "step_lr":
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, **config.training_params.step_lr)
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience,
                                  min_delta=config.training_params.get("minDeltaPatience", 1e-4))
@@ -1002,7 +1003,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         if scheduler_type == "reduce_on_plateau":
             # Step the scheduler at the end of the val
             scheduler.step(valid_loss/N_valid)
-        elif scheduler_type == "exponential":
+        elif scheduler_type in ["exponential", "step_lr"]:
             scheduler.step()
 
         
