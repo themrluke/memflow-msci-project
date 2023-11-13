@@ -184,3 +184,10 @@ class UnfoldingFlow(nn.Module):
             
             return [higgs, thad, tlep, gluon, boost], data_regressed_cm, \
                 ps, logit_ps_scaled, flow_cond_vector, samples, mask_problematic
+
+        elif flow_eval == "conditioning_only":
+            return [higgs, thad, tlep, gluon, boost], data_regressed_cm, \
+                ps, logit_ps_scaled, flow_cond_vector, None, mask_problematic
+
+        else:
+            raise Exception(f"Invalid flow_eval mode {flow_eval}")
