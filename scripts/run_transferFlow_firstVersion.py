@@ -221,9 +221,9 @@ def train( device, name_dir, config,  outputDir, dtype,
             trainingLoader.sampler.set_epoch(e)
             
         sum_loss = 0.
-        loss_total_each_object = torch.zeros(config.transferFlow.no_max_objects)
-        loss_per_pt = torch.zeros(len(pt_bins) - 1)
-        total_loss_per_pt = torch.zeros(len(pt_bins) - 1)
+        loss_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
+        loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
+        total_loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
     
         # training loop    
         print("Before training loop")
@@ -297,8 +297,8 @@ def train( device, name_dir, config,  outputDir, dtype,
 
         valid_loss_final = 0.
         valid_loss_flow = 0.
-        loss_Valid_total_each_object = torch.zeros(config.transferFlow.no_max_objects)
-        valid_total_loss_per_pt = torch.zeros(len(pt_bins) - 1)
+        loss_Valid_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
+        valid_total_loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
         
         # validation loop (don't update weights and gradients)
         print("Before validation loop")
@@ -354,9 +354,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                                     model.state_dict(), optimizer.state_dict(), modelName, exp):
                 print(f"Model converges at epoch {e} !!!")         
                 break
-
-        print('until here')
-        exit(0)
 
         # Step the scheduler at the end of the val
         if scheduler_type == "cosine_scheduler":
