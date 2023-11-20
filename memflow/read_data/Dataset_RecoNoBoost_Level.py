@@ -105,6 +105,11 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
                                             torch.load(self.processed_file_names('scaledLogRecoParticles'))
 
+        if 'scaledLogRecoParticles_withEnergy' in self.reco_list:
+            print("Load scaledLogRecoParticles_withEnergy")
+            self.scaledLogRecoParticles_withEnergy, self.meanRecoParticles_withEnergy, self.stdRecoParticles_withEnergy = \
+                                            torch.load(self.processed_file_names('scaledLogRecoParticles_withEnergy'))
+
 
         if dtype != None:
             for field in self.reco_list:
@@ -250,10 +255,10 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         # pt or E.  all the rest we don't log scale it
         log_objectTensor[:,:,0] = torch.sign(log_objectTensor[:,:,0])*torch.log(1+torch.abs(log_objectTensor[:,:,0]))
         if isCartesian:
-            # case [E,px,py,pz] or [x,y,z,t]
+            # case [E,px,py,pz]
             no_elements = 4             
         else:
-            # case ["pt", "eta", "phi", "btag", + prov
+            # case ["pt", "eta", "phi", "btag", + prov]
             no_elements = 3
             
         for i in range(no_elements):
@@ -318,6 +323,17 @@ class Dataset_RecoLevel_NoBoost(Dataset):
                        self.processed_file_names('scaledLogRecoParticlesCartesian'))
         torch.save((scaledLogRecoParticles, LogRecoParticles, meanRecoParticles, stdRecoParticles),
                        self.processed_file_names('scaledLogRecoParticles'))
+
+        energy = scaledLogRecoParticlesCartesian[:,:,0]
+        energy_mean = meanRecoCartesian[0]
+        energy_std = stdRecoCartesian[0]
+
+        #[E, pt, eta, phi]
+        scaledLogRecoParticles_withEnergy = torch.cat((energy.unsqueeze(dim=2), scaledLogRecoParticles), dim=2)
+        meanRecoParticles_withEnergy = torch.cat((energy_mean.reshape(1), meanRecoParticles), dim=0)
+        stdRecoParticles_withEnergy = torch.cat((energy_std.reshape(1), stdRecoParticles), dim=0)
+        torch.save((scaledLogRecoParticles_withEnergy, meanRecoParticles_withEnergy, stdRecoParticles_withEnergy),
+                    self.processed_file_names('scaledLogRecoParticles_withEnergy'))
 
     def __getitem__(self, index):
         
