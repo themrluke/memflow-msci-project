@@ -1,0 +1,70 @@
+name: transfer flow
+version: test
+description: First version
+input_dataset_train: /work/adpetre/dataset_davide/train/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
+input_dataset_validation: /work/adpetre/dataset_davide/valid/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
+input_dataset_test: /work/adpetre/dataset_davide/test/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part2.parquet
+
+cartesian: false
+ddp_port: 12346
+noProv: true
+
+input_shape:
+  no_recoVars: 7
+  no_partonVars: 3
+
+training_params:
+  dtype: float64
+  lr: 0.00001
+  batch_size_training: 1024
+  batch_size_validation: 2048
+  subsplit: 8
+  nepochs: 1000
+  training_sample: 0.9
+  validation_sample: 0.1
+  nEpochsPatience: 400
+  minDeltaPatience: 0.001
+  eps: 1.0e-05
+  scheduler: "reduce_on_plateau"
+  reduce_on_plateau:
+    factor: 0.5
+    patience: 10
+    threshold: 0.4
+    min_lr : 1e-6    
+  cosine_scheduler:
+    after_N_epochs: 0
+    Tmax : 10
+    eta_min: 3e-5
+  cyclic_lr:
+    max_lr : 0.001
+    base_lr: 0.0001
+    step_size_up: 15000
+    last_epoch: 15000
+    mode: triangular2
+    
+  interval_logging_steps: 3
+
+    
+transformerConditioning:
+  input_features: 64
+  nhead: 4
+  no_encoder_layers: 8
+  no_decoder_layers: 8
+  dim_feedforward: 128
+  
+transferFlow:
+    
+  nfeatures: 3
+  ntransforms: 15
+  hiddenMLP_NoLayers: 2
+  hiddenMLP_LayerDim: 128
+  bins: 30
+  autoregressive: false
+  base: DiagNormal
+  base_first_arg: 0
+  base_second_arg: 0.35
+  bound: 1
+  randPerm: true
+  no_max_objects: 12
+
+comet_token: xqHlmMeY0BtVThjkd7pDKxLGt
