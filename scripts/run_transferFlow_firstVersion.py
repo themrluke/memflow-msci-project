@@ -249,7 +249,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                         logScaled_partons,
                                                         data_boost_reco,
                                                         mask_recoParticles,
-                                                        mask_boost)
+                                                        mask_boost,
+                                                        device=device)
 
 
             inf_mask = torch.isinf(batch_flow_pr) | torch.isnan(batch_flow_pr)
@@ -267,6 +268,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                         pt_bins=pt_bins)
             total_loss_per_pt = torch.add(total_loss_per_pt, loss_per_pt)
 
+            if torch.isnan(total_loss_per_pt).any() or torch.isinf(total_loss_per_pt).any():
+                print(f'nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}')
                     
             loss_main.backward()
             optimizer.step()
@@ -287,11 +290,11 @@ def train( device, name_dir, config,  outputDir, dtype,
 
         ### END of training 
         if exp is not None and device==0 or world_size is None:
-            exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e, step=ii)
+            exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e)
             for j in range(config.transferFlow.no_max_objects):
-                exp.log_metric(f'loss_epoch_total_object_{j}', loss_total_each_object[j]/N_train, epoch=e, step=ii)
+                exp.log_metric(f'loss_epoch_total_object_{j}', loss_total_each_object[j]/N_train, epoch=e)
             for j in range(len(pt_bins) - 1):
-                exp.log_metric(f'loss_epoch_total_per_pt_{pt_bins[j]}_{pt_bins[j+1]}', total_loss_per_pt[j]/N_train, epoch=e, step=ii)
+                exp.log_metric(f'loss_epoch_total_per_pt_{pt_bins[j]}_{pt_bins[j+1]}', total_loss_per_pt[j]/N_train, epoch=e)
             # if scheduler_type == "cyclic_lr":
             #     exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
 
@@ -325,7 +328,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                             logScaled_partons,
                                                             data_boost_reco,
                                                             mask_recoParticles,
-                                                            mask_boost)
+                                                            mask_boost,
+                                                            device=device)
 
                 #inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
                 loss_main = -avg_flowPr                                
@@ -336,6 +340,9 @@ def train( device, name_dir, config,  outputDir, dtype,
                 loss_mean_each_object = torch.div(loss_Sum_each_object, number_MaskedObjects)
                 loss_Valid_total_each_object = torch.add(loss_total_each_object, loss_mean_each_object)
 
+                if torch.isnan(loss_Valid_total_each_object).any() or torch.isinf(loss_Valid_total_each_object).any():
+                    print(f'VALID: nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}')
+
                 loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco, mask_recoParticles, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
                         pt_bins=pt_bins)
 
@@ -345,9 +352,9 @@ def train( device, name_dir, config,  outputDir, dtype,
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("loss_total_val", valid_loss_final/N_valid, epoch=e )
             for j in range(config.transferFlow.no_max_objects):
-                exp.log_metric(f'loss_Valid_epoch_total_object_{j}', loss_Valid_total_each_object[j]/N_valid, epoch=e, step=ii)
+                exp.log_metric(f'loss_Valid_epoch_total_object_{j}', loss_Valid_total_each_object[j]/N_valid, epoch=e)
             for j in range(len(pt_bins) - 1):
-                exp.log_metric(f'loss_Valid_epoch_total_per_pt_{pt_bins[j]}_{pt_bins[j+1]}', valid_total_loss_per_pt[j]/N_valid, epoch=e, step=ii)
+                exp.log_metric(f'loss_Valid_epoch_total_per_pt_{pt_bins[j]}_{pt_bins[j+1]}', valid_total_loss_per_pt[j]/N_valid, epoch=e)
             
         if device == 0 or world_size is None:
             if early_stopper.early_stop(valid_loss_final/N_valid,

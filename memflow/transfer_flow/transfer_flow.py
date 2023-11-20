@@ -79,14 +79,14 @@ class TransferFlow(nn.Module):
         self.cond_transformer.enable_regression_training()
         
     def forward(self,  scaling_reco_lab, scaling_partons_lab, scaling_RegressedBoost_lab,
-                mask_reco, mask_boost, flow_eval="normalizing", Nsamples=0):
+                mask_reco, mask_boost, flow_eval="normalizing", Nsamples=0, device=torch.device('cpu')):
         
         scaledLogReco_afterLin = self.gelu(self.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
         scaledLogParton_afterLin = self.gelu(self.linearDNN_parton(scaling_partons_lab))
         #boost_afterLin = self.gelu(self.linearDNN_boost(scaling_RegressedBoost_lab))
         #scaledLogReco_withBoost_afterLin = torch.cat((scaledLogReco_afterLin, boost_afterLin), dim=1)
 
-        tgt_mask = self.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=scaledLogReco_afterLin.get_device())
+        tgt_mask = self.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=device)
         # mask to keep the decoder autoregressive
         
         output_decoder = self.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
