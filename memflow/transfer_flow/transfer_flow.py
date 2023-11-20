@@ -57,9 +57,6 @@ class TransferFlow(nn.Module):
                                                 dim_feedforward=transformer_dim_feedforward,
                                                 activation=transformer_activation,
                                                 batch_first=True)
-
-        self.tgt_mask = self.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1))
-        # mask to keep the decoder autoregressive
         
         self.flow = zuko.flows.NSF(features=flow_nfeatures,
                               context=transformer_input_features,
@@ -88,9 +85,12 @@ class TransferFlow(nn.Module):
         scaledLogParton_afterLin = self.gelu(self.linearDNN_parton(scaling_partons_lab))
         #boost_afterLin = self.gelu(self.linearDNN_boost(scaling_RegressedBoost_lab))
         #scaledLogReco_withBoost_afterLin = torch.cat((scaledLogReco_afterLin, boost_afterLin), dim=1)
+
+        tgt_mask = self.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=scaledLogReco_afterLin.get_device())
+        # mask to keep the decoder autoregressive
         
         output_decoder = self.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                          tgt_mask=self.tgt_mask)
+                                                tgt_mask=tgt_mask)
         
         flow_prob = self.flow(output_decoder[:,:self.no_max_objects]).log_prob(scaling_reco_lab[:,:self.no_max_objects,:3])
         
