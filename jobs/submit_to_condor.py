@@ -22,7 +22,7 @@ col = htcondor.Collector()
 credd = htcondor.Credd()
 credd.add_user_cred(htcondor.CredTypes.Kerberos, None)
 
-basedir = "/afs/cern.ch/work/d/dvalsecc/private/MEM/MEMFlow"
+basedir = "/afs/cern.ch/work/a/adpetre/public/memflow/MEMFlow"
 
 sub = htcondor.Submit()
 
@@ -131,6 +131,16 @@ elif model == "flow_evaluation_labframe":
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"workday"'
     sub['arguments'] = " ".join(args.args)
+
+elif model == "transfer_flow_firstVersion":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"transferFlow_train/transferFlow_test.yaml transferFlow_test"
 
 
 # General
