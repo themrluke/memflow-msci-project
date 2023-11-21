@@ -268,8 +268,11 @@ def train( device, name_dir, config,  outputDir, dtype,
                         pt_bins=pt_bins)
             total_loss_per_pt = torch.add(total_loss_per_pt, loss_per_pt)
 
+            if torch.isnan(loss_total_each_object).any() or torch.isinf(loss_total_each_object).any():
+                print(f'Training_Total: nans = {torch.count_nonzero(torch.isnan(loss_total_each_object))}       infs = {torch.count_nonzero(torch.isinf(loss_total_each_object))}')
+
             if torch.isnan(total_loss_per_pt).any() or torch.isinf(total_loss_per_pt).any():
-                print(f'nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}')
+                print(f'Training_pt: nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(total_loss_per_pt))}')
                     
             loss_main.backward()
             optimizer.step()
@@ -338,15 +341,18 @@ def train( device, name_dir, config,  outputDir, dtype,
                 loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
                 number_MaskedObjects = torch.sum(mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
                 loss_mean_each_object = torch.div(loss_Sum_each_object, number_MaskedObjects)
-                loss_Valid_total_each_object = torch.add(loss_total_each_object, loss_mean_each_object)
-
-                if torch.isnan(loss_Valid_total_each_object).any() or torch.isinf(loss_Valid_total_each_object).any():
-                    print(f'VALID: nans = {torch.count_nonzero(torch.isnan(loss_Valid_total_each_object))}       infs = {torch.count_nonzero(torch.isnan(loss_Valid_total_each_object))}')
+                loss_Valid_total_each_object = torch.add(loss_Valid_total_each_object, loss_mean_each_object)
 
                 loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco, mask_recoParticles, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
                         pt_bins=pt_bins)
 
                 valid_total_loss_per_pt = torch.add(valid_total_loss_per_pt, loss_per_pt)
+
+                if torch.isnan(loss_Valid_total_each_object).any() or torch.isinf(loss_Valid_total_each_object).any():
+                    print(f'VALID_total: nans = {torch.count_nonzero(torch.isnan(loss_Valid_total_each_object))}       infs = {torch.count_nonzero(torch.isinf(loss_Valid_total_each_object))}')
+
+                if torch.isnan(valid_total_loss_per_pt).any() or torch.isinf(valid_total_loss_per_pt).any():
+                    print(f'VALID_pt: nans = {torch.count_nonzero(torch.isnan(valid_total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(valid_total_loss_per_pt))}')
                     
 
         if exp is not None and device==0 or world_size is None:
