@@ -341,7 +341,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 loss_Valid_total_each_object = torch.add(loss_total_each_object, loss_mean_each_object)
 
                 if torch.isnan(loss_Valid_total_each_object).any() or torch.isinf(loss_Valid_total_each_object).any():
-                    print(f'VALID: nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}')
+                    print(f'VALID: nans = {torch.count_nonzero(torch.isnan(loss_Valid_total_each_object))}       infs = {torch.count_nonzero(torch.isnan(loss_Valid_total_each_object))}')
 
                 loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco, mask_recoParticles, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
                         pt_bins=pt_bins)
