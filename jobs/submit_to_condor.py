@@ -7,6 +7,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--version', type=str, required=True)
 parser.add_argument('--dry', action="store_true")
+parser.add_argument('--antonio', action="store_true")
 parser.add_argument('--ngpu', type=int, default=1)
 parser.add_argument("--good-gpus", action="store_true")
 parser.add_argument("--args", nargs="+", type=str, help="additional args")
@@ -15,14 +16,16 @@ args = parser.parse_args()
 model = args.model
 version = args.version
 dry = args.dry
-
-
+antonio = args.antonio
 
 col = htcondor.Collector()
 credd = htcondor.Credd()
 credd.add_user_cred(htcondor.CredTypes.Kerberos, None)
 
-basedir = "/afs/cern.ch/work/a/adpetre/public/memflow/MEMFlow"
+if antonio:
+    basedir = "/afs/cern.ch/user/a/adpetre/public/memflow/MEMFlow"
+else:
+    basedir = "/afs/cern.ch/work/d/dvalsecc/private/MEM/MEMFlow"
 
 sub = htcondor.Submit()
 
@@ -142,7 +145,6 @@ elif model == "transfer_flow_firstVersion":
     sub['+JobFlavour'] = '"nextweek"'
     sub['arguments'] = f"transferFlow_train/transferFlow_test.yaml transferFlow_test"
 
-
 # General
 sub['request_cpus'] = f"{args.ngpu*3}"
 sub['request_gpus'] = f"{args.ngpu}"
@@ -153,8 +155,10 @@ if args.good_gpus:
 if model != "flow_evaluation_labframe" and not os.path.exists(f"{basedir}/configs/{sub['arguments'].split()[0]}"):
     print("Missing configuration file! The jobs has not been submitted")
     exit(1)
-    
 
+if antonio:
+    sub['arguments'] = sub['arguments'] + " antonio"
+    
 print(sub)
 if not dry:
     schedd = htcondor.Schedd()
