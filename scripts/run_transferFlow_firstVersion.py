@@ -178,7 +178,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         shuffle=False,        
     )
 
-    optimizer = optim.Adam(list(model.parameters()) , lr=config.training_params.lr)
+    optimizer = optim.RAdam(list(model.parameters()) , lr=config.training_params.lr)
     # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
     scheduler_type = config.training_params.scheduler
     
