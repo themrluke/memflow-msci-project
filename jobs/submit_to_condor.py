@@ -143,7 +143,7 @@ elif model == "transfer_flow_firstVersion":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_train/transferFlow_test.yaml transferFlow_test"
+    sub['arguments'] = f"transferFlow_train/transferFlow_v{version}.yaml transferFlow_v{version}"
 
 # General
 sub['request_cpus'] = f"{args.ngpu*3}"
