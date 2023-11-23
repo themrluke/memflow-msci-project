@@ -52,7 +52,12 @@ def compute_loss_per_pt(loss_per_pt, flow_pr, scaledLogReco, maskedReco, log_mea
         mask_pt_greater = unscaled_pt > pt_bins[i]
         mask_pt_lower = unscaled_pt < pt_bins[i+1]
         mask_pt = torch.logical_and(mask_pt_greater, mask_pt_lower)
-        loss_per_pt[i] =  -1*flow_pr[mask_pt].mean()
+
+        # check events with 0 jets with pt between bins
+        if torch.count_nonzero(mask_pt) == 0:
+            loss_per_pt[i] =  0
+        else:
+            loss_per_pt[i] =  -1*flow_pr[mask_pt].mean()
 
     return loss_per_pt
     
@@ -262,6 +267,9 @@ def train( device, name_dir, config,  outputDir, dtype,
             loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
             number_MaskedObjects = torch.sum(mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
             loss_mean_each_object = torch.div(loss_Sum_each_object, number_MaskedObjects)
+
+            # for cases when jets no. 12 doesn't exist in any of the events -> nan because 0/0 -> replace with 0
+            loss_mean_each_object = torch.nan_to_num(loss_mean_each_object, nan=0.0)
             loss_total_each_object = torch.add(loss_total_each_object, loss_mean_each_object)
 
             loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco, mask_recoParticles, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
@@ -269,10 +277,10 @@ def train( device, name_dir, config,  outputDir, dtype,
             total_loss_per_pt = torch.add(total_loss_per_pt, loss_per_pt)
 
             if torch.isnan(loss_total_each_object).any() or torch.isinf(loss_total_each_object).any():
-                print(f'Training_Total: nans = {torch.count_nonzero(torch.isnan(loss_total_each_object))}       infs = {torch.count_nonzero(torch.isinf(loss_total_each_object))}')
+                print(f'ii= {ii} Training_Total: nans = {torch.count_nonzero(torch.isnan(loss_total_each_object))}       infs = {torch.count_nonzero(torch.isinf(loss_total_each_object))}')
 
             if torch.isnan(total_loss_per_pt).any() or torch.isinf(total_loss_per_pt).any():
-                print(f'Training_pt: nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(total_loss_per_pt))}')
+                print(f'ii= {ii} Training_pt: nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(total_loss_per_pt))}')
                     
             loss_main.backward()
             optimizer.step()
@@ -349,10 +357,10 @@ def train( device, name_dir, config,  outputDir, dtype,
                 valid_total_loss_per_pt = torch.add(valid_total_loss_per_pt, loss_per_pt)
 
                 if torch.isnan(loss_Valid_total_each_object).any() or torch.isinf(loss_Valid_total_each_object).any():
-                    print(f'VALID_total: nans = {torch.count_nonzero(torch.isnan(loss_Valid_total_each_object))}       infs = {torch.count_nonzero(torch.isinf(loss_Valid_total_each_object))}')
+                    print(f'ii= {ii} VALID_total: nans = {torch.count_nonzero(torch.isnan(loss_Valid_total_each_object))}       infs = {torch.count_nonzero(torch.isinf(loss_Valid_total_each_object))}')
 
                 if torch.isnan(valid_total_loss_per_pt).any() or torch.isinf(valid_total_loss_per_pt).any():
-                    print(f'VALID_pt: nans = {torch.count_nonzero(torch.isnan(valid_total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(valid_total_loss_per_pt))}')
+                    print(f'ii= {ii} VALID_pt: nans = {torch.count_nonzero(torch.isnan(valid_total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(valid_total_loss_per_pt))}')
                     
 
         if exp is not None and device==0 or world_size is None:
