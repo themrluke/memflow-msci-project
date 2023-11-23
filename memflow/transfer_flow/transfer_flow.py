@@ -103,8 +103,11 @@ class TransferFlow(nn.Module):
         #flow_prob = self.flow(output_decoder[:,:no_max_objects]).log_prob(scaling_reco_lab_andBoost[:,:no_max_objects])
         # i will want to add the boost in the target too
         
-        flow_prob_batch = torch.sum(flow_prob*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
-        avg_flow_prob = flow_prob_batch.mean() # is this good?? 
+        flow_prob_batch = torch.sum(flow_prob*mask_reco[:,:self.no_max_objects], dim=1) # sum the masked objects for each event
+        no_objects_per_event = torch.sum(mask_reco[:,:self.no_max_objects], dim=1) # compute the number of objects per event
+        flow_prob_batch = torch.div(flow_prob_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
+
+        avg_flow_prob = flow_prob_batch.mean()
                 
         return avg_flow_prob, flow_prob_batch, flow_prob
     
