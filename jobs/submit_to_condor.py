@@ -145,6 +145,36 @@ elif model == "transfer_flow_firstVersion":
     sub['+JobFlavour'] = '"nextweek"'
     sub['arguments'] = f"transferFlow_train/transferFlow_v{version}.yaml transferFlow_v{version}"
 
+elif model == "transfer_flow_paperVersion":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_paper-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_paper-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper_v{version}"
+
+elif model == "transfer_flow_idea3":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_idea3.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_idea3-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_idea3-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_idea3-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"transferFlow_idea3_train/transferFlow_v{version}.yaml transferFlow_idea3_train_v{version}"
+
+elif model == "transfer_flow_idea3_conditioned":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_idea3_conditioned.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_idea3_conditioned-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_idea3_conditioned-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_idea3_conditioned-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"transferFlow_idea3_conditioning_train/transferFlow_v{version}.yaml transferFlow_idea3_conditioned_train_v{version}"
+
 # General
 sub['request_cpus'] = f"{args.ngpu*3}"
 sub['request_gpus'] = f"{args.ngpu}"
