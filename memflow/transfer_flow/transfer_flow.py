@@ -13,6 +13,7 @@ import memflow.phasespace.utils as ps_utils
 class TransferFlow(nn.Module):
     def __init__(self,
                  no_recoVars, no_partonVars,
+                 no_recoObjects=18,
                  
                  transformer_input_features=64,
                  transformer_nhead=8,
@@ -57,6 +58,9 @@ class TransferFlow(nn.Module):
                                                 dim_feedforward=transformer_dim_feedforward,
                                                 activation=transformer_activation,
                                                 batch_first=True)
+
+        # mask to keep the decoder autoregressive
+        self.tgt_mask = self.transformer_model.generate_square_subsequent_mask(no_recoObjects, device=device)
         
         self.flow = zuko.flows.NSF(features=flow_nfeatures,
                               context=transformer_input_features,
@@ -78,23 +82,25 @@ class TransferFlow(nn.Module):
     def enable_regression_training(self):
         self.cond_transformer.enable_regression_training()
         
-    def forward(self,  scaling_reco_lab, scaling_partons_lab, scaling_RegressedBoost_lab,
-                mask_reco, mask_boost, flow_eval="normalizing", Nsamples=0, device=torch.device('cpu')):
+    def forward(self,  scaling_reco_lab, scaling_partons_lab, scaling_RegressedBoost_lab, mask_reco, mask_boost):
         
         scaledLogReco_afterLin = self.gelu(self.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
         scaledLogParton_afterLin = self.gelu(self.linearDNN_parton(scaling_partons_lab))
         #boost_afterLin = self.gelu(self.linearDNN_boost(scaling_RegressedBoost_lab))
         #scaledLogReco_withBoost_afterLin = torch.cat((scaledLogReco_afterLin, boost_afterLin), dim=1)
-
-        tgt_mask = self.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=device)
-        # mask to keep the decoder autoregressive
         
         output_decoder = self.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                                tgt_mask=tgt_mask)
+                                                tgt_mask=self.tgt_mask)
         
         flow_prob = self.flow(output_decoder[:,:self.no_max_objects]).log_prob(scaling_reco_lab[:,:self.no_max_objects,:3])
+
+        flow_prob_batch = torch.sum(flow_prob*mask_reco[:,:self.no_max_objects], dim=1) # sum the masked objects for each event
+        no_objects_per_event = torch.sum(mask_reco[:,:self.no_max_objects], dim=1) # compute the number of objects per event
+        flow_prob_batch = torch.div(flow_prob_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
+
+        avg_flow_prob = flow_prob_batch.mean()
         
-        #tgt_mask = self.transformer_model.generate_square_subsequent_mask(scaledLogReco_withBoost_afterLin.size(1))
+
         #output_decoder = self.transformer_model(scaledLogParton_afterLin, scaledLogReco_withBoost_afterLin,
         #                                  tgt_mask=tgt_mask)
         
@@ -102,14 +108,6 @@ class TransferFlow(nn.Module):
         #mask_reco_andBoost = torch.cat((mask_reco, mask_boost), dim=1)
         #flow_prob = self.flow(output_decoder[:,:no_max_objects]).log_prob(scaling_reco_lab_andBoost[:,:no_max_objects])
         # i will want to add the boost in the target too
-        
-        flow_prob_batch = torch.sum(flow_prob*mask_reco[:,:self.no_max_objects], dim=1) # sum the masked objects for each event
-        no_objects_per_event = torch.sum(mask_reco[:,:self.no_max_objects], dim=1) # compute the number of objects per event
-        flow_prob_batch = torch.div(flow_prob_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
-
-        avg_flow_prob = flow_prob_batch.mean()
                 
-        return avg_flow_prob, flow_prob_batch, flow_prob
-    
-        
+        return avg_flow_prob, flow_prob_batch, flow_prob 
 

@@ -3,7 +3,7 @@ from comet_ml import Experiment
 
 import torch
 from memflow.read_data.dataset_all import DatasetCombined
-from memflow.transfer_flow.transfer_flow import TransferFlow
+from memflow.transfer_flow.transfer_flow_paper import TransferFlow_Paper
 from memflow.unfolding_flow.utils import *
 
 import numpy as np
@@ -94,35 +94,52 @@ def validation_print(experiment, flow_pr, wrong_pt_batch_flow_pr, wrong_ptAndEta
 
 def L2(model, batch):
 
-    (logScaled_partons,
-    logScaled_reco, mask_lepton,
+    (scaling_partons_lab,
+    scaling_reco_lab, mask_lepton,
     mask_jets, mask_met,
     mask_boost, data_boost_reco) = batch
 
-    mask_recoParticles = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
-    logScaled_reco = logScaled_reco[:,:,:7]
-                
-    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(logScaled_reco) * mask_recoParticles[..., None])
-    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons))
+    mask_reco = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
+    scaling_reco_lab = scaling_reco_lab[:,:,:7]
+        
+    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(scaling_partons_lab))
         
     output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                                tgt_mask=model.tgt_mask)
-    
-    flow_prob = model.flow(output_decoder[:,:model.no_max_objects]).log_prob(logScaled_reco[:,:model.no_max_objects,:3])
+                                            tgt_mask=model.tgt_mask)
+    no_objects_per_event = torch.sum(mask_reco[:,:model.no_max_objects], dim=1) # compute the number of objects per event
+        
+    conditioning_pt = output_decoder[:,:model.no_max_objects]
+    scaled_reco_lab_pt = scaling_reco_lab[:,:model.no_max_objects,0].unsqueeze(dim=2)
+    flow_prob_pt = model.flow_pt(conditioning_pt).log_prob(scaled_reco_lab_pt)
+    flow_prob_pt_batch = torch.sum(flow_prob_pt*mask_reco[:,:model.no_max_objects], dim=1) # take avg of masked objects
+    flow_prob_pt_batch = torch.div(flow_prob_pt_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
+    avg_flow_prob_pt = flow_prob_pt_batch.mean()
+        
+    conditioning_eta = torch.cat((output_decoder[:,:model.no_max_objects], scaled_reco_lab_pt), dim=2) # add pt in conditioning
+    scaled_reco_lab_eta = scaling_reco_lab[:,:model.no_max_objects,1].unsqueeze(dim=2)
+    flow_prob_eta = model.flow_eta(conditioning_eta).log_prob(scaled_reco_lab_eta)
+    flow_prob_eta_batch = torch.sum(flow_prob_eta*mask_reco[:,:model.no_max_objects], dim=1) # take avg of masked objects
+    flow_prob_eta_batch = torch.div(flow_prob_eta_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
+    avg_flow_prob_eta = flow_prob_eta_batch.mean()
+        
+    conditioning_phi = torch.cat((output_decoder[:,:model.no_max_objects], scaled_reco_lab_pt, scaled_reco_lab_eta), dim=2)
+    scaled_reco_lab_phi = scaling_reco_lab[:,:model.no_max_objects,2].unsqueeze(dim=2)
+    flow_prob_phi = model.flow_phi(conditioning_phi).log_prob(scaled_reco_lab_phi)
+    flow_prob_phi_batch = torch.sum(flow_prob_phi*mask_reco[:,:model.no_max_objects], dim=1) # take avg of masked objects
+    flow_prob_phi_batch = torch.div(flow_prob_phi_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
+    avg_flow_prob_phi = flow_prob_phi_batch.mean()
 
-    flow_prob_batch = torch.sum(flow_prob*mask_recoParticles[:,:model.no_max_objects], dim=1) # sum the masked objects for each event
-    no_objects_per_event = torch.sum(mask_recoParticles[:,:model.no_max_objects], dim=1) # compute the number of objects per event
-    flow_prob_batch = torch.div(flow_prob_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
+    total_avg = avg_flow_prob_pt + avg_flow_prob_eta + avg_flow_prob_phi
+                                
+    return total_avg
 
-    avg_flow_prob = flow_prob_batch.mean()
-                
-    return avg_flow_prob 
 
 def unscale_pt(logScaled_reco, mask_recoParticles, log_mean_reco, log_std_reco, no_max_objects):
     unscaled_pt = torch.exp(logScaled_reco[:,:no_max_objects,0]*log_std_reco[0] + log_mean_reco[0]) - 1
     unscaled_pt = unscaled_pt*mask_recoParticles[:,:no_max_objects] # set masked objects to 0
-    return unscaled_pt    
-
+    return unscaled_pt
+    
 def compute_loss_per_pt(loss_per_pt, flow_pr, scaledLogReco, maskedReco, log_mean_reco, log_std_reco, no_max_objects,
                         pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500, 3000]):
     unscaled_pt = unscale_pt(scaledLogReco, maskedReco, log_mean_reco, log_std_reco, no_max_objects)
@@ -190,10 +207,11 @@ def train( device, name_dir, config,  outputDir, dtype,
         log_mean_parton = log_mean_parton.cuda()
         log_std_parton = log_std_parton.cuda()
 
+
     pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500]
 
     # Initialize model
-    model = TransferFlow(no_recoVars=config.input_shape.no_recoVars,
+    model = TransferFlow_Paper(no_recoVars=config.input_shape.no_recoVars,
                 no_partonVars=config.input_shape.no_partonVars,
 
                 transformer_input_features=config.transformerConditioning.input_features,
@@ -221,6 +239,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 eps=1e-4)
          
     
+
     # Experiment logging
     if device == 0 or world_size is None:
         # Loading comet_ai logging
@@ -231,12 +250,14 @@ def train( device, name_dir, config,  outputDir, dtype,
             auto_output_logging = "simple",
             # disabled=True
         )
-        exp.add_tags([config.name, config.version, 'second Impl'])
+        exp.add_tags([config.name, config.version, 'paper Implementation'])
         exp.log_parameters(config.training_params)
         exp.log_parameters(config.transferFlow)
         exp.log_parameters({"model_param_tot":count_parameters(model)})
         exp.log_parameters({"model_param_transformer":count_parameters(model.transformer_model)})
-        exp.log_parameters({"model_param_flow":count_parameters(model.flow)})
+        exp.log_parameters({"model_param_flow_pt":count_parameters(model.flow_pt)})
+        exp.log_parameters({"model_param_flow_eta":count_parameters(model.flow_eta)})
+        exp.log_parameters({"model_param_flow_phi":count_parameters(model.flow_phi)})
     else:
         exp = None
 
@@ -269,7 +290,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         shuffle=False,        
     )
 
-     # Constraints
+    # Constraints
     constraint_partons_permutation = mdmm.MaxConstraint(
                     L2,
                     max=config.MDMM.max, # to be modified based on the regression
@@ -283,7 +304,6 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     # optimizer = optim.RAdam(list(model.parameters()) , lr=config.training_params.lr)
     # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
-
     scheduler_type = config.training_params.scheduler
     
     if scheduler_type == "cosine_scheduler":
@@ -307,6 +327,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                                                         gamma=config.training_params.cyclic_lr.gamma,
                                                         mode=config.training_params.cyclic_lr.mode,
                                                         verbose=False)
+        
+    
     
     early_stopper = EarlyStopper(patience=config.training_params.nEpochsPatience, min_delta=0.0001)
 
@@ -346,18 +368,19 @@ def train( device, name_dir, config,  outputDir, dtype,
             mask_recoParticles = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
             if True:
                 logScaled_reco = logScaled_reco[:,:,:-1]
-            
             # The provenance is remove in the model
-            # Compute target logprob
-            avg_flowPr, batch_flow_pr, flow_pr   = ddp_model(logScaled_reco,
-                                                        logScaled_partons,
-                                                        data_boost_reco,
-                                                        mask_recoParticles,
-                                                        mask_boost)
+
+            avg_flow_prob_pt, flow_prob_pt_batch, flow_prob_pt, \
+            avg_flow_prob_eta, flow_prob_eta_batch, flow_prob_eta, \
+            avg_flow_prob_phi, flow_prob_phi_batch, flow_prob_phi   = ddp_model(logScaled_reco,
+                                                                                logScaled_partons,
+                                                                                data_boost_reco,
+                                                                                mask_recoParticles,
+                                                                                mask_boost)
 
 
-            inf_mask = torch.isinf(batch_flow_pr) | torch.isnan(batch_flow_pr)
-            loss_main = -avg_flowPr
+            loss_main = -avg_flow_prob_pt - avg_flow_prob_eta - avg_flow_prob_phi
+            flow_pr = +flow_prob_pt + flow_prob_eta + flow_prob_phi # I will add the '-' later
 
             # Compute fake logprob
             permutation = torch.randperm(logScaled_partons.shape[0])
@@ -396,9 +419,9 @@ def train( device, name_dir, config,  outputDir, dtype,
             with torch.no_grad():
                 if exp is not None and device==0 or world_size is None:
                     if i % config.training_params.interval_logging_steps == 0:
-                        exp.log_metric('loss', loss_main, step=ii)
+                        exp.log_metric('loss_step', loss_main, step=ii)
                         exp.log_metric('loss_constraint_train', constraint_loss_train, step=ii)
-                        exp.log_metric('full mdmm_loss', mdmm_return.value, step=ii)
+                        exp.log_metric('full_mdmm_loss_step', mdmm_return.value, step=ii)
                         exp.log_metric("learning_rate", optimizer.param_groups[0]['lr'], step=ii)
                         for j in range(config.transferFlow.no_max_objects):
                             exp.log_metric(f'loss_object_{j}', loss_mean_each_object[j], step=ii)
@@ -407,7 +430,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
         ### END of training 
         if exp is not None and device==0 or world_size is None:
-            exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e)
+            exp.log_metric("full_mdmm_loss_epoch", sum_loss/N_train, epoch=e)
             for j in range(config.transferFlow.no_max_objects):
                 exp.log_metric(f'loss_epoch_total_object_{j}', loss_total_each_object[j]/N_train, epoch=e)
             for j in range(len(pt_bins) - 1):
@@ -442,15 +465,19 @@ def train( device, name_dir, config,  outputDir, dtype,
                     logScaled_reco = logScaled_reco[:,:,:-1]
 
                 # The provenance is remove in the model
-                avg_flowPr, batch_flow_pr, flow_pr   = ddp_model(logScaled_reco,
-                                                            logScaled_partons,
-                                                            data_boost_reco,
-                                                            mask_recoParticles,
-                                                            mask_boost)
+                avg_flow_prob_pt, flow_prob_pt_batch, flow_prob_pt, \
+                avg_flow_prob_eta, flow_prob_eta_batch, flow_prob_eta, \
+                avg_flow_prob_phi, flow_prob_phi_batch, flow_prob_phi   = ddp_model(logScaled_reco,
+                                                                                    logScaled_partons,
+                                                                                    data_boost_reco,
+                                                                                    mask_recoParticles,
+                                                                                    mask_boost)
 
-                #inf_mask = torch.isinf(flow_logprob) | torch.isnan(flow_logprob)
-                loss_main = -avg_flowPr                                
 
+                loss_main = -avg_flow_prob_pt - avg_flow_prob_eta - avg_flow_prob_phi
+                batch_flow_pr = + flow_prob_pt_batch + flow_prob_phi_batch + flow_prob_eta_batch # I will add the '-' later
+                flow_pr = +flow_prob_pt + flow_prob_eta + flow_prob_phi # I will add the '-' later
+                
                 # Compute fake logprob
                 permutation = torch.randperm(logScaled_partons.shape[0])
                 fake_parton_permutation = logScaled_partons[permutation]
@@ -501,15 +528,18 @@ def train( device, name_dir, config,  outputDir, dtype,
                                             log_mean=log_mean_reco, 
                                             log_std=log_std_reco,
                                             mask_target=mask_recoParticles,
-                                            no_max_objects=config.transferFlow.no_max_objects, 
+                                            no_max_objects=config.transferFlow.no_max_objects,
                                             device=device)
-
-                    wrongPT_avg_flowPr, wrong_pt_batch_flow_pr, wrongPT_flow_pr   = ddp_model(wrong_logScaled_reco,
-                                                                                            logScaled_partons,
-                                                                                            data_boost_reco,
-                                                                                            mask_recoParticles,
-                                                                                            mask_boost)
                                         
+                    wrongPT_avg_flow_prob_pt, wrongPT_flow_prob_pt_batch, wrongPT_flow_prob_pt, \
+                    wrongPT_avg_flow_prob_eta, wrongPT_flow_prob_eta_batch, wrongPT_flow_prob_eta, \
+                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi   = ddp_model(wrong_logScaled_reco,
+                                                                                                                logScaled_partons,
+                                                                                                                data_boost_reco,
+                                                                                                                mask_recoParticles,
+                                                                                                                mask_boost)
+                    
+                    wrong_pt_batch_flow_pr = +wrongPT_flow_prob_pt_batch  + wrongPT_flow_prob_eta_batch + wrongPT_flow_prob_phi_batch
 
                     # wrong pt and eta
                     wrong_logScaled_reco = alter_variables(difference=difference_eta, 
@@ -522,12 +552,16 @@ def train( device, name_dir, config,  outputDir, dtype,
                                             no_max_objects=config.transferFlow.no_max_objects,
                                             device=device)
                     
-                    wrongPTandETA_avg_flowPr, wrong_ptAndEta_batch_flow_pr, wrongPTandETA_flow_pr   = ddp_model(wrong_logScaled_reco,
+                    wrongPTandETA_avg_flow_prob_pt, wrongPTandETA_flow_prob_pt_batch, wrongPTandETA_flow_prob_pt, \
+                    wrongPTandETA_avg_flow_prob_eta, wrongPTandETA_flow_prob_eta_batch, wrongPTandETA_flow_prob_eta, \
+                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi   = ddp_model(wrong_logScaled_reco,
                                                                                                             logScaled_partons,
                                                                                                             data_boost_reco,
                                                                                                             mask_recoParticles,
                                                                                                             mask_boost)
                     
+                    wrong_ptAndEta_batch_flow_pr = +wrongPTandETA_flow_prob_pt_batch + wrongPTandETA_flow_prob_eta_batch + wrongPTandETA_flow_prob_phi_batch
+
                     # sometimes there are nans if the difference_pt is too large
                     if torch.isnan(wrong_pt_batch_flow_pr).any() or torch.isnan(wrong_ptAndEta_batch_flow_pr).any():
                         print(f'validation_plots_nans: wrong_pt = {torch.count_nonzero(torch.isnan(wrong_pt_flow_pr))}     & wrong_pt_eta = {torch.count_nonzero(torch.isnan(wrong_ptAndEta_flow_pr))}')
@@ -553,31 +587,39 @@ def train( device, name_dir, config,  outputDir, dtype,
                                             log_mean=log_mean_parton, 
                                             log_std=log_std_parton,
                                             mask_target=maskPartons,
-                                            no_max_objects=4, 
+                                            no_max_objects=4,
                                             device=device)
-
-                    wrongPT_avg_flowPr, wrong_pt_batch_parton_flow_pr, wrongPT_flow_pr   = ddp_model(logScaled_reco,
-                                                                                            wrong_logScaled_parton,
-                                                                                            data_boost_reco,
-                                                                                            mask_recoParticles,
-                                                                                            mask_boost)
+                                        
+                    wrongPT_avg_flow_prob_pt, wrongPT_flow_prob_pt_batch, wrongPT_flow_prob_pt, \
+                    wrongPT_avg_flow_prob_eta, wrongPT_flow_prob_eta_batch, wrongPT_flow_prob_eta, \
+                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi   = ddp_model(logScaled_reco,
+                                                                                                                wrong_logScaled_parton,
+                                                                                                                data_boost_reco,
+                                                                                                                mask_recoParticles,
+                                                                                                                mask_boost)
+                    
+                    wrong_pt_batch_parton_flow_pr = +wrongPT_flow_prob_pt_batch  + wrongPT_flow_prob_eta_batch + wrongPT_flow_prob_phi_batch
 
                     # wrong pt and eta
                     wrong_logScaled_parton = alter_variables(difference=difference_eta, 
                                             object_no=[1],
                                             variable_altered=[1],
-                                            target_var=logScaled_partons,
+                                            target_var=wrong_logScaled_parton,
                                             log_mean=log_mean_parton, 
                                             log_std=log_std_parton,
                                             mask_target=maskPartons,
                                             no_max_objects=4,
                                             device=device)
                     
-                    wrongPTandETA_avg_flowPr, wrong_ptAndEta_batch_parton_flow_pr, wrongPTandETA_flow_pr   = ddp_model(logScaled_reco,
+                    wrongPTandETA_avg_flow_prob_pt, wrongPTandETA_flow_prob_pt_batch, wrongPTandETA_flow_prob_pt, \
+                    wrongPTandETA_avg_flow_prob_eta, wrongPTandETA_flow_prob_eta_batch, wrongPTandETA_flow_prob_eta, \
+                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi   = ddp_model(logScaled_reco,
                                                                                                             wrong_logScaled_parton,
                                                                                                             data_boost_reco,
                                                                                                             mask_recoParticles,
                                                                                                             mask_boost)
+                    
+                    wrong_ptAndEta_batch_parton_flow_pr = +wrongPTandETA_flow_prob_pt_batch + wrongPTandETA_flow_prob_eta_batch + wrongPTandETA_flow_prob_phi_batch
 
                     # sometimes there are nans if the difference_pt is too large
                     if torch.isnan(wrong_pt_batch_parton_flow_pr).any() or torch.isnan(wrong_ptAndEta_batch_parton_flow_pr).any():
@@ -590,14 +632,14 @@ def train( device, name_dir, config,  outputDir, dtype,
                                     range_x=(-60,60), no_bins=120, label1='diff: pt_0 10%',
                                     label2=f'diff: pt_0 10% and eta {difference_eta}', particles='partons')
 
-
                 exp.log_metric('loss_constraint_valid', constraint_loss_valid, step=ii_valid)
+
+                    
                     
 
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("total_valid_loss", total_valid_loss/N_valid, epoch=e)
             exp.log_metric("total_valid_MDMM_loss", total_valid_mdmm_loss/N_valid, epoch=e)
-
             for j in range(config.transferFlow.no_max_objects):
                 exp.log_metric(f'loss_Valid_epoch_total_object_{j}', loss_Valid_total_each_object[j]/N_valid, epoch=e)
             for j in range(len(pt_bins) - 1):

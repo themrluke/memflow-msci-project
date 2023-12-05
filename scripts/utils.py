@@ -1,4 +1,5 @@
 from hist import Hist
+import torch
 import hist
 import awkward as ak
 import numpy as np
@@ -84,6 +85,42 @@ def total_mom(higgs, thad, tlep, ISR, mean, std):
     logsum_pz = torch.log(1 + torch.abs(sum_pz))
 
     return logsum_px, logsum_py, logsum_pz
+
+def alter_variables(difference, object_no, variable_altered, target_var, mask_target, log_mean, log_std, no_max_objects, device):
+    # object_no: number of the object/objects that I want to alter
+    # variable altered: 0 for pt; 1 for eta and 2 for phi
+
+    unscaled_var = torch.clone(target_var) # need prov when compute the log_prob
+    unscaled_var[:,:,:3] = target_var[:,:,:3]*log_std + log_mean # unscale
+    unscaled_var[:,:,0] = torch.exp(unscaled_var[:,:,0]) - 1 # unscale pt
+
+    for i, object in enumerate(object_no):
+        for j, var in enumerate(variable_altered):
+            unscaled_var[:, object, var] = unscaled_var[:, object, var] + difference[i*len(object_no) + j] # add difference for each var
+        
+    unscaled_var[:,:,0] = torch.log(unscaled_var[:,:,0] + 1) # log pt
+
+    unscaled_var[:,:,:3] = (unscaled_var[:,:,:3] - log_mean)/log_std # scale back
+    unscaled_var = unscaled_var*mask_target.unsqueeze(dim=2) # because padding jets are not 0 anymore
+            
+    return unscaled_var
+
+def alter_variables_tensor(difference, object_no, variable_altered, target_var, mask_target, log_mean, log_std, no_max_objects, device):
+    # object_no: number of the object/objects that I want to alter
+    # variable altered: 0 for pt; 1 for eta and 2 for phi
+
+    unscaled_var = torch.clone(target_var) # need prov when compute the log_prob
+    unscaled_var[:,:,:3] = target_var[:,:,:3]*log_std + log_mean # unscale
+    unscaled_var[:,:,0] = torch.exp(unscaled_var[:,:,0]) - 1 # unscale pt
+
+    unscaled_var[:, object_no, variable_altered] = unscaled_var[:, object_no, variable_altered] + difference # add difference for each var
+        
+    unscaled_var[:,:,0] = torch.log(unscaled_var[:,:,0] + 1) # log pt
+
+    unscaled_var[:,:,:3] = (unscaled_var[:,:,:3] - log_mean)/log_std # scale back
+    unscaled_var = unscaled_var*mask_target.unsqueeze(dim=2) # because padding jets are not 0 anymore
+            
+    return unscaled_var
 
 class SavePlots:
     

@@ -12,6 +12,7 @@ import memflow.phasespace.utils as ps_utils
 class TransferFlow_Paper(nn.Module):
     def __init__(self,
                  no_recoVars, no_partonVars,
+                 no_recoObjects=18,
                  
                  transformer_input_features=64,
                  transformer_nhead=8,
@@ -56,6 +57,9 @@ class TransferFlow_Paper(nn.Module):
                                                 dim_feedforward=transformer_dim_feedforward,
                                                 activation=transformer_activation,
                                                 batch_first=True)
+
+        # mask to keep the decoder autoregressive
+        self.tgt_mask = self.transformer_model.generate_square_subsequent_mask(no_recoObjects, device=device)
         
         self.flow_pt = zuko.flows.NSF(features=flow_nfeatures,
                               context=transformer_input_features,
@@ -99,38 +103,35 @@ class TransferFlow_Paper(nn.Module):
     def enable_regression_training(self):
         self.cond_transformer.enable_regression_training()
         
-    def forward(self,  scaling_reco_lab, scaling_partons_lab, scaling_RegressedBoost_lab,
-                mask_reco, mask_boost, flow_eval="normalizing", Nsamples=0):
+    def forward(self,  scaling_reco_lab, scaling_partons_lab, scaling_RegressedBoost_lab, mask_reco, mask_boost):
         
         scaledLogReco_afterLin = self.gelu(self.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
         scaledLogParton_afterLin = self.gelu(self.linearDNN_parton(scaling_partons_lab))
-
-        tgt_mask = self.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=self.device)
-        # mask to keep the decoder autoregressive
         
         output_decoder = self.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                                tgt_mask=tgt_mask)
+                                                tgt_mask=self.tgt_mask)
+        no_objects_per_event = torch.sum(mask_reco[:,:self.no_max_objects], dim=1) # compute the number of objects per event
         
         conditioning_pt = output_decoder[:,:self.no_max_objects]
         scaled_reco_lab_pt = scaling_reco_lab[:,:self.no_max_objects,0].unsqueeze(dim=2)
         flow_prob_pt = self.flow_pt(conditioning_pt).log_prob(scaled_reco_lab_pt)
         flow_prob_pt_batch = torch.sum(flow_prob_pt*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
+        flow_prob_pt_batch = torch.div(flow_prob_pt_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         avg_flow_prob_pt = flow_prob_pt_batch.mean()
-        print(flow_prob_pt.shape)
         
         conditioning_eta = torch.cat((output_decoder[:,:self.no_max_objects], scaled_reco_lab_pt), dim=2) # add pt in conditioning
         scaled_reco_lab_eta = scaling_reco_lab[:,:self.no_max_objects,1].unsqueeze(dim=2)
         flow_prob_eta = self.flow_eta(conditioning_eta).log_prob(scaled_reco_lab_eta)
         flow_prob_eta_batch = torch.sum(flow_prob_eta*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
+        flow_prob_eta_batch = torch.div(flow_prob_eta_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         avg_flow_prob_eta = flow_prob_eta_batch.mean()
-        print(flow_prob_eta.shape)
         
         conditioning_phi = torch.cat((output_decoder[:,:self.no_max_objects], scaled_reco_lab_pt, scaled_reco_lab_eta), dim=2)
         scaled_reco_lab_phi = scaling_reco_lab[:,:self.no_max_objects,2].unsqueeze(dim=2)
         flow_prob_phi = self.flow_phi(conditioning_phi).log_prob(scaled_reco_lab_phi)
         flow_prob_phi_batch = torch.sum(flow_prob_phi*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
+        flow_prob_phi_batch = torch.div(flow_prob_phi_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         avg_flow_prob_phi = flow_prob_phi_batch.mean()
-        print(flow_prob_phi.shape)
                                 
         return avg_flow_prob_pt, flow_prob_pt_batch, flow_prob_pt, \
                 avg_flow_prob_eta, flow_prob_eta_batch, flow_prob_eta, \
