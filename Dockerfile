@@ -1,4 +1,4 @@
-ARG FROM_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
+ARG FROM_IMAGE=pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime
 FROM ${FROM_IMAGE}
 
 
