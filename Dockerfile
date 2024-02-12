@@ -1,6 +1,5 @@
-ARG FROM_IMAGE=pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+ARG FROM_IMAGE=anibali/pytorch:2.0.1-cuda11.8
 FROM ${FROM_IMAGE}
-
 
 ADD requirements.txt /tmp/
 RUN python -m pip install -r /tmp/requirements.txt
