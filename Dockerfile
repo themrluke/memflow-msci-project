@@ -1,4 +1,4 @@
-ARG FROM_IMAGE=anibali/pytorch:2.0.1-cuda11.8
+ARG FROM_IMAGE="/cvmfs/unpacked.cern.ch/registry.hub.docker.com/cmsml/cmsml:3.11"
 FROM ${FROM_IMAGE}
 
 ADD requirements.txt /tmp/
