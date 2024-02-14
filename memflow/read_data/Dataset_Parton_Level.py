@@ -10,7 +10,7 @@ import torch
 import numpy as np
 import hist
 from numba import njit
-torch.set_default_dtype(torch.double)
+#torch.set_default_dtype(torch.double)
 
 from .utils import get_weight
 
