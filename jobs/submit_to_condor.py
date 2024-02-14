@@ -8,6 +8,7 @@ parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--version', type=str, required=True)
 parser.add_argument('--dry', action="store_true")
 parser.add_argument('--antonio', action="store_true")
+parser.add_argument('--interactive', action="store_true")
 parser.add_argument('--ngpu', type=int, default=1)
 parser.add_argument("--good-gpus", action="store_true")
 parser.add_argument("--args", nargs="+", type=str, help="additional args")
@@ -17,6 +18,7 @@ model = args.model
 version = args.version
 dry = args.dry
 antonio = args.antonio
+interactive = args.interactive
 
 col = htcondor.Collector()
 credd = htcondor.Credd()
@@ -28,6 +30,9 @@ else:
     basedir = "/afs/cern.ch/work/d/dvalsecc/private/MEM/MEMFlow"
 
 sub = htcondor.Submit()
+
+if interactive:
+    sub['InteractiveJob'] = True
 
 if model == "huber_mmd":
     sub['Executable'] = f"{basedir}/jobs/script_condor_pretraining_huber_mmd.sh"
@@ -154,6 +159,26 @@ elif model == "transfer_flow_paperVersion":
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
     sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper_v{version}"
+    
+elif model == "run_transferFlow_paperVersion-fake_partons-NoBtag":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_fakepartons_nobtag.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper_fakepartons_nobtag-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_paper_fakepartons_nobtag-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_paper_fakepartons_nobtag-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper__fakepartons_nobtag_v{version}"
+
+elif model == "run_transferFlow_paperVersion-Nofake_partons-NoBtag":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_Nofakepartons_nobtag.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper_Nofakepartons_nobtag-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_paper_Nofakepartons_nobtag-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_paper_Nofakepartons_nobtag-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper__Nofakepartons_nobtag_v{version}"
 
 elif model == "transfer_flow_idea3":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_idea3.sh"
@@ -174,6 +199,36 @@ elif model == "transfer_flow_idea3_conditioned":
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
     sub['arguments'] = f"transferFlow_idea3_conditioning_train/transferFlow_v{version}.yaml transferFlow_idea3_conditioned_train_v{version}"
+    
+elif model == "classifier_nojets":
+    sub['Executable'] = f"{basedir}/jobs/script_classifier_nojets.sh"
+    sub['Error'] = f"{basedir}/jobs/error/classifier_nojets-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/classifier_nojets-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/classifier_nojets-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"longlunch"'
+    sub['arguments'] = f"classifier_no_jets/classifier_v{version}.yaml classifier_nojets_train_v{version}"
+    
+elif model == "classifier_nojets_v2":
+    sub['Executable'] = f"{basedir}/jobs/script_classifier_nojets_v2.sh"
+    sub['Error'] = f"{basedir}/jobs/error/classifier_nojets_v2-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/classifier_nojets_v2-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/classifier_nojets_v2-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"longlunch"'
+    sub['arguments'] = f"classifier_no_jets_v2/classifier_v{version}.yaml classifier_nojets_2nd_train_v{version}"
+    
+elif model == "classifier_nojets_v3":
+    sub['Executable'] = f"{basedir}/jobs/script_classifier_nojets_v3.sh"
+    sub['Error'] = f"{basedir}/jobs/error/classifier_nojets_v3-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/classifier_nojets_v3-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/classifier_nojets_v3-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"longlunch"'
+    sub['arguments'] = f"classifier_no_jets_v2/classifier_v{version}.yaml classifier_nojets_3rdVersion_2024_v{version}"
 
 # General
 sub['request_cpus'] = f"{args.ngpu*3}"
