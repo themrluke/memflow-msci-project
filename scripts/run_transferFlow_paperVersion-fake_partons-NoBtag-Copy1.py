@@ -95,12 +95,11 @@ def validation_print(experiment, flow_pr, wrong_pt_batch_flow_pr, wrong_ptAndEta
 def L2(model, batch):
 
     (scaling_partons_lab,
-    scaling_reco_lab, mask_lepton,
-    mask_jets, mask_met,
+    scaling_reco_lab, mask_reco,
     mask_boost, data_boost_reco) = batch
 
-    mask_reco = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
-    scaling_reco_lab = scaling_reco_lab[:,:,:7]
+    # exist + 3-mom
+    scaling_reco_lab = scaling_reco_lab[:,:,:4]
         
     scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
     scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(scaling_partons_lab))
@@ -187,16 +186,16 @@ def train( device, name_dir, config,  outputDir, dtype,
     #print("Loading datasets")
     train_dataset = DatasetCombined(config.input_dataset_train, dev=device,
                                     dtype=dtype, datasets=['partons_lab', 'reco_lab'],
-                           reco_list_lab=['scaledLogReco_sortedBySpanet', 'mask_lepton', 
-                                      'mask_jets','mask_met',
-                                      'mask_boost', 'scaledLogBoost'],
+                           reco_list_lab=['scaledLogReco_sortedBySpanet',
+                                          'mask_scaledLogReco_sortedBySpanet',
+                                          'mask_boost', 'scaledLogBoost'],
                            parton_list_lab=['logScaled_data_higgs_t_tbar_ISR'])
 
     val_dataset = DatasetCombined(config.input_dataset_validation,dev=device,
                                   dtype=dtype, datasets=['partons_lab', 'reco_lab'],
-                           reco_list_lab=['scaledLogReco_sortedBySpanet', 'mask_lepton', 
-                                      'mask_jets','mask_met',
-                                      'mask_boost', 'scaledLogBoost'],
+                           reco_list_lab=['scaledLogReco_sortedBySpanet',
+                                          'mask_scaledLogReco_sortedBySpanet',
+                                          'mask_boost', 'scaledLogBoost'],
                            parton_list_lab=['logScaled_data_higgs_t_tbar_ISR'])
 
     log_mean_reco = train_dataset.reco_lab.meanRecoParticles
@@ -214,9 +213,9 @@ def train( device, name_dir, config,  outputDir, dtype,
     pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500]
 
     # Initialize model
-    model = TransferFlow_Paper(no_recoVars=config.input_shape.no_recoVars,
+    model = TransferFlow_Paper(no_recoVars=4, # exist + 3-mom
                 no_partonVars=config.input_shape.no_partonVars,
-
+                no_recoObjects=train_dataset.reco_lab.scaledLogReco_sortedBySpanet.shape[1],
                 transformer_input_features=config.transformerConditioning.input_features,
                 transformer_nhead=config.transformerConditioning.nhead,
                 transformer_num_encoder_layers=config.transformerConditioning.no_encoder_layers,
@@ -253,7 +252,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             auto_output_logging = "simple",
             # disabled=True
         )
-        exp.add_tags([config.name, config.version, 'paper Implementation'])
+        exp.add_tags([config.name, config.version, 'paper Implementation', 'no-btag', 'only_pt_eta_phi', 'jetsSortedbySpanet', 'HiggsAssignment'])
         exp.log_parameters(config.training_params)
         exp.log_parameters(config.transferFlow)
         exp.log_parameters({"model_param_tot":count_parameters(model)})
@@ -362,15 +361,13 @@ def train( device, name_dir, config,  outputDir, dtype,
             ii+=1
 
             optimizer.zero_grad()
-
+            
             (logScaled_partons,
-             logScaled_reco_sortedBySpanet, mask_lepton,
-             mask_jets, mask_met,
+             logScaled_reco_sortedBySpanet, mask_recoParticles,
              mask_boost, data_boost_reco) = data_batch
-                
-            mask_recoParticles = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
-            if True:
-                logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:-1]
+                            
+            # exist + 3-mom
+            logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:4]
             # The provenance is remove in the model
 
             avg_flow_prob_pt, flow_prob_pt_batch, flow_prob_pt, \
@@ -388,7 +385,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             # Compute fake logprob
             permutation = torch.randperm(logScaled_partons.shape[0])
             fake_parton_permutation = logScaled_partons[permutation]
-            fake_batch = (fake_parton_permutation, logScaled_reco_sortedBySpanet, mask_lepton, mask_jets, mask_met, mask_boost, data_boost_reco)
+            fake_batch = (fake_parton_permutation, logScaled_reco_sortedBySpanet, mask_recoParticles, mask_boost, data_boost_reco)
             mdmm_return = MDMM_module(loss_main, [(model, fake_batch)])
 
             # compute constraint loss:
@@ -415,7 +412,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             mdmm_return.value.backward()
             optimizer.step()
             sum_loss += mdmm_return.value.item()
-            
+
             if scheduler_type == "cyclic_lr": #cycle each step
                 scheduler.step()
 
@@ -457,15 +454,11 @@ def train( device, name_dir, config,  outputDir, dtype,
             with torch.no_grad():
 
                 (logScaled_partons,
-                logScaled_reco_sortedBySpanet, mask_lepton,
-                mask_jets, mask_met,
+                logScaled_reco_sortedBySpanet, mask_recoParticles,
                 mask_boost, data_boost_reco) = data_batch
                 
-                mask_recoParticles = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
-
-                # remove prov
-                if True:
-                    logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:-1]
+                # exist + 3-mom
+                logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:4]
 
                 # The provenance is remove in the model
                 avg_flow_prob_pt, flow_prob_pt_batch, flow_prob_pt, \
@@ -484,7 +477,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 # Compute fake logprob
                 permutation = torch.randperm(logScaled_partons.shape[0])
                 fake_parton_permutation = logScaled_partons[permutation]
-                fake_batch = (fake_parton_permutation, logScaled_reco_sortedBySpanet, mask_lepton, mask_jets, mask_met, mask_boost, data_boost_reco)
+                fake_batch = (fake_parton_permutation, logScaled_reco_sortedBySpanet, mask_recoParticles, mask_boost, data_boost_reco)
                 mdmm_return = MDMM_module(loss_main, [(model, fake_batch)])
 
                 # compute constraint loss:
@@ -635,34 +628,78 @@ def train( device, name_dir, config,  outputDir, dtype,
                                     range_x=(-60,60), no_bins=120, label1='diff: pt_0 10%',
                                     label2=f'diff: pt_0 10% and eta {difference_eta}', particles='partons')
 
+                    # check model by generating jets
+                    # not at every epoch
+                    if e % 5 == 0:
+
+                        null_token = torch.zeros((logScaled_reco_sortedBySpanet.shape[0], 1, config.transformerConditioning.input_features), device=device, dtype=dtype)
+                        fullGeneratedEvent = torch.empty((logScaled_reco_sortedBySpanet.shape[0], 0, 3), device=device, dtype=dtype)
+                        scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons))
+
+                        # add 1 because the first "object" is the null token
+                        for j in range(model.no_max_objects + 1):
+
+                            if j == 0:
+                                scaledLogReco_afterLin = null_token
+                            else:
+                                generated_jet = torch.cat((jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled), dim=2)
+                                fullGeneratedEvent = torch.cat((fullGeneratedEvent, generated_jet), dim=1)
+                                mask_generatedEvent = fullGeneratedEvent[:,:,0] != -100
+                                scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(fullGeneratedEvent) * mask_generatedEvent[..., None])
+                                scaledLogReco_afterLin = torch.cat((null_token, scaledLogReco_afterLin), dim=1)
+
+                            tgt_mask = model.transformer_model.generate_square_subsequent_mask(
+                                        scaledLogReco_afterLin.size(1), device=device)
+
+                            if dtype == torch.float32:
+                                tgt_mask = tgt_mask.float()
+                            elif dtype == torch.float64:
+                                tgt_mask = tgt_mask.double()
+                                
+                            output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
+                                                                    tgt_mask=tgt_mask)
+
+                            conditioning_pt = output_decoder[:,j:j+1]
+                            jetsPt_sampled = model.flow_pt(conditioning_pt).sample((1,))
+                            jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+
+                            conditioning_eta = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled), dim=2) # add pt in conditioning
+                            jetsEta_sampled = model.flow_eta(conditioning_eta).sample((1,))
+                            jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+
+                            conditioning_phi = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled, jetsEta_sampled), dim=2)
+                            jetsPhi_sampled = model.flow_phi(conditioning_phi).sample((1,))
+                            jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+
+                        var_name = ['pt', 'eta', 'phi']
+
+                        partialMaskReco = mask_recoParticles[:,:model.no_max_objects]
+                        partialMaskReco = partialMaskReco.bool()
+                        maskedGeneratedEvent = fullGeneratedEvent[partialMaskReco]
+
+                        partial_logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:model.no_max_objects]
+                        maskedTargetEvent = partial_logScaled_reco_sortedBySpanet[partialMaskReco]
+
+                        for plot_var in range(3):
+
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            diff_generatedAndTarget = (maskedGeneratedEvent[:,plot_var] - maskedTargetEvent[:,plot_var])
+                            ax.hist(diff_generatedAndTarget.detach().cpu().numpy(), range=(-5,5), bins=20, histtype='step', color='b', stacked=False, fill=False)
+                            ax.set_xlabel(f'{var_name[plot_var]}_generated - {var_name[plot_var]}_target')
+                            exp.log_figure(f"Diff_generated_{var_name[plot_var]}", fig, step=e)
+
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            h = ax.hist2d(maskedGeneratedEvent[:,plot_var].detach().cpu().numpy(),
+                                          maskedTargetEvent[:,plot_var].detach().cpu().numpy(),
+                                          bins=30, range=[(-5,5),(-5,5)], cmin=1)
+                            fig.colorbar(h[3], ax=ax)
+                            exp.log_figure(f"2D_correlation_{var_name[plot_var]}", fig,step=e)
+                            
                 exp.log_metric('loss_constraint_valid', constraint_loss_valid, step=ii_valid)
-
-                # check model by generating jets
-                # not at every epoch
-                if e % 5 == 0:
-                    
-                    null_token = torch.zeros((scaledLogReco.shape[0], 1, config.transformerConditioning.input_features))
-                    generated_pt = torch.empty((scaledLogReco.shape[0], 0), device=device)
-                    generated_eta = torch.empty((scaledLogReco.shape[0], 0), device=device)
-                    generated_phi = torch.empty((scaledLogReco.shape[0], 0), device=device)
-                    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(scaledLogParton))
-                    
-                    for i in range(model.no_max_objects):
                         
-                        tgt_mask = model.transformer_model.generate_square_subsequent_mask(
-                                    generated_pt.size(1), device=device)
-
-                        output_decoder = model.transformer_model(scaledLogParton_afterLin, null_token,
-                                                tgt_mask=tgt_mask)
-
-                        conditioning_pt = output_decoder[:,:model.no_max_objects]
-                        jetsPt_sampled = model.flow_pt(conditioning_pt).sample((1,))
-
-                        conditioning_eta = torch.cat((output_decoder[:,:model.no_max_objects], jetsPt_sampled), dim=2) # add pt in conditioning
-                        jetsEta_sampled = model.flow_eta(conditioning_eta).sample((1,))
-
-                        conditioning_phi = torch.cat((output_decoder[:,:model.no_max_objects], jetsPt_sampled, jetsEta_sampled), dim=2)
-                        jetsPhi_sampled = model.flow_phi(conditioning_phi).sample((1,))
+                        
+                        
+                    
                     
                     
 
@@ -735,6 +772,8 @@ if __name__ == '__main__':
         dtype = torch.float32
     elif conf.training_params.dtype == "float64":
         dtype = torch.float64
+    else:
+        dtype = None
         
     
     if len(actual_devices) > 1 and args.distributed:

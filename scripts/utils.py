@@ -86,9 +86,13 @@ def total_mom(higgs, thad, tlep, ISR, mean, std):
 
     return logsum_px, logsum_py, logsum_pz
 
-def alter_variables(difference, object_no, variable_altered, target_var, mask_target, log_mean, log_std, no_max_objects, device):
+def alter_variables(difference, object_no, variable_altered, target_var, mask_target, log_mean, log_std, no_max_objects, device, reco=1):
     # object_no: number of the object/objects that I want to alter
-    # variable altered: 0 for pt; 1 for eta and 2 for phi
+    # variable altered: 1 for pt; 2 for eta and 3 for phi for jets
+    # variable altered: 0 for pt; 1 for eta and 2 for phi for partons
+
+    if variable_altered == 0 and reco==1:
+        raise Exception('On first position: always the exist flag - check logScaledReco')
 
     unscaled_var = torch.clone(target_var) # need prov when compute the log_prob
     unscaled_var[:,:,:3] = target_var[:,:,:3]*log_std + log_mean # unscale
@@ -105,9 +109,13 @@ def alter_variables(difference, object_no, variable_altered, target_var, mask_ta
             
     return unscaled_var
 
-def alter_variables_tensor(difference, object_no, variable_altered, target_var, mask_target, log_mean, log_std, no_max_objects, device):
+def alter_variables_tensor(difference, object_no, variable_altered, target_var, mask_target, log_mean, log_std, no_max_objects, device, reco=1):
     # object_no: number of the object/objects that I want to alter
-    # variable altered: 0 for pt; 1 for eta and 2 for phi
+    # variable altered: 1 for pt; 2 for eta and 3 for phi for jets
+    # variable altered: 0 for pt; 1 for eta and 2 for phi for partons
+
+    if variable_altered == 0 and reco==1:
+        raise Exception('On first position: always the exist flag - check logScaledReco')
 
     unscaled_var = torch.clone(target_var) # need prov when compute the log_prob
     unscaled_var[:,:,:3] = target_var[:,:,:3]*log_std + log_mean # unscale

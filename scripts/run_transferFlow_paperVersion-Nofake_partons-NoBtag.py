@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from math import floor
 
-import mdmm
 # from tensorboardX import SummaryWriter
 from omegaconf import OmegaConf
 import sys
@@ -91,55 +90,9 @@ def validation_print(experiment, flow_pr, wrong_pt_batch_flow_pr, wrong_ptAndEta
     ax.bar(["correct", "wrong"], [no_correct_2, no_wrong_2], color ='maroon', width = 0.4)
     experiment.log_figure(f"Correct_wrong_2 {particles}", fig, step=epoch)
 
-
-def L2(model, batch):
-
-    (scaling_partons_lab,
-    scaling_reco_lab, mask_lepton,
-    mask_jets, mask_met,
-    mask_boost, data_boost_reco) = batch
-
-    mask_reco = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
-    scaling_reco_lab = scaling_reco_lab[:,:,:7]
-        
-    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
-    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(scaling_partons_lab))
-    
-    null_token = torch.zeros((scaledLogReco_afterLin.shape[0], 1, scaledLogReco_afterLin.shape[2]), device=scaledLogReco_afterLin.get_device())
-    scaledLogReco_afterLin = torch.cat((null_token, scaledLogReco_afterLin), dim=1)
-        
-    output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                            tgt_mask=model.tgt_mask)
-    no_objects_per_event = torch.sum(mask_reco[:,:model.no_max_objects], dim=1) # compute the number of objects per event
-        
-    conditioning_pt = output_decoder[:,:model.no_max_objects]
-    scaled_reco_lab_pt = scaling_reco_lab[:,:model.no_max_objects,0].unsqueeze(dim=2)
-    flow_prob_pt = model.flow_pt(conditioning_pt).log_prob(scaled_reco_lab_pt)
-    flow_prob_pt_batch = torch.sum(flow_prob_pt*mask_reco[:,:model.no_max_objects], dim=1) # take avg of masked objects
-    flow_prob_pt_batch = torch.div(flow_prob_pt_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
-    avg_flow_prob_pt = flow_prob_pt_batch.mean()
-        
-    conditioning_eta = torch.cat((output_decoder[:,:model.no_max_objects], scaled_reco_lab_pt), dim=2) # add pt in conditioning
-    scaled_reco_lab_eta = scaling_reco_lab[:,:model.no_max_objects,1].unsqueeze(dim=2)
-    flow_prob_eta = model.flow_eta(conditioning_eta).log_prob(scaled_reco_lab_eta)
-    flow_prob_eta_batch = torch.sum(flow_prob_eta*mask_reco[:,:model.no_max_objects], dim=1) # take avg of masked objects
-    flow_prob_eta_batch = torch.div(flow_prob_eta_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
-    avg_flow_prob_eta = flow_prob_eta_batch.mean()
-        
-    conditioning_phi = torch.cat((output_decoder[:,:model.no_max_objects], scaled_reco_lab_pt, scaled_reco_lab_eta), dim=2)
-    scaled_reco_lab_phi = scaling_reco_lab[:,:model.no_max_objects,2].unsqueeze(dim=2)
-    flow_prob_phi = model.flow_phi(conditioning_phi).log_prob(scaled_reco_lab_phi)
-    flow_prob_phi_batch = torch.sum(flow_prob_phi*mask_reco[:,:model.no_max_objects], dim=1) # take avg of masked objects
-    flow_prob_phi_batch = torch.div(flow_prob_phi_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
-    avg_flow_prob_phi = flow_prob_phi_batch.mean()
-
-    total_avg = avg_flow_prob_pt + avg_flow_prob_eta + avg_flow_prob_phi
-                                
-    return total_avg
-
-
 def unscale_pt(logScaled_reco, mask_recoParticles, log_mean_reco, log_std_reco, no_max_objects):
-    unscaled_pt = torch.exp(logScaled_reco[:,:no_max_objects,0]*log_std_reco[0] + log_mean_reco[0]) - 1
+    # pt is on the 2nd position, exist flag is on the first position (only for logScaled_reco)
+    unscaled_pt = torch.exp(logScaled_reco[:,:no_max_objects,1]*log_std_reco[0] + log_mean_reco[0]) - 1
     unscaled_pt = unscaled_pt*mask_recoParticles[:,:no_max_objects] # set masked objects to 0
     return unscaled_pt
     
@@ -187,16 +140,16 @@ def train( device, name_dir, config,  outputDir, dtype,
     #print("Loading datasets")
     train_dataset = DatasetCombined(config.input_dataset_train, dev=device,
                                     dtype=dtype, datasets=['partons_lab', 'reco_lab'],
-                           reco_list_lab=['scaledLogReco_sortedBySpanet', 'mask_lepton', 
-                                      'mask_jets','mask_met',
-                                      'mask_boost', 'scaledLogBoost'],
+                           reco_list_lab=['scaledLogReco_sortedBySpanet',
+                                          'mask_scaledLogReco_sortedBySpanet',
+                                          'mask_boost', 'scaledLogBoost'],
                            parton_list_lab=['logScaled_data_higgs_t_tbar_ISR'])
 
     val_dataset = DatasetCombined(config.input_dataset_validation,dev=device,
                                   dtype=dtype, datasets=['partons_lab', 'reco_lab'],
-                           reco_list_lab=['scaledLogReco_sortedBySpanet', 'mask_lepton', 
-                                      'mask_jets','mask_met',
-                                      'mask_boost', 'scaledLogBoost'],
+                           reco_list_lab=['scaledLogReco_sortedBySpanet',
+                                          'mask_scaledLogReco_sortedBySpanet',
+                                          'mask_boost', 'scaledLogBoost'],
                            parton_list_lab=['logScaled_data_higgs_t_tbar_ISR'])
 
     log_mean_reco = train_dataset.reco_lab.meanRecoParticles
@@ -214,9 +167,9 @@ def train( device, name_dir, config,  outputDir, dtype,
     pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500]
 
     # Initialize model
-    model = TransferFlow_Paper(no_recoVars=config.input_shape.no_recoVars,
+    model = TransferFlow_Paper(no_recoVars=4, # exist + 3-mom
                 no_partonVars=config.input_shape.no_partonVars,
-
+                no_recoObjects=train_dataset.reco_lab.scaledLogReco_sortedBySpanet.shape[1],
                 transformer_input_features=config.transformerConditioning.input_features,
                 transformer_nhead=config.transformerConditioning.nhead,
                 transformer_num_encoder_layers=config.transformerConditioning.no_encoder_layers,
@@ -253,7 +206,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             auto_output_logging = "simple",
             # disabled=True
         )
-        exp.add_tags([config.name, config.version, 'paper Implementation'])
+        exp.add_tags([config.name, config.version, 'paper Implementation', 'no-btag', 'no-fake-permutation', 'only_exist_pt_eta_phi', 'jetsSortedbySpanet', 'HiggsAssignment', 'null_token_only_in_transformer'])
         exp.log_parameters(config.training_params)
         exp.log_parameters(config.transferFlow)
         exp.log_parameters({"model_param_tot":count_parameters(model)})
@@ -293,19 +246,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         shuffle=False,        
     )
 
-    # Constraints
-    constraint_partons_permutation = mdmm.MaxConstraint(
-                    L2,
-                    max=config.MDMM.max, # to be modified based on the regression
-                    scale=config.MDMM.scale,
-                    damping=config.MDMM.damping,
-    )
-
-    # Create the optimizer
-    MDMM_module = mdmm.MDMM([constraint_partons_permutation])
-    optimizer = MDMM_module.make_optimizer(model.parameters(), lr=config.training_params.lr)
-
-    # optimizer = optim.RAdam(list(model.parameters()) , lr=config.training_params.lr)
+    optimizer = optim.RAdam(list(model.parameters()) , lr=config.training_params.lr)
     # optimizer = optim.Rprop(list(model.parameters()) , lr=config.training_params.lr)
     scheduler_type = config.training_params.scheduler
     
@@ -349,9 +290,10 @@ def train( device, name_dir, config,  outputDir, dtype,
             trainingLoader.sampler.set_epoch(e)
             
         sum_loss = 0.
-        loss_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
+        loss_total_each_object = torch.zeros(config.transferFlow.no_max_objects - 1, device=device)
         loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
         total_loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
+        sum_loss_pt = sum_loss_eta = sum_loss_phi = sum_loss_exist = 0.
     
         # training loop    
         print("Before training loop")
@@ -362,41 +304,33 @@ def train( device, name_dir, config,  outputDir, dtype,
             ii+=1
 
             optimizer.zero_grad()
-
+            
             (logScaled_partons,
-             logScaled_reco_sortedBySpanet, mask_lepton,
-             mask_jets, mask_met,
+             logScaled_reco_sortedBySpanet, mask_recoParticles,
              mask_boost, data_boost_reco) = data_batch
-                
-            mask_recoParticles = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
-            if True:
-                logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:-1]
+                            
+            # exist + 3-mom
+            logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:4]
             # The provenance is remove in the model
 
             avg_flow_prob_pt, flow_prob_pt_batch, flow_prob_pt, \
             avg_flow_prob_eta, flow_prob_eta_batch, flow_prob_eta, \
-            avg_flow_prob_phi, flow_prob_phi_batch, flow_prob_phi   = ddp_model(logScaled_reco_sortedBySpanet,
+            avg_flow_prob_phi, flow_prob_phi_batch, flow_prob_phi, \
+            avg_flow_prob_exist, flow_prob_exist_batch, flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                 logScaled_partons,
                                                                                 data_boost_reco,
                                                                                 mask_recoParticles,
                                                                                 mask_boost)
 
 
-            loss_main = -avg_flow_prob_pt - avg_flow_prob_eta - avg_flow_prob_phi
-            flow_pr = +flow_prob_pt + flow_prob_eta + flow_prob_phi # I will add the '-' later
+            loss_main = -avg_flow_prob_pt - avg_flow_prob_eta - avg_flow_prob_phi - avg_flow_prob_exist
+            flow_pr = +flow_prob_pt + flow_prob_eta + flow_prob_phi + flow_prob_exist # I will add the '-' later
 
-            # Compute fake logprob
-            permutation = torch.randperm(logScaled_partons.shape[0])
-            fake_parton_permutation = logScaled_partons[permutation]
-            fake_batch = (fake_parton_permutation, logScaled_reco_sortedBySpanet, mask_lepton, mask_jets, mask_met, mask_boost, data_boost_reco)
-            mdmm_return = MDMM_module(loss_main, [(model, fake_batch)])
+            mask_recoParticles = mask_recoParticles[:,1:config.transferFlow.no_max_objects] # remove the null token 
+            logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,1:config.transferFlow.no_max_objects] # remove the null token
 
-            # compute constraint loss:
-            with torch.no_grad():
-                constraint_loss_train = L2(model, fake_batch)
-
-            loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
-            number_MaskedObjects = torch.sum(mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
+            loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles, dim=0)
+            number_MaskedObjects = torch.sum(mask_recoParticles, dim=0)
             loss_mean_each_object = torch.div(loss_Sum_each_object, number_MaskedObjects)
 
             # for cases when jets no. 12 doesn't exist in any of the events -> nan because 0/0 -> replace with 0
@@ -412,10 +346,14 @@ def train( device, name_dir, config,  outputDir, dtype,
             if torch.isnan(total_loss_per_pt).any() or torch.isinf(total_loss_per_pt).any():
                 print(f'ii= {ii} Training_pt: nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(total_loss_per_pt))}')
                     
-            mdmm_return.value.backward()
+            loss_main.backward()
             optimizer.step()
-            sum_loss += mdmm_return.value.item()
-            
+            sum_loss += loss_main.item()
+            sum_loss_pt += -avg_flow_prob_pt
+            sum_loss_eta += -avg_flow_prob_eta
+            sum_loss_phi += -avg_flow_prob_phi
+            sum_loss_exist += -avg_flow_prob_exist
+
             if scheduler_type == "cyclic_lr": #cycle each step
                 scheduler.step()
 
@@ -423,18 +361,24 @@ def train( device, name_dir, config,  outputDir, dtype,
                 if exp is not None and device==0 or world_size is None:
                     if i % config.training_params.interval_logging_steps == 0:
                         exp.log_metric('loss_step', loss_main, step=ii)
-                        exp.log_metric('loss_constraint_train', constraint_loss_train, step=ii)
-                        exp.log_metric('full_mdmm_loss_step', mdmm_return.value, step=ii)
+                        exp.log_metric('loss_step_pt', -avg_flow_prob_pt, step=ii)
+                        exp.log_metric('loss_step_eta', -avg_flow_prob_eta, step=ii)
+                        exp.log_metric('loss_step_phi', -avg_flow_prob_phi, step=ii)
+                        exp.log_metric('loss_step_exist', -avg_flow_prob_exist, step=ii)
                         exp.log_metric("learning_rate", optimizer.param_groups[0]['lr'], step=ii)
-                        for j in range(config.transferFlow.no_max_objects):
+                        for j in range(config.transferFlow.no_max_objects - 1):
                             exp.log_metric(f'loss_object_{j}', loss_mean_each_object[j], step=ii)
                         for j in range(len(pt_bins) - 1):
                             exp.log_metric(f'loss_per_pt_{pt_bins[j]}_{pt_bins[j+1]}', loss_per_pt[j], step=ii)
 
         ### END of training 
         if exp is not None and device==0 or world_size is None:
-            exp.log_metric("full_mdmm_loss_epoch", sum_loss/N_train, epoch=e)
-            for j in range(config.transferFlow.no_max_objects):
+            exp.log_metric("loss_train_epoch", sum_loss/N_train, epoch=e)
+            exp.log_metric("loss_train_epoch_pt", sum_loss_pt/N_train, epoch=e)
+            exp.log_metric("loss_train_epoch_eta", sum_loss_eta/N_train, epoch=e)
+            exp.log_metric("loss_train_epoch_phi", sum_loss_phi/N_train, epoch=e)
+            exp.log_metric("loss_train_epoch_exist", sum_loss_exist/N_train, epoch=e)
+            for j in range(config.transferFlow.no_max_objects - 1):
                 exp.log_metric(f'loss_epoch_total_object_{j}', loss_total_each_object[j]/N_train, epoch=e)
             for j in range(len(pt_bins) - 1):
                 exp.log_metric(f'loss_epoch_total_per_pt_{pt_bins[j]}_{pt_bins[j+1]}', total_loss_per_pt[j]/N_train, epoch=e)
@@ -442,9 +386,9 @@ def train( device, name_dir, config,  outputDir, dtype,
             #     exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
 
         total_valid_loss = 0.
-        total_valid_mdmm_loss = 0.
-        loss_Valid_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
+        loss_Valid_total_each_object = torch.zeros(config.transferFlow.no_max_objects - 1, device=device)
         valid_total_loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
+        sum_valid_loss_pt = sum_valid_loss_eta = sum_valid_loss_phi = sum_valid_loss_exist = 0.
         
         # validation loop (don't update weights and gradients)
         print("Before validation loop")
@@ -457,50 +401,45 @@ def train( device, name_dir, config,  outputDir, dtype,
             with torch.no_grad():
 
                 (logScaled_partons,
-                logScaled_reco_sortedBySpanet, mask_lepton,
-                mask_jets, mask_met,
+                logScaled_reco_sortedBySpanet, mask_recoParticles,
                 mask_boost, data_boost_reco) = data_batch
                 
-                mask_recoParticles = torch.cat((mask_jets, mask_lepton, mask_met), dim=1)
-
-                # remove prov
-                if True:
-                    logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:-1]
+                # exist + 3-mom
+                logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:4]
 
                 # The provenance is remove in the model
                 avg_flow_prob_pt, flow_prob_pt_batch, flow_prob_pt, \
                 avg_flow_prob_eta, flow_prob_eta_batch, flow_prob_eta, \
-                avg_flow_prob_phi, flow_prob_phi_batch, flow_prob_phi   = ddp_model(logScaled_reco_sortedBySpanet,
+                avg_flow_prob_phi, flow_prob_phi_batch, flow_prob_phi, \
+                avg_flow_prob_exist, flow_prob_exist_batch, flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                     logScaled_partons,
                                                                                     data_boost_reco,
                                                                                     mask_recoParticles,
                                                                                     mask_boost)
 
 
-                loss_main = -avg_flow_prob_pt - avg_flow_prob_eta - avg_flow_prob_phi
-                batch_flow_pr = + flow_prob_pt_batch + flow_prob_phi_batch + flow_prob_eta_batch # I will add the '-' later
-                flow_pr = +flow_prob_pt + flow_prob_eta + flow_prob_phi # I will add the '-' later
+                loss_main = -avg_flow_prob_pt - avg_flow_prob_eta - avg_flow_prob_phi - avg_flow_prob_exist
+                batch_flow_pr = + flow_prob_pt_batch + flow_prob_phi_batch + flow_prob_eta_batch + flow_prob_exist_batch # I will add the '-' later
+                flow_pr = +flow_prob_pt + flow_prob_eta + flow_prob_phi + flow_prob_exist # I will add the '-' later
                 
-                # Compute fake logprob
-                permutation = torch.randperm(logScaled_partons.shape[0])
-                fake_parton_permutation = logScaled_partons[permutation]
-                fake_batch = (fake_parton_permutation, logScaled_reco_sortedBySpanet, mask_lepton, mask_jets, mask_met, mask_boost, data_boost_reco)
-                mdmm_return = MDMM_module(loss_main, [(model, fake_batch)])
+                total_valid_loss += loss_main.item() # using only the main loss
+                sum_valid_loss_pt += -avg_flow_prob_pt
+                sum_valid_loss_eta += -avg_flow_prob_eta
+                sum_valid_loss_phi += -avg_flow_prob_phi
+                sum_valid_loss_exist += -avg_flow_prob_exist
 
-                # compute constraint loss:
-                constraint_loss_valid = L2(model, fake_batch)
+                mask_recoParticles_copy = mask_recoParticles[:,1:config.transferFlow.no_max_objects] # remove the null token (copy here because I need the null token for valid plot)
+                # remove the null token (copy here because I need the null token for valid plot)
+                logScaled_reco_sortedBySpanet_copy = logScaled_reco_sortedBySpanet[:,1:config.transferFlow.no_max_objects] 
 
-                total_valid_mdmm_loss += mdmm_return.value.item()   
-                total_valid_loss += loss_main.item() # using only the main loss, not MDMM
-
-                loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
-                number_MaskedObjects = torch.sum(mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
+                loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles_copy, dim=0)
+                number_MaskedObjects = torch.sum(mask_recoParticles_copy, dim=0)
                 loss_mean_each_object = torch.div(loss_Sum_each_object, number_MaskedObjects)
 
                 loss_mean_each_object = torch.nan_to_num(loss_mean_each_object, nan=0.0)
                 loss_Valid_total_each_object = torch.add(loss_Valid_total_each_object, loss_mean_each_object)
 
-                loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco_sortedBySpanet, mask_recoParticles, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
+                loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco_sortedBySpanet_copy, mask_recoParticles_copy, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
                         pt_bins=pt_bins)
 
                 valid_total_loss_per_pt = torch.add(valid_total_loss_per_pt, loss_per_pt)
@@ -510,6 +449,11 @@ def train( device, name_dir, config,  outputDir, dtype,
 
                 if torch.isnan(valid_total_loss_per_pt).any() or torch.isinf(valid_total_loss_per_pt).any():
                     print(f'ii= {ii} VALID_pt: nans = {torch.count_nonzero(torch.isnan(valid_total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(valid_total_loss_per_pt))}')
+
+                exp.log_metric('validation_loss_step_pt', -avg_flow_prob_pt, step=ii)
+                exp.log_metric('validation_loss_step_eta', -avg_flow_prob_eta, step=ii)
+                exp.log_metric('validation_loss_step_phi', -avg_flow_prob_phi, step=ii)
+                exp.log_metric('validation_loss_step_exist', -avg_flow_prob_exist, step=ii)
 
                 if i == 0:
                     random = torch.rand(2)
@@ -526,44 +470,48 @@ def train( device, name_dir, config,  outputDir, dtype,
                     # wrong pt
                     wrong_logScaled_reco = alter_variables(difference=difference_pt,
                                             object_no=[0],
-                                            variable_altered=[0],
+                                            variable_altered=[1], # pt = 1 for reco objs
                                             target_var=logScaled_reco_sortedBySpanet, 
                                             log_mean=log_mean_reco, 
                                             log_std=log_std_reco,
                                             mask_target=mask_recoParticles,
                                             no_max_objects=config.transferFlow.no_max_objects,
-                                            device=device)
+                                            device=device,
+                                            reco=1)
                                         
                     wrongPT_avg_flow_prob_pt, wrongPT_flow_prob_pt_batch, wrongPT_flow_prob_pt, \
                     wrongPT_avg_flow_prob_eta, wrongPT_flow_prob_eta_batch, wrongPT_flow_prob_eta, \
-                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi   = ddp_model(wrong_logScaled_reco,
+                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi, \
+                    wrongPT_avg_flow_prob_exist, wrongPT_flow_prob_exist_batch, wrongPT_flow_prob_exist= ddp_model(wrong_logScaled_reco,
                                                                                                                 logScaled_partons,
                                                                                                                 data_boost_reco,
                                                                                                                 mask_recoParticles,
                                                                                                                 mask_boost)
                     
-                    wrong_pt_batch_flow_pr = +wrongPT_flow_prob_pt_batch  + wrongPT_flow_prob_eta_batch + wrongPT_flow_prob_phi_batch
+                    wrong_pt_batch_flow_pr = +wrongPT_flow_prob_pt_batch  + wrongPT_flow_prob_eta_batch + wrongPT_flow_prob_phi_batch + wrongPT_flow_prob_exist_batch
 
                     # wrong pt and eta
                     wrong_logScaled_reco = alter_variables(difference=difference_eta, 
                                             object_no=[1],
-                                            variable_altered=[1],
+                                            variable_altered=[2], # eta = 2 for reco objs
                                             target_var=wrong_logScaled_reco,
                                             log_mean=log_mean_reco, 
                                             log_std=log_std_reco,
                                             mask_target=mask_recoParticles,
                                             no_max_objects=config.transferFlow.no_max_objects,
-                                            device=device)
+                                            device=device,
+                                            reco=1)
                     
                     wrongPTandETA_avg_flow_prob_pt, wrongPTandETA_flow_prob_pt_batch, wrongPTandETA_flow_prob_pt, \
                     wrongPTandETA_avg_flow_prob_eta, wrongPTandETA_flow_prob_eta_batch, wrongPTandETA_flow_prob_eta, \
-                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi   = ddp_model(wrong_logScaled_reco,
+                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi, \
+                    wrongPTandETA_avg_flow_prob_exist, wrongPTandETA_flow_prob_exist_batch, wrongPTandETA_flow_prob_exist = ddp_model(wrong_logScaled_reco,
                                                                                                             logScaled_partons,
                                                                                                             data_boost_reco,
                                                                                                             mask_recoParticles,
                                                                                                             mask_boost)
                     
-                    wrong_ptAndEta_batch_flow_pr = +wrongPTandETA_flow_prob_pt_batch + wrongPTandETA_flow_prob_eta_batch + wrongPTandETA_flow_prob_phi_batch
+                    wrong_ptAndEta_batch_flow_pr = +wrongPTandETA_flow_prob_pt_batch + wrongPTandETA_flow_prob_eta_batch + wrongPTandETA_flow_prob_phi_batch + wrongPTandETA_flow_prob_exist_batch
 
                     # sometimes there are nans if the difference_pt is too large
                     if torch.isnan(wrong_pt_batch_flow_pr).any() or torch.isnan(wrong_ptAndEta_batch_flow_pr).any():
@@ -585,44 +533,48 @@ def train( device, name_dir, config,  outputDir, dtype,
                     # wrong pt
                     wrong_logScaled_parton = alter_variables(difference=difference_pt,
                                             object_no=[0],
-                                            variable_altered=[0],
+                                            variable_altered=[0], # pt = 0 for partons
                                             target_var=logScaled_partons, 
                                             log_mean=log_mean_parton, 
                                             log_std=log_std_parton,
                                             mask_target=maskPartons,
                                             no_max_objects=4,
-                                            device=device)
+                                            device=device,
+                                            reco=0)
                                         
                     wrongPT_avg_flow_prob_pt, wrongPT_flow_prob_pt_batch, wrongPT_flow_prob_pt, \
                     wrongPT_avg_flow_prob_eta, wrongPT_flow_prob_eta_batch, wrongPT_flow_prob_eta, \
-                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi   = ddp_model(logScaled_reco_sortedBySpanet,
+                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi, \
+                    wrongPT_avg_flow_prob_exist, wrongPT_flow_prob_exist_batch, wrongPT_flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                                                 wrong_logScaled_parton,
                                                                                                                 data_boost_reco,
                                                                                                                 mask_recoParticles,
                                                                                                                 mask_boost)
                     
-                    wrong_pt_batch_parton_flow_pr = +wrongPT_flow_prob_pt_batch  + wrongPT_flow_prob_eta_batch + wrongPT_flow_prob_phi_batch
+                    wrong_pt_batch_parton_flow_pr = +wrongPT_flow_prob_pt_batch  + wrongPT_flow_prob_eta_batch + wrongPT_flow_prob_phi_batch + wrongPT_flow_prob_exist_batch
 
                     # wrong pt and eta
                     wrong_logScaled_parton = alter_variables(difference=difference_eta, 
                                             object_no=[1],
-                                            variable_altered=[1],
+                                            variable_altered=[1], # eta = 1 for partons
                                             target_var=wrong_logScaled_parton,
                                             log_mean=log_mean_parton, 
                                             log_std=log_std_parton,
                                             mask_target=maskPartons,
                                             no_max_objects=4,
-                                            device=device)
+                                            device=device,
+                                            reco=0)
                     
                     wrongPTandETA_avg_flow_prob_pt, wrongPTandETA_flow_prob_pt_batch, wrongPTandETA_flow_prob_pt, \
                     wrongPTandETA_avg_flow_prob_eta, wrongPTandETA_flow_prob_eta_batch, wrongPTandETA_flow_prob_eta, \
-                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi   = ddp_model(logScaled_reco_sortedBySpanet,
+                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi, \
+                    wrongPTandETA_avg_flow_prob_exist, wrongPTandETA_flow_prob_exist_batch, wrongPTandETA_flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                                             wrong_logScaled_parton,
                                                                                                             data_boost_reco,
                                                                                                             mask_recoParticles,
                                                                                                             mask_boost)
                     
-                    wrong_ptAndEta_batch_parton_flow_pr = +wrongPTandETA_flow_prob_pt_batch + wrongPTandETA_flow_prob_eta_batch + wrongPTandETA_flow_prob_phi_batch
+                    wrong_ptAndEta_batch_parton_flow_pr = +wrongPTandETA_flow_prob_pt_batch + wrongPTandETA_flow_prob_eta_batch + wrongPTandETA_flow_prob_phi_batch + wrongPTandETA_flow_prob_exist_batch
 
                     # sometimes there are nans if the difference_pt is too large
                     if torch.isnan(wrong_pt_batch_parton_flow_pr).any() or torch.isnan(wrong_ptAndEta_batch_parton_flow_pr).any():
@@ -635,41 +587,142 @@ def train( device, name_dir, config,  outputDir, dtype,
                                     range_x=(-60,60), no_bins=120, label1='diff: pt_0 10%',
                                     label2=f'diff: pt_0 10% and eta {difference_eta}', particles='partons')
 
-                exp.log_metric('loss_constraint_valid', constraint_loss_valid, step=ii_valid)
+                    # check model by generating jets
+                    # not at every epoch
+                    if e % 5 == 0:
 
-                # check model by generating jets
-                # not at every epoch
-                if e % 5 == 0:
-                    
-                    null_token = torch.zeros((scaledLogReco.shape[0], 1, config.transformerConditioning.input_features))
-                    generated_pt = torch.empty((scaledLogReco.shape[0], 0), device=device)
-                    generated_eta = torch.empty((scaledLogReco.shape[0], 0), device=device)
-                    generated_phi = torch.empty((scaledLogReco.shape[0], 0), device=device)
-                    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(scaledLogParton))
-                    
-                    for i in range(model.no_max_objects):
+                        null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 4), device=device, dtype=dtype) * -1
+                        null_token[:,0,0] = 0 # exist flag = 0 not -1
+                        fullGeneratedEvent = torch.empty((logScaled_reco_sortedBySpanet.shape[0], 0, 4), device=device, dtype=dtype)
+                        scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons))
                         
-                        tgt_mask = model.transformer_model.generate_square_subsequent_mask(
-                                    generated_pt.size(1), device=device)
+                        for j in range(model.no_max_objects):
 
-                        output_decoder = model.transformer_model(scaledLogParton_afterLin, null_token,
-                                                tgt_mask=tgt_mask)
+                            if j == 0:
+                                fullGeneratedEvent = torch.cat((fullGeneratedEvent, null_token), dim=1)
+                            else:
+                                generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled), dim=2)
+                                fullGeneratedEvent = torch.cat((fullGeneratedEvent, generated_jet), dim=1)
 
-                        conditioning_pt = output_decoder[:,:model.no_max_objects]
-                        jetsPt_sampled = model.flow_pt(conditioning_pt).sample((1,))
+                            # mask jets with index > 8 and exist==0 (the others must be unmasked)
+                            mask_generatedEvent = torch.ones((fullGeneratedEvent.shape[0], fullGeneratedEvent.shape[1]), device=device, dtype=dtype)
+                            mask_generatedEvent[:,9:] = torch.where(fullGeneratedEvent[:,9:,0] == 0, 0, mask_generatedEvent[:,9:])
+                            
+                            scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(fullGeneratedEvent) * mask_generatedEvent[..., None])
+                                
+                            tgt_mask = model.transformer_model.generate_square_subsequent_mask(
+                                        scaledLogReco_afterLin.size(1), device=device)
 
-                        conditioning_eta = torch.cat((output_decoder[:,:model.no_max_objects], jetsPt_sampled), dim=2) # add pt in conditioning
-                        jetsEta_sampled = model.flow_eta(conditioning_eta).sample((1,))
+                            if dtype == torch.float32:
+                                tgt_mask = tgt_mask.float()
+                            elif dtype == torch.float64:
+                                tgt_mask = tgt_mask.double()
+                                
+                            output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
+                                                                    tgt_mask=tgt_mask)
 
-                        conditioning_phi = torch.cat((output_decoder[:,:model.no_max_objects], jetsPt_sampled, jetsEta_sampled), dim=2)
-                        jetsPhi_sampled = model.flow_phi(conditioning_phi).sample((1,))
-                    
+                            # take only the conditioning from j column
+                            # this conditioning depends on the jets (0...j-1)
+                            conditioning_exist = output_decoder[:,j:j+1]
+                            jetExist_sampled = model.flow_exist(conditioning_exist).sample((1,))
+                            jetExist_sampled = jetExist_sampled.squeeze(dim=0)
+                            # remake the `exist` flag discrete
+                            jetExist_sampled = torch.where(jetExist_sampled < 0.5, 0, 1)
+
+                            # take only the conditioning from j column
+                            # this conditioning depends on the jets (0...j-1)
+                            conditioning_pt = output_decoder[:,j:j+1]
+                            jetsPt_sampled = model.flow_pt(conditioning_pt).sample((1,))
+                            jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+                            # if sampled_exist == 0 => pt_sampled = -1
+                            jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled)
+
+                            # take only the conditioning from j column
+                            # this conditioning depends on the jets (0...j-1) + sampled_pt
+                            conditioning_eta = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled), dim=2)
+                            jetsEta_sampled = model.flow_eta(conditioning_eta).sample((1,))
+                            jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+                            # if sampled_exist == 0 => eta_sampled = -1
+                            jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled)
+
+                            # take only the conditioning from j column
+                            # this conditioning depends on the jets (0...j-1) + sampled_pt + sampled_eta
+                            conditioning_phi = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled, jetsEta_sampled), dim=2)
+                            jetsPhi_sampled = model.flow_phi(conditioning_phi).sample((1,))
+                            jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+                            # if sampled_exist == 0 => phi_sampled = -1
+                            jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+
+                
+
+                        var_name = ['pt', 'eta', 'phi']
+
+                        partialMaskReco = mask_recoParticles[:,:model.no_max_objects]
+                        partialMaskReco = partialMaskReco.bool()
+
+                        # keep objects starting from pt = 1
+                        fullGeneratedEvent_fromPt = fullGeneratedEvent[:,:,1:]
+                        maskedGeneratedEvent = fullGeneratedEvent_fromPt[partialMaskReco]
+
+                        # keep objects starting from pt = 1
+                        partial_logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:model.no_max_objects, 1:]
+                        maskedTargetEvent = partial_logScaled_reco_sortedBySpanet[partialMaskReco]
+
+                        # check pt,eta,phi distrib
+                        for plot_var in range(3):
+
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            diff_generatedAndTarget = (maskedGeneratedEvent[:,plot_var] - maskedTargetEvent[:,plot_var])
+                            ax.hist(diff_generatedAndTarget.detach().cpu().numpy(), range=(-5,5), bins=20, histtype='step', color='b', stacked=False, fill=False)
+                            ax.set_xlabel(f'{var_name[plot_var]}_generated - {var_name[plot_var]}_target')
+                            exp.log_figure(f"Diff_generated_{var_name[plot_var]}", fig, step=e)
+
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            h = ax.hist2d(maskedGeneratedEvent[:,plot_var].detach().cpu().numpy(),
+                                          maskedTargetEvent[:,plot_var].detach().cpu().numpy(),
+                                          bins=30, range=[(-5,5),(-5,5)], cmin=1)
+                            fig.colorbar(h[3], ax=ax)
+                            ax.set_xlabel(f'sampled')
+                            ax.set_ylabel(f'target')
+                            exp.log_figure(f"2D_correlation_{var_name[plot_var]}", fig,step=e)
+
+
+                        # check exist flag
+                        target_exist = logScaled_reco_sortedBySpanet[:,:model.no_max_objects,0]
+                        partial_target_exist = target_exist[partialMaskReco]
+
+                        sampled_exist = fullGeneratedEvent[:,:model.no_max_objects,0]
+                        partial_sampled_exist = sampled_exist[partialMaskReco]
+
+                        # check overlapping values
+                        mask_same_exist = partial_target_exist == partial_sampled_exist
+                        fraction_same_exist = (torch.count_nonzero(mask_same_exist)/torch.numel(mask_same_exist)).cpu().numpy()
+
+                        # keep only exist = 0
+                        mask_exist_0 = partial_target_exist == 0
+                        mask_same_exist_0 = partial_target_exist[mask_exist_0] == partial_sampled_exist[mask_exist_0]
+                        fraction_same_exist_0 = (torch.count_nonzero(mask_same_exist_0)/torch.numel(mask_same_exist_0)).cpu().numpy()
+
+                        # keep only exist = 1
+                        mask_exist_1 = partial_target_exist == 1
+                        mask_same_exist_1 = partial_target_exist[mask_exist_1] == partial_sampled_exist[mask_exist_1]
+                        fraction_same_exist_1 = (torch.count_nonzero(mask_same_exist_1)/torch.numel(mask_same_exist_1)).cpu().numpy()
+
+                        # plot quality of `exist` sampling
+                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                        ax.bar(["all Jets", "Jets With Exist=0", "Jets With Exist=1"], [fraction_same_exist, fraction_same_exist_0, fraction_same_exist_1], color ='maroon', width = 0.4)
+                        ax.set_ylabel(f'Fraction of correct assignments from total values')
+                        exp.log_figure(f"Quality_flow_exist", fig, step=e)
+                                                    
                     
 
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("total_valid_loss", total_valid_loss/N_valid, epoch=e)
-            exp.log_metric("total_valid_MDMM_loss", total_valid_mdmm_loss/N_valid, epoch=e)
-            for j in range(config.transferFlow.no_max_objects):
+            exp.log_metric("total_valid_loss_pt", sum_valid_loss_pt/N_valid, epoch=e)
+            exp.log_metric("total_valid_loss_eta", sum_valid_loss_eta/N_valid, epoch=e)
+            exp.log_metric("total_valid_loss_phi", sum_valid_loss_phi/N_valid, epoch=e)
+            exp.log_metric("total_valid_loss_exist", sum_valid_loss_exist/N_valid, epoch=e)
+            for j in range(config.transferFlow.no_max_objects - 1):
                 exp.log_metric(f'loss_Valid_epoch_total_object_{j}', loss_Valid_total_each_object[j]/N_valid, epoch=e)
             for j in range(len(pt_bins) - 1):
                 exp.log_metric(f'loss_Valid_epoch_total_per_pt_{pt_bins[j]}_{pt_bins[j+1]}', valid_total_loss_per_pt[j]/N_valid, epoch=e)
@@ -735,6 +788,8 @@ if __name__ == '__main__':
         dtype = torch.float32
     elif conf.training_params.dtype == "float64":
         dtype = torch.float64
+    else:
+        dtype = None
         
     
     if len(actual_devices) > 1 and args.distributed:
