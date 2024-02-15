@@ -1,4 +1,4 @@
-ARG FROM_IMAGE="/cvmfs/unpacked.cern.ch/registry.hub.docker.com/cmsml/cmsml:3.11"
+ARG FROM_IMAGE=cmsml/cmsml:3.11
 FROM ${FROM_IMAGE}
 
 ADD requirements.txt /tmp/
