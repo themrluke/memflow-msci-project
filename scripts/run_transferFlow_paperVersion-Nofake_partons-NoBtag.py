@@ -170,6 +170,8 @@ def train( device, name_dir, config,  outputDir, dtype,
     model = TransferFlow_Paper(no_recoVars=4, # exist + 3-mom
                 no_partonVars=config.input_shape.no_partonVars,
                 no_recoObjects=train_dataset.reco_lab.scaledLogReco_sortedBySpanet.shape[1],
+
+                no_transformers=config.transformerConditioning.no_transformers,
                 transformer_input_features=config.transformerConditioning.input_features,
                 transformer_nhead=config.transformerConditioning.nhead,
                 transformer_num_encoder_layers=config.transformerConditioning.no_encoder_layers,
@@ -745,7 +747,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     # exp_log.end()
     destroy_process_group()
-    print('preTraining finished!!')
+    print('Flow training finished!!')
         
 
 if __name__ == '__main__':

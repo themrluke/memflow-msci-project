@@ -13,7 +13,8 @@ class TransferFlow_Paper(nn.Module):
     def __init__(self,
                  no_recoVars, no_partonVars,
                  no_recoObjects=18,
-                 
+
+                 no_transformers=1,
                  transformer_input_features=64,
                  transformer_nhead=8,
                  transformer_num_encoder_layers=4,
@@ -58,6 +59,8 @@ class TransferFlow_Paper(nn.Module):
                                                 activation=transformer_activation,
                                                 batch_first=True,
                                                 dtype=dtype)
+
+        self.transformer_list = nn.ModuleList([self.transformer_model for i in range(no_transformers)])
 
         # mask to keep the decoder autoregressive
         self.tgt_mask = self.transformer_model.generate_square_subsequent_mask(no_recoObjects, device=device)
@@ -136,8 +139,10 @@ class TransferFlow_Paper(nn.Module):
         scaledLogReco_afterLin = self.gelu(self.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
         scaledLogParton_afterLin = self.gelu(self.linearDNN_parton(scaling_partons_lab))        
                     
-        output_decoder = self.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                                tgt_mask=self.tgt_mask)
+        output_decoder = scaledLogReco_afterLin
+
+        for transfermer in self.transformer_list:
+            output_decoder = transfermer(scaledLogParton_afterLin, output_decoder, tgt_mask=self.tgt_mask)
 
         # remove the null token
         no_objects_per_event = torch.sum(mask_reco[:,1:self.no_max_objects], dim=1) # compute the number of objects per event
