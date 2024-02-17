@@ -180,6 +180,16 @@ elif model == "run_transferFlow_paperVersion-Nofake_partons-NoBtag":
     sub['+JobFlavour'] = '"nextweek"'
     sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper__Nofakepartons_nobtag_v{version}"
 
+elif model == "run_transferFlow_paperVersion-MDMM-Nofake_partons-NoBtag":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_MDMM_Nofakepartons_nobtag.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper_MDMM_Nofakepartons_nobtag-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_paper_MDMM_Nofakepartons_nobtag-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_paper_Nofakepartons_MDMM_nobtag-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper_MDMM_Nofakepartons_nobtag_v{version}"
+
 elif model == "transfer_flow_idea3":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_idea3.sh"
     sub['Error'] = f"{basedir}/jobs/error/transfer_flow_idea3-$(ClusterId).$(ProcId).err"
