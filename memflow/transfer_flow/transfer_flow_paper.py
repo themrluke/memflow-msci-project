@@ -62,8 +62,8 @@ class TransferFlow_Paper(nn.Module):
 
         self.transformer_list = nn.ModuleList([self.transformer_model for i in range(no_transformers)])
 
-        # mask to keep the decoder autoregressive
-        self.tgt_mask = self.transformer_model.generate_square_subsequent_mask(no_recoObjects, device=device)
+        # mask to keep the decoder autoregressive (add 1 for the null token)
+        self.tgt_mask = self.transformer_model.generate_square_subsequent_mask(no_recoObjects+1, device=device)
         
         self.flow_pt = zuko.flows.NSF(features=flow_nfeatures,
                               context=transformer_input_features,
@@ -134,60 +134,71 @@ class TransferFlow_Paper(nn.Module):
     def enable_regression_training(self):
         self.cond_transformer.enable_regression_training()
         
-    def forward(self,  scaling_reco_lab, scaling_partons_lab, scaling_RegressedBoost_lab, mask_reco, mask_boost):
+    def forward(self, scaling_reco_lab, scaling_partons_lab, scaling_RegressedBoost_lab,
+                mask_reco, mask_boost, makeExistContinuos=0.4):
+
+        # create null token and its mask
+        null_token = torch.ones((scaling_reco_lab.shape[0], 1, 4), device=self.device, dtype=self.dtype) * -1
+        null_token[:,0,0] = 0 # exist flag = 0 not -1
+        # mask for the null token = True
+        null_token_mask = torch.ones((mask_reco.shape[0], 1), device=self.device, dtype=torch.bool)
+
+        # attach null token and update the mask for the scaling_reco_lab
+        scaling_reco_lab_withNullToken = torch.cat((null_token, scaling_reco_lab), dim=1)
+        mask_reco_withNullToken = torch.cat((null_token_mask, mask_reco), dim=1)
         
-        scaledLogReco_afterLin = self.gelu(self.linearDNN_reco(scaling_reco_lab) * mask_reco[..., None])
+        scaledLogReco_afterLin = self.gelu(self.linearDNN_reco(scaling_reco_lab_withNullToken) * mask_reco_withNullToken[..., None])
         scaledLogParton_afterLin = self.gelu(self.linearDNN_parton(scaling_partons_lab))        
-                    
+
+        # output decoder shape: [events, null_token+jets, 64]
+        # first elem of output decoder -> null token
         output_decoder = scaledLogReco_afterLin
 
         for transfermer in self.transformer_list:
             output_decoder = transfermer(scaledLogParton_afterLin, output_decoder, tgt_mask=self.tgt_mask)
 
-        # remove the null token
-        no_objects_per_event = torch.sum(mask_reco[:,1:self.no_max_objects], dim=1) # compute the number of objects per event
+        no_objects_per_event = torch.sum(mask_reco[:,:self.no_max_objects], dim=1) # compute the number of objects per event
 
-        # I should take into consideration the first column (related to the null token), but not the last column
-        conditioning_pt = output_decoder[:,:self.no_max_objects-1]
+        conditioning_pt = output_decoder[:,:self.no_max_objects]
 
-        # very important: pt on the 2nd position + remove the null token
-        scaled_reco_lab_pt = scaling_reco_lab[:,1:self.no_max_objects,1].unsqueeze(dim=2)
+        # very important: pt on the 2nd position
+        scaled_reco_lab_pt = scaling_reco_lab[:,:self.no_max_objects,1].unsqueeze(dim=2)
         flow_prob_pt = self.flow_pt(conditioning_pt).log_prob(scaled_reco_lab_pt)
-        flow_prob_pt_batch = torch.sum(flow_prob_pt*mask_reco[:,1:self.no_max_objects], dim=1) # take avg of masked objects
+        flow_prob_pt_batch = torch.sum(flow_prob_pt*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
         flow_prob_pt_batch = torch.div(flow_prob_pt_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         avg_flow_prob_pt = flow_prob_pt_batch.mean()
 
-        # very important: eta on the 3rd position + remove the null token
-        conditioning_eta = torch.cat((output_decoder[:,:self.no_max_objects-1], scaled_reco_lab_pt), dim=2) # add pt in conditioning
-        scaled_reco_lab_eta = scaling_reco_lab[:,1:self.no_max_objects,2].unsqueeze(dim=2)
+        # very important: eta on the 3rd position
+        conditioning_eta = torch.cat((output_decoder[:,:self.no_max_objects], scaled_reco_lab_pt), dim=2) # add pt in conditioning
+        scaled_reco_lab_eta = scaling_reco_lab[:,:self.no_max_objects,2].unsqueeze(dim=2)
         flow_prob_eta = self.flow_eta(conditioning_eta).log_prob(scaled_reco_lab_eta)
-        flow_prob_eta_batch = torch.sum(flow_prob_eta*mask_reco[:,1:self.no_max_objects], dim=1) # take avg of masked objects
+        flow_prob_eta_batch = torch.sum(flow_prob_eta*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
         flow_prob_eta_batch = torch.div(flow_prob_eta_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         avg_flow_prob_eta = flow_prob_eta_batch.mean()
 
         # very important: phi on the 4th position
-        conditioning_phi = torch.cat((output_decoder[:,:self.no_max_objects-1], scaled_reco_lab_pt, scaled_reco_lab_eta), dim=2)
-        scaled_reco_lab_phi = scaling_reco_lab[:,1:self.no_max_objects,3].unsqueeze(dim=2)
+        conditioning_phi = torch.cat((output_decoder[:,:self.no_max_objects], scaled_reco_lab_pt, scaled_reco_lab_eta), dim=2)
+        scaled_reco_lab_phi = scaling_reco_lab[:,:self.no_max_objects,3].unsqueeze(dim=2)
         flow_prob_phi = self.flow_phi(conditioning_phi).log_prob(scaled_reco_lab_phi)
-        flow_prob_phi_batch = torch.sum(flow_prob_phi*mask_reco[:,1:self.no_max_objects], dim=1) # take avg of masked objects
+        flow_prob_phi_batch = torch.sum(flow_prob_phi*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
         flow_prob_phi_batch = torch.div(flow_prob_phi_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         avg_flow_prob_phi = flow_prob_phi_batch.mean()
 
-        random_matrix = torch.rand(scaling_reco_lab[:,1:self.no_max_objects,0].shape, device=self.device, dtype=self.dtype)
+        random_matrix = torch.rand(scaling_reco_lab[:,:self.no_max_objects,0].shape, device=self.device, dtype=self.dtype)
 
-        # make the exist flag continuos
+        # make the exist flag continuos (makeExistContinuos=0.4)
         # if exist == 0 => continuos_exist=(0.0,0.4)
         # if exist == 1 => continuos_exist=(0.6,1.0)
-        continuos_exist = torch.where(scaling_reco_lab[:,1:self.no_max_objects,0] == 0,
-                                      random_matrix*0.4,
-                                      1-random_matrix*0.4)
+        continuos_exist = torch.where(scaling_reco_lab[:,:self.no_max_objects,0] == 0,
+                                      random_matrix*makeExistContinuos,
+                                      1-random_matrix*makeExistContinuos)
         continuos_exist = continuos_exist.unsqueeze(dim=2)
 
         # very important: exist on the 1st position
         # exist flag depends only on the 'previous' jets and partons
-        conditioning_exist = output_decoder[:,:self.no_max_objects-1]
+        conditioning_exist = output_decoder[:,:self.no_max_objects]
         flow_prob_exist = self.flow_exist(conditioning_exist).log_prob(continuos_exist)
-        flow_prob_exist_batch = torch.sum(flow_prob_exist*mask_reco[:,1:self.no_max_objects], dim=1) # take avg of masked objects
+        flow_prob_exist_batch = torch.sum(flow_prob_exist*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
         flow_prob_exist_batch = torch.div(flow_prob_exist_batch, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         avg_flow_prob_exist = flow_prob_exist_batch.mean()
                                 

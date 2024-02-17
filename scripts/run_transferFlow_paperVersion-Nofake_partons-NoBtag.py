@@ -39,7 +39,58 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from random import randint
 PI = torch.pi
 
-# torch.autograd.set_detect_anomaly(True)
+# TODO: right now logScaled_reco_sortedBySpanet has null_token inside
+def sample_next_token(model, logScaled_reco_sortedBySpanet, logScaled_partons, mask_reco, device, dtype):
+    null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 4), device=device, dtype=dtype) * -1
+    null_token[:,0,0] = 0 # exist flag = 0 not -1
+    
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons))
+    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(logScaled_reco_sortedBySpanet) * mask_reco[..., None])
+        
+    tgt_mask = model.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=device)
+
+    if dtype == torch.float32:
+        tgt_mask = tgt_mask.float()
+    elif dtype == torch.float64:
+        tgt_mask = tgt_mask.double()
+        
+    output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+
+    # take only the conditioning from j column
+    # this conditioning depends on the jets (0...j-1)
+    conditioning_exist = output_decoder[:,j:j+1]
+    jetExist_sampled = model.flow_exist(conditioning_exist).sample((1,))
+    jetExist_sampled = jetExist_sampled.squeeze(dim=0)
+    # remake the `exist` flag discrete
+    jetExist_sampled = torch.where(jetExist_sampled < 0.5, 0, 1)
+
+    # take only the conditioning from j column
+    # this conditioning depends on the jets (0...j-1)
+    conditioning_pt = output_decoder[:,j:j+1]
+    jetsPt_sampled = model.flow_pt(conditioning_pt).sample((1,))
+    jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled)
+
+    # take only the conditioning from j column
+    # this conditioning depends on the jets (0...j-1) + sampled_pt
+    conditioning_eta = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled), dim=2)
+    jetsEta_sampled = model.flow_eta(conditioning_eta).sample((1,))
+    jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => eta_sampled = -1
+    jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled)
+
+    # take only the conditioning from j column
+    # this conditioning depends on the jets (0...j-1) + sampled_pt + sampled_eta
+    conditioning_phi = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled, jetsEta_sampled), dim=2)
+    jetsPhi_sampled = model.flow_phi(conditioning_phi).sample((1,))
+    jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => phi_sampled = -1
+    jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+
+    generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled), dim=2)
+
+
 
 def validation_print(experiment, flow_pr, wrong_pt_batch_flow_pr, wrong_ptAndEta_batch_flow_pr, epoch, range_x=(-60,60), no_bins=100,
                     label1='diff: pt_0 10%', label2='diff: pt_0 10% and eta', particles='jets'):
@@ -195,8 +246,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                 device=device,
                 dtype=dtype,
                 eps=1e-4)
-         
-    
 
     # Experiment logging
     if device == 0 or world_size is None:
@@ -208,7 +257,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             auto_output_logging = "simple",
             # disabled=True
         )
-        exp.add_tags([config.name, config.version, 'paper Implementation', 'no-btag', 'no-fake-permutation', 'only_exist_pt_eta_phi', 'jetsSortedbySpanet', 'HiggsAssignment', 'null_token_only_in_transformer'])
+        exp.add_tags([config.name, config.version, 'paper Implementation', 'no-btag', 'no-fake-permutation', 'only_exist_pt_eta_phi', 'jetsSortedbySpanet', 'HiggsAssignment', 'null_token_only_in_transformer', f'scheduler={config.training_params.scheduler}'])
         exp.log_parameters(config.training_params)
         exp.log_parameters(config.transferFlow)
         exp.log_parameters({"model_param_tot":count_parameters(model)})
@@ -292,7 +341,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             trainingLoader.sampler.set_epoch(e)
             
         sum_loss = 0.
-        loss_total_each_object = torch.zeros(config.transferFlow.no_max_objects - 1, device=device)
+        loss_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
         loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
         total_loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
         sum_loss_pt = sum_loss_eta = sum_loss_phi = sum_loss_exist = 0.
@@ -328,8 +377,8 @@ def train( device, name_dir, config,  outputDir, dtype,
             loss_main = -avg_flow_prob_pt - avg_flow_prob_eta - avg_flow_prob_phi - avg_flow_prob_exist
             flow_pr = +flow_prob_pt + flow_prob_eta + flow_prob_phi + flow_prob_exist # I will add the '-' later
 
-            mask_recoParticles = mask_recoParticles[:,1:config.transferFlow.no_max_objects] # remove the null token 
-            logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,1:config.transferFlow.no_max_objects] # remove the null token
+            mask_recoParticles = mask_recoParticles[:,:config.transferFlow.no_max_objects]
+            logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects]
 
             loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles, dim=0)
             number_MaskedObjects = torch.sum(mask_recoParticles, dim=0)
@@ -388,7 +437,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             #     exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
 
         total_valid_loss = 0.
-        loss_Valid_total_each_object = torch.zeros(config.transferFlow.no_max_objects - 1, device=device)
+        loss_Valid_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
         valid_total_loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
         sum_valid_loss_pt = sum_valid_loss_eta = sum_valid_loss_phi = sum_valid_loss_exist = 0.
         
@@ -430,18 +479,14 @@ def train( device, name_dir, config,  outputDir, dtype,
                 sum_valid_loss_phi += -avg_flow_prob_phi
                 sum_valid_loss_exist += -avg_flow_prob_exist
 
-                mask_recoParticles_copy = mask_recoParticles[:,1:config.transferFlow.no_max_objects] # remove the null token (copy here because I need the null token for valid plot)
-                # remove the null token (copy here because I need the null token for valid plot)
-                logScaled_reco_sortedBySpanet_copy = logScaled_reco_sortedBySpanet[:,1:config.transferFlow.no_max_objects] 
-
-                loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles_copy, dim=0)
-                number_MaskedObjects = torch.sum(mask_recoParticles_copy, dim=0)
+                loss_Sum_each_object = torch.sum(-1*flow_pr*mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
+                number_MaskedObjects = torch.sum(mask_recoParticles[:,:config.transferFlow.no_max_objects], dim=0)
                 loss_mean_each_object = torch.div(loss_Sum_each_object, number_MaskedObjects)
 
                 loss_mean_each_object = torch.nan_to_num(loss_mean_each_object, nan=0.0)
                 loss_Valid_total_each_object = torch.add(loss_Valid_total_each_object, loss_mean_each_object)
 
-                loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco_sortedBySpanet_copy, mask_recoParticles_copy, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
+                loss_per_pt = compute_loss_per_pt(loss_per_pt, flow_pr, logScaled_reco_sortedBySpanet, mask_recoParticles, log_mean_reco, log_std_reco, config.transferFlow.no_max_objects,
                         pt_bins=pt_bins)
 
                 valid_total_loss_per_pt = torch.add(valid_total_loss_per_pt, loss_per_pt)
@@ -654,8 +699,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                             jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
                             # if sampled_exist == 0 => phi_sampled = -1
                             jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
-
-                
 
                         var_name = ['pt', 'eta', 'phi']
 

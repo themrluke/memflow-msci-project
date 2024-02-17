@@ -357,15 +357,8 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         scaledLogReco_sortedBySpanet = sortObjects_bySpanet(spanet_assignment=spanet_assignment, scaledLogReco=self.scaledLogRecoParticles,
                                                maskJets=self.mask_jets, order=[0, 1, 2])
 
-        # at this point I don't have the null token in 'scaledLogReco_sortedBySpanet'
-        # the missing Spanet jets and the padding have -100 values
+        # at this point the missing Spanet jets and the padding have -100 values
         # 'scaledLogReco_sortedBySpanet' doesn't contain the 'exist' flag for each jet
-
-        null_token = torch.ones((scaledLogReco_sortedBySpanet.shape[0], 1, scaledLogReco_sortedBySpanet.shape[2])) * -100
-
-        # attach null token tensor
-        scaledLogReco_sortedBySpanet = torch.cat((null_token, scaledLogReco_sortedBySpanet), dim=1)
-
         exist = torch.where((scaledLogReco_sortedBySpanet[:,:,0] != -100), 1, 0).unsqueeze(dim=2)
         # attach exist flag to each jet
         scaledLogReco_sortedBySpanet = torch.cat((exist, scaledLogReco_sortedBySpanet), dim=2)
@@ -376,11 +369,11 @@ class Dataset_RecoLevel_NoBoost(Dataset):
 
         # last part: modify the missing SPANET jets to be [-1...]
         # keep padding jets as [-100...]
-        # take the first 7 jets (first null token + 6 spanet jets)
-        scaledLogReco_sortedBySpanet[:,:7,:] = torch.where((scaledLogReco_sortedBySpanet[:,:7,:] == -100), -1, scaledLogReco_sortedBySpanet[:,:7,:])
+        # take the first 6 spanet jets
+        scaledLogReco_sortedBySpanet[:,:6,:] = torch.where((scaledLogReco_sortedBySpanet[:,:6,:] == -100), -1, scaledLogReco_sortedBySpanet[:,:6,:])
 
-        # check if the change works (9 because lepton and MET are not -100)
-        if torch.count_nonzero(scaledLogReco_sortedBySpanet[:,:9,:] == -100) > 0:
+        # check if the change works (8 because lepton and MET are not -100)
+        if torch.count_nonzero(scaledLogReco_sortedBySpanet[:,:8,:] == -100) > 0:
             raise Exception("Missing jets are still -100")
 
         # check pt != -100
