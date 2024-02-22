@@ -94,6 +94,135 @@ def sample_next_token(model, logScaled_reco_sortedBySpanet, logScaled_partons, m
 
     return generated_jet
 
+def sample_fullRecoEvent(model, logScaled_partons, no_events, device, dtype, No_samples=1):
+
+    null_token = torch.ones((no_events, 1, 4), device=device, dtype=dtype) * -1
+    null_token[:,0,0] = 0 # exist flag = 0 not -1
+    
+    fullGeneratedEvent = torch.empty((no_events, 0, 4), device=device, dtype=dtype)
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons))
+    
+    for j in range(model.no_max_objects):
+    
+        if j == 0:
+            fullGeneratedEvent = torch.cat((fullGeneratedEvent, null_token), dim=1)
+        else:
+            generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled), dim=2)
+            fullGeneratedEvent = torch.cat((fullGeneratedEvent, generated_jet), dim=1)
+    
+        # mask jets with index > 8 and exist==0 (the others must be unmasked)
+        mask_generatedEvent = torch.ones((fullGeneratedEvent.shape[0], fullGeneratedEvent.shape[1]), device=device, dtype=dtype)
+        mask_generatedEvent[:,9:] = torch.where(fullGeneratedEvent[:,9:,0] == 0, 0, mask_generatedEvent[:,9:])
+        
+        scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(fullGeneratedEvent) * mask_generatedEvent[..., None])
+            
+        tgt_mask = model.transformer_model.generate_square_subsequent_mask(
+                    scaledLogReco_afterLin.size(1), device=device)
+    
+        if dtype == torch.float32:
+            tgt_mask = tgt_mask.float()
+        elif dtype == torch.float64:
+            tgt_mask = tgt_mask.double()
+            
+        output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
+                                                tgt_mask=tgt_mask)
+    
+        # take only the conditioning from j column
+        # this conditioning depends on the jets (0...j-1)
+        conditioning_exist = output_decoder[:,j:j+1]
+        jetExist_sampled = model.flow_exist(conditioning_exist).sample((No_samples,))
+        jetExist_sampled = jetExist_sampled.squeeze(dim=0)
+        # remake the `exist` flag discrete
+        jetExist_sampled = torch.where(jetExist_sampled < 0.5, 0, 1)
+    
+        # take only the conditioning from j column
+        # this conditioning depends on the jets (0...j-1)
+        conditioning_pt = output_decoder[:,j:j+1]
+        jetsPt_sampled = model.flow_pt(conditioning_pt).sample((No_samples,))
+        jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => pt_sampled = -1
+        jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled)
+    
+        # take only the conditioning from j column
+        # this conditioning depends on the jets (0...j-1) + sampled_pt
+        conditioning_eta = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled), dim=2)
+        jetsEta_sampled = model.flow_eta(conditioning_eta).sample((No_samples,))
+        jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => eta_sampled = -1
+        jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled)
+    
+        # take only the conditioning from j column
+        # this conditioning depends on the jets (0...j-1) + sampled_pt + sampled_eta
+        conditioning_phi = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled, jetsEta_sampled), dim=2)
+        jetsPhi_sampled = model.flow_phi(conditioning_phi).sample((No_samples,))
+        jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => phi_sampled = -1
+        jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+
+    return fullGeneratedEvent
+    
+def existQuality_print(experiment, sampledEvent, logScaled_reco_target, plotJets, epoch):
+    # check exist flag
+    target_exist = logScaled_reco_target[:,plotJets,0]
+    sampled_exist = sampledEvent[:,plotJets,0]
+
+    # check overlapping values
+    mask_same_exist = target_exist == sampled_exist
+    fraction_same_exist = (torch.count_nonzero(mask_same_exist)/torch.numel(mask_same_exist)).cpu().numpy()
+
+    # keep only exist = 0
+    mask_exist_0 = target_exist == 0
+    mask_same_exist_0 = target_exist[mask_exist_0] == sampled_exist[mask_exist_0]
+    fraction_same_exist_0 = (torch.count_nonzero(mask_same_exist_0)/torch.numel(mask_same_exist_0)).cpu().numpy()
+
+    # keep only exist = 1
+    mask_exist_1 = target_exist == 1
+    mask_same_exist_1 = target_exist[mask_exist_1] == sampled_exist[mask_exist_1]
+    fraction_same_exist_1 = (torch.count_nonzero(mask_same_exist_1)/torch.numel(mask_same_exist_1)).cpu().numpy()
+
+    # plot quality of `exist` sampling
+    fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+    ax.bar(["all Jets", "Jets With Exist=0", "Jets With Exist=1"], [fraction_same_exist, fraction_same_exist_0, fraction_same_exist_1], color ='maroon', width = 0.4)
+    ax.set_ylabel(f'Fraction of correct assignments from total values')
+    experiment.log_figure(f"Quality_flow_exist jets:{plotJets}", fig, step=epoch)
+
+def sampling_print(experiment, sampledEvent, logScaled_reco_target, mask_recoParticles, plotJets, epoch, onlyExistElem=False):
+
+    # plot [pt,eta,phi]
+    var_name = ['pt', 'eta', 'phi']
+    
+    partialMaskReco = mask_recoParticles[:,plotJets]
+    partialMaskReco = partialMaskReco.bool()
+
+    if onlyExistElem:
+        check_target_events_withExist = logScaled_reco_target[:,plotJets,0] == 1
+        partialMaskReco = torch.logical_and(partialMaskReco, check_target_events_withExist)
+
+    # keep objects starting from pt=1
+    fullGeneratedEvent_fromPt = sampledEvent[:,plotJets,1:]
+    maskedGeneratedEvent = fullGeneratedEvent_fromPt[partialMaskReco]
+
+    # keep objects starting from pt=1
+    partial_logScaled_reco_sortedBySpanet = logScaled_reco_target[:,plotJets,1:]
+    maskedTargetEvent = partial_logScaled_reco_sortedBySpanet[partialMaskReco]
+
+    # check pt,eta,phi distrib
+    for plot_var in range(3):
+
+        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+        diff_generatedAndTarget = (maskedGeneratedEvent[:,plot_var] - maskedTargetEvent[:,plot_var])
+        ax.hist(diff_generatedAndTarget.detach().cpu().numpy(), range=(-5,5), bins=20, histtype='step', color='b', stacked=False, fill=False)
+        ax.set_xlabel(f'{var_name[plot_var]}_generated - {var_name[plot_var]}_target')
+        experiment.log_figure(f"Diff_generated_{var_name[plot_var]} for jets{plotJets}", fig, step=epoch)
+
+        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+        h = ax.hist2d(maskedGeneratedEvent[:,plot_var].detach().cpu().numpy(),
+                      maskedTargetEvent[:,plot_var].detach().cpu().numpy(),
+                      bins=30, range=[(-5,5),(-5,5)], cmin=1)
+        fig.colorbar(h[3], ax=ax)
+        ax.set_xlabel(f'sampled {var_name[plot_var]}')
+        ax.set_ylabel(f'target {var_name[plot_var]}')
+        experiment.log_figure(f"2D_correlation_{var_name[plot_var]} for jets{plotJets}", fig,step=epoch)
 
 
 def validation_print(experiment, flow_pr, wrong_pt_batch_flow_pr, wrong_ptAndEta_batch_flow_pr, epoch, range_x=(-60,60), no_bins=100,
@@ -674,130 +803,17 @@ def train( device, name_dir, config,  outputDir, dtype,
                                     range_x=(-60,60), no_bins=120, label1='diff: pt_0 10%',
                                     label2=f'diff: pt_0 10% and eta {difference_eta}', particles='partons')
 
-                    # check model by generating jets
-                    # not at every epoch
-                    if e % 5 == 0:
+                    # print sampled partons
+                    fullGeneratedEvent = sample_fullRecoEvent(model, logScaled_partons, logScaled_reco_sortedBySpanet.shape[0], device, dtype, No_samples=1)
 
-                        null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 4), device=device, dtype=dtype) * -1
-                        null_token[:,0,0] = 0 # exist flag = 0 not -1
-                        fullGeneratedEvent = torch.empty((logScaled_reco_sortedBySpanet.shape[0], 0, 4), device=device, dtype=dtype)
-                        scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons))
-                        
-                        for j in range(model.no_max_objects):
+                    allJets = [i for i in range(config.transferFlow.no_max_objects)]
+                    sampling_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, allJets, e, onlyExistElem=True)
+                    existQuality_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, allJets, e)
 
-                            if j == 0:
-                                fullGeneratedEvent = torch.cat((fullGeneratedEvent, null_token), dim=1)
-                            else:
-                                generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled), dim=2)
-                                fullGeneratedEvent = torch.cat((fullGeneratedEvent, generated_jet), dim=1)
-
-                            # mask jets with index > 8 and exist==0 (the others must be unmasked)
-                            mask_generatedEvent = torch.ones((fullGeneratedEvent.shape[0], fullGeneratedEvent.shape[1]), device=device, dtype=dtype)
-                            mask_generatedEvent[:,9:] = torch.where(fullGeneratedEvent[:,9:,0] == 0, 0, mask_generatedEvent[:,9:])
-                            
-                            scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(fullGeneratedEvent) * mask_generatedEvent[..., None])
-                                
-                            tgt_mask = model.transformer_model.generate_square_subsequent_mask(
-                                        scaledLogReco_afterLin.size(1), device=device)
-
-                            if dtype == torch.float32:
-                                tgt_mask = tgt_mask.float()
-                            elif dtype == torch.float64:
-                                tgt_mask = tgt_mask.double()
-                                
-                            output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                                                    tgt_mask=tgt_mask)
-
-                            # take only the conditioning from j column
-                            # this conditioning depends on the jets (0...j-1)
-                            conditioning_exist = output_decoder[:,j:j+1]
-                            jetExist_sampled = model.flow_exist(conditioning_exist).sample((1,))
-                            jetExist_sampled = jetExist_sampled.squeeze(dim=0)
-                            # remake the `exist` flag discrete
-                            jetExist_sampled = torch.where(jetExist_sampled < 0.5, 0, 1)
-
-                            # take only the conditioning from j column
-                            # this conditioning depends on the jets (0...j-1)
-                            conditioning_pt = output_decoder[:,j:j+1]
-                            jetsPt_sampled = model.flow_pt(conditioning_pt).sample((1,))
-                            jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
-                            # if sampled_exist == 0 => pt_sampled = -1
-                            jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled)
-
-                            # take only the conditioning from j column
-                            # this conditioning depends on the jets (0...j-1) + sampled_pt
-                            conditioning_eta = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled), dim=2)
-                            jetsEta_sampled = model.flow_eta(conditioning_eta).sample((1,))
-                            jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
-                            # if sampled_exist == 0 => eta_sampled = -1
-                            jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled)
-
-                            # take only the conditioning from j column
-                            # this conditioning depends on the jets (0...j-1) + sampled_pt + sampled_eta
-                            conditioning_phi = torch.cat((output_decoder[:,j:j+1], jetsPt_sampled, jetsEta_sampled), dim=2)
-                            jetsPhi_sampled = model.flow_phi(conditioning_phi).sample((1,))
-                            jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
-                            # if sampled_exist == 0 => phi_sampled = -1
-                            jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
-
-                        var_name = ['pt', 'eta', 'phi']
-
-                        partialMaskReco = mask_recoParticles[:,:model.no_max_objects]
-                        partialMaskReco = partialMaskReco.bool()
-
-                        # keep objects starting from pt = 1
-                        fullGeneratedEvent_fromPt = fullGeneratedEvent[:,:,1:]
-                        maskedGeneratedEvent = fullGeneratedEvent_fromPt[partialMaskReco]
-
-                        # keep objects starting from pt = 1
-                        partial_logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:model.no_max_objects, 1:]
-                        maskedTargetEvent = partial_logScaled_reco_sortedBySpanet[partialMaskReco]
-
-                        # check pt,eta,phi distrib
-                        for plot_var in range(3):
-
-                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
-                            diff_generatedAndTarget = (maskedGeneratedEvent[:,plot_var] - maskedTargetEvent[:,plot_var])
-                            ax.hist(diff_generatedAndTarget.detach().cpu().numpy(), range=(-5,5), bins=20, histtype='step', color='b', stacked=False, fill=False)
-                            ax.set_xlabel(f'{var_name[plot_var]}_generated - {var_name[plot_var]}_target')
-                            exp.log_figure(f"Diff_generated_{var_name[plot_var]}", fig, step=e)
-
-                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
-                            h = ax.hist2d(maskedGeneratedEvent[:,plot_var].detach().cpu().numpy(),
-                                          maskedTargetEvent[:,plot_var].detach().cpu().numpy(),
-                                          bins=30, range=[(-5,5),(-5,5)], cmin=1)
-                            fig.colorbar(h[3], ax=ax)
-                            ax.set_xlabel(f'sampled')
-                            ax.set_ylabel(f'target')
-                            exp.log_figure(f"2D_correlation_{var_name[plot_var]}", fig,step=e)
-
-
-                        # check exist flag
-                        target_exist = logScaled_reco_sortedBySpanet[:,:model.no_max_objects,0]
-                        partial_target_exist = target_exist[partialMaskReco]
-
-                        sampled_exist = fullGeneratedEvent[:,:model.no_max_objects,0]
-                        partial_sampled_exist = sampled_exist[partialMaskReco]
-
-                        # check overlapping values
-                        mask_same_exist = partial_target_exist == partial_sampled_exist
-                        fraction_same_exist = (torch.count_nonzero(mask_same_exist)/torch.numel(mask_same_exist)).cpu().numpy()
-
-                        # keep only exist = 0
-                        mask_exist_0 = partial_target_exist == 0
-                        mask_same_exist_0 = partial_target_exist[mask_exist_0] == partial_sampled_exist[mask_exist_0]
-                        fraction_same_exist_0 = (torch.count_nonzero(mask_same_exist_0)/torch.numel(mask_same_exist_0)).cpu().numpy()
-
-                        # keep only exist = 1
-                        mask_exist_1 = partial_target_exist == 1
-                        mask_same_exist_1 = partial_target_exist[mask_exist_1] == partial_sampled_exist[mask_exist_1]
-                        fraction_same_exist_1 = (torch.count_nonzero(mask_same_exist_1)/torch.numel(mask_same_exist_1)).cpu().numpy()
-
-                        # plot quality of `exist` sampling
-                        fig, ax = plt.subplots(figsize=(7,6), dpi=100)
-                        ax.bar(["all Jets", "Jets With Exist=0", "Jets With Exist=1"], [fraction_same_exist, fraction_same_exist_0, fraction_same_exist_1], color ='maroon', width = 0.4)
-                        ax.set_ylabel(f'Fraction of correct assignments from total values')
-                        exp.log_figure(f"Quality_flow_exist", fig, step=e)
+                    for jet in range(config.transferFlow.no_max_objects):
+                        sampling_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, jet, e, onlyExistElem=True)
+                        existQuality_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, jet, e)
+                   
                                                     
                     
 
