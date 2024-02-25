@@ -54,7 +54,10 @@ def sample_next_token(model, logScaled_reco_sortedBySpanet, logScaled_partons, m
     elif dtype == torch.float64:
         tgt_mask = tgt_mask.double()
         
-    output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+    output_decoder = scaledLogReco_afterLin
+
+    for transfermer in self.transformer_list:
+        output_decoder = transfermer(scaledLogParton_afterLin, output_decoder, tgt_mask=self.tgt_mask)
 
     # take only the conditioning from j column
     # this conditioning depends on the jets (0...j-1)
@@ -120,8 +123,10 @@ def sample_fullRecoEvent(model, logScaled_partons, no_events, device, dtype, No_
         elif dtype == torch.float64:
             tgt_mask = tgt_mask.double()
             
-        output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                                tgt_mask=tgt_mask)
+        output_decoder = scaledLogReco_afterLin
+
+        for transfermer in self.transformer_list:
+            output_decoder = transfermer(scaledLogParton_afterLin, output_decoder, tgt_mask=self.tgt_mask)
     
         # take only the conditioning from j column
         # this conditioning depends on the jets (0...j-1)

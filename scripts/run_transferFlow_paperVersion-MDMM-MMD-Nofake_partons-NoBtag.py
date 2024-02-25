@@ -61,7 +61,10 @@ def sample_next_token(model, logScaled_reco_sortedBySpanet, logScaled_partons, m
     elif dtype == torch.float64:
         tgt_mask = tgt_mask.double()
         
-    output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+    output_decoder = scaledLogReco_afterLin
+
+    for transfermer in self.transformer_list:
+        output_decoder = transfermer(scaledLogParton_afterLin, output_decoder, tgt_mask=self.tgt_mask)
 
     # take the last conditioning (the one on jet_0 ... jet_-1) 
     conditioning_exist = output_decoder[:,-1:]
@@ -125,8 +128,10 @@ def sample_fullRecoEvent(model, logScaled_partons, no_events, device, dtype, No_
         elif dtype == torch.float64:
             tgt_mask = tgt_mask.double()
             
-        output_decoder = model.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin,
-                                                tgt_mask=tgt_mask)
+        output_decoder = scaledLogReco_afterLin
+
+        for transfermer in self.transformer_list:
+            output_decoder = transfermer(scaledLogParton_afterLin, output_decoder, tgt_mask=self.tgt_mask)
     
         # take only the conditioning from j column
         # this conditioning depends on the jets (0...j-1)
@@ -533,6 +538,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         sum_loss = 0.
         sum_loss_constrain_MSE = 0.
         sum_loss_constrain_MMD = 0.
+        sum_loss_MDMM = 0.
         loss_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
         loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
         total_loss_per_pt = torch.zeros(len(pt_bins) - 1, device=device)
@@ -606,7 +612,8 @@ def train( device, name_dir, config,  outputDir, dtype,
             mdmm_return.value.backward()
             optimizer.step()
             
-            sum_loss += mdmm_return.value.item()
+            sum_loss += loss_main.item()
+            sum_loss_MDMM += mdmm_return.value.item()
             sum_loss_constrain_MSE += constrain_loss_MSE.item()
             sum_loss_constrain_MMD += constrain_loss_MMD.item()
             sum_loss_pt += -avg_flow_prob_pt
@@ -636,6 +643,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         ### END of training 
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("loss_epoch_total_train", sum_loss/N_train, epoch=e)
+            exp.log_metric("loss_train_epoch_MDMM", sum_loss_MDMM/N_train, epoch=e)
             exp.log_metric('loss_train_epoch_constrainMSE', sum_loss_constrain_MSE/N_train, step=ii)
             exp.log_metric('loss_train_epoch_constrainMMD', sum_loss_constrain_MMD/N_train, step=ii)
             exp.log_metric("loss_train_epoch_pt", sum_loss_pt/N_train, epoch=e)
@@ -650,6 +658,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             #     exp.log_metric("learning_rate", scheduler.get_last_lr(), epoch=e, step=ii)
 
         total_valid_loss = 0.
+        total_valid_MDMM = 0.
         total_valid_loss_constrain_MSE = 0.
         total_valid_loss_constrain_MMD = 0.
         loss_Valid_total_each_object = torch.zeros(config.transferFlow.no_max_objects, device=device)
@@ -700,7 +709,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                 constrain_loss_MMD = compute_mmd_regr_loss(next_token, logScaled_reco_sortedBySpanet[:,jet_iteration],
                                                        config.training_params.mmd_kernel, device, dtype)
                 
-                total_valid_loss += mdmm_return.value.item() # using only the main loss
+                total_valid_loss += loss_main.item() # using only the main loss
+                total_valid_MDMM += mdmm_return.value.item()
                 total_valid_loss_constrain_MSE += constrain_loss_MSE.item()
                 total_valid_loss_constrain_MMD += constrain_loss_MMD.item()
                 sum_valid_loss_pt += -avg_flow_prob_pt
@@ -879,6 +889,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
         if exp is not None and device==0 or world_size is None:
             exp.log_metric("total_valid_loss", total_valid_loss/N_valid, epoch=e)
+            exp.log_metric("total_valid_loss_MDMM", total_valid_MDMM/N_valid, epoch=e)
             exp.log_metric("total_valid_loss_constrainMSE", total_valid_loss_constrain_MSE/N_valid, epoch=e)
             exp.log_metric("total_valid_loss_constrainMMD", total_valid_loss_constrain_MMD/N_valid, epoch=e)
             exp.log_metric("total_valid_loss_pt", sum_valid_loss_pt/N_valid, epoch=e)
