@@ -19,6 +19,8 @@ pyarrow
 fsspec
 pynvml
 jupyter
+notebook
 correctionlib
 comet_ml
 h5py
+onnxruntime-gpu

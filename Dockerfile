@@ -1,6 +1,5 @@
-ARG FROM_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
+ARG FROM_IMAGE=cmsml/cmsml:3.11
 FROM ${FROM_IMAGE}
-
 
 ADD requirements.txt /tmp/
 RUN python -m pip install -r /tmp/requirements.txt

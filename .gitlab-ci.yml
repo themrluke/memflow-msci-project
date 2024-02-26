@@ -32,7 +32,7 @@ variables:
 build_docker:
   extends: .build_docker_template
   variables:
-    BUILD_ARGS: "FROM_IMAGE=anibali/pytorch:1.13.1-cuda11.7"
+    BUILD_ARGS: "FROM_IMAGE=cmsml/cmsml:3.11"
     REGISTRY_IMAGE_PATH: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
     # TO_COMMIT: ${CI_REGISTRY_IMAGE}:lxplus-cc7-latest
 

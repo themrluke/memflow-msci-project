@@ -10,7 +10,7 @@ import torch
 import numpy as np
 import hist
 from numba import njit
-torch.set_default_dtype(torch.double)
+#torch.set_default_dtype(torch.double)
 
 from .utils import get_weight
 
@@ -96,6 +96,11 @@ class Dataset_PartonLevel(Dataset):
             print("Create new file for Log_H_thad_tlep_ISR_cartesian")
             self.ProcessCartesianScaled()
 
+            self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian = torch.load(
+                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR_cartesian"))
+            self.logScaled_data_higgs_t_tbar_ISR_cartesian = torch.load(
+                self.processed_file_names("LogScaled_H_thad_tlep_ISR_cartesian"))
+
             print("Create new file for Log_H_thad_tlep_ISR")
             self.ProcessScaled()
 
@@ -163,6 +168,13 @@ class Dataset_PartonLevel(Dataset):
                 self.processed_file_names("Log_mean_std_H_thad_tlep_ISR"))
             self.logScaled_data_higgs_t_tbar_ISR = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
+
+        if 'logScaled_data_higgs_t_tbar_ISR_withEnergy' in self.parton_list or 'mean_log_data_higgs_t_tbar_ISR_withEnergy' in self.parton_list:
+            print("Load logScaled_data_higgs_t_tbar_ISR_withEnergy")
+            self.mean_log_data_higgs_t_tbar_ISR_withEnergy, self.std_log_data_higgs_t_tbar_ISR_withEnergy = torch.load(
+                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR_withEnergy"))
+            self.logScaled_data_higgs_t_tbar_ISR_withEnergy = torch.load(
+                self.processed_file_names("LogScaled_H_thad_tlep_ISR_withEnergy"))
 
         if dtype != None:            
            for field in self.parton_list:
@@ -497,6 +509,20 @@ class Dataset_PartonLevel(Dataset):
         scaled_boost_output = (boost_output - mean_boost)/std_boost
         torch.save((mean_boost, std_boost), self.processed_file_names("Log_mean_std_boost"))
         torch.save(scaled_boost_output, self.processed_file_names("LogScaled_boost"))
+
+        # add energy in [pt, eta, phi]
+        energy = self.logScaled_data_higgs_t_tbar_ISR_cartesian[:,:,0]
+        energy_mean = self.mean_log_data_higgs_t_tbar_ISR_cartesian[0]
+        energy_std = self.std_log_data_higgs_t_tbar_ISR_cartesian[0]
+
+        scaledIntermediateParticles_withEnergy = torch.cat((energy.unsqueeze(dim=2), scaledIntermediateParticles), dim=2)
+        mean_LogIntermediateParticles_withEnergy = torch.cat((energy_mean.reshape(1), mean_LogIntermediateParticles), dim=0)
+        std_LogIntermediateParticles_withEnergy = torch.cat((energy_std.reshape(1), std_LogIntermediateParticles), dim=0)
+
+        torch.save((mean_LogIntermediateParticles_withEnergy, std_LogIntermediateParticles_withEnergy), self.processed_file_names(
+            "Log_mean_std_H_thad_tlep_ISR_withEnergy"))
+        torch.save(scaledIntermediateParticles_withEnergy, self.processed_file_names(
+            "LogScaled_H_thad_tlep_ISR_withEnergy"))
         
         
     def get_Higgs(self):

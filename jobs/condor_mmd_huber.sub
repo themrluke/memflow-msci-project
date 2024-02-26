@@ -1,0 +1,15 @@
+universe                = vanilla
+MY.SingularityImage     = "/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:base-latest"
+executable              = script_flowtraining_nopretraining_v4.sh
+when_to_transfer_output = ON_EXIT
+output                  = $(ClusterId).$(ProcId).out
+error                   = $(ClusterId).$(ProcId).err
+log                     = $(ClusterId).$(ProcId).log
+request_gpus            = 1
+request_cpus            = 3
+#+Requirements           = OpSysAndVer =?= "CentOS7"
+#+Requirements           = regexp("V100", TARGET.CUDADeviceName)
++JobFlavour = "nextweek"
+
+#+AccountingGroup = "group_u_CMS.CAF.COMM"
+queue 1

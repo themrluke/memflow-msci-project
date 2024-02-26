@@ -6,6 +6,10 @@ import numpy as np
 import awkward as ak
 from torch.utils.data import Dataset
 
+from .utils_orderJetsSpanet import higgsAssignment_SPANET
+from .utils_orderJetsSpanet import sortObjects_bySpanet
+
+
 
 class Dataset_RecoLevel_NoBoost(Dataset):
     def __init__(self, root, object_types=["jets", "lepton_reco", "met", "boost"], dev=None, debug=False,
@@ -58,6 +62,11 @@ class Dataset_RecoLevel_NoBoost(Dataset):
 
             print("Create new file for LogData")
             self.scaleObjects()
+            self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
+                                            torch.load(self.processed_file_names('scaledLogRecoParticles'))
+            
+            print("Create new file for sortJets_bySpanet")
+            self.sortJets_bySpanet()
 
         self.mask_jets, self.data_jets = torch.load(self.processed_file_names("jets"))
         self.mask_lepton, self.data_lepton = torch.load(self.processed_file_names("lepton_reco"))
@@ -104,6 +113,16 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             print("Load scaledLogRecoParticles")
             self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
                                             torch.load(self.processed_file_names('scaledLogRecoParticles'))
+
+        if 'scaledLogRecoParticles_withEnergy' in self.reco_list:
+            print("Load scaledLogRecoParticles_withEnergy")
+            self.scaledLogRecoParticles_withEnergy, self.meanRecoParticles_withEnergy, self.stdRecoParticles_withEnergy = \
+                                            torch.load(self.processed_file_names('scaledLogRecoParticles_withEnergy'))
+            
+        if 'scaledLogReco_sortedBySpanet' in self.reco_list:
+            print("Load scaledLogReco_sortedBySpanet")
+            self.scaledLogReco_sortedBySpanet, self.mask_scaledLogReco_sortedBySpanet, self.meanRecoParticles, self.stdRecoParticles = \
+                                    torch.load(self.processed_file_names('scaledLogReco_sortedBySpanet'))
 
 
         if dtype != None:
@@ -250,10 +269,10 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         # pt or E.  all the rest we don't log scale it
         log_objectTensor[:,:,0] = torch.sign(log_objectTensor[:,:,0])*torch.log(1+torch.abs(log_objectTensor[:,:,0]))
         if isCartesian:
-            # case [E,px,py,pz] or [x,y,z,t]
+            # case [E,px,py,pz]
             no_elements = 4             
         else:
-            # case ["pt", "eta", "phi", "btag", + prov
+            # case ["pt", "eta", "phi", "btag", + prov]
             no_elements = 3
             
         for i in range(no_elements):
@@ -318,6 +337,49 @@ class Dataset_RecoLevel_NoBoost(Dataset):
                        self.processed_file_names('scaledLogRecoParticlesCartesian'))
         torch.save((scaledLogRecoParticles, LogRecoParticles, meanRecoParticles, stdRecoParticles),
                        self.processed_file_names('scaledLogRecoParticles'))
+
+        energy = scaledLogRecoParticlesCartesian[:,:,0]
+        energy_mean = meanRecoCartesian[0]
+        energy_std = stdRecoCartesian[0]
+
+        #[E, pt, eta, phi]
+        scaledLogRecoParticles_withEnergy = torch.cat((energy.unsqueeze(dim=2), scaledLogRecoParticles), dim=2)
+        meanRecoParticles_withEnergy = torch.cat((energy_mean.reshape(1), meanRecoParticles), dim=0)
+        stdRecoParticles_withEnergy = torch.cat((energy_std.reshape(1), stdRecoParticles), dim=0)
+        torch.save((scaledLogRecoParticles_withEnergy, meanRecoParticles_withEnergy, stdRecoParticles_withEnergy),
+                    self.processed_file_names('scaledLogRecoParticles_withEnergy'))
+        
+    def sortJets_bySpanet(self):
+        spanet_tensor = self.scaledLogRecoParticles[:,:16,4:7] # only jets
+        spanet_assignment = higgsAssignment_SPANET(spanet_values=spanet_tensor)
+        
+        # order H1, H2, thad1, thad2, thad3, tlep1, lepton, MET
+        scaledLogReco_sortedBySpanet = sortObjects_bySpanet(spanet_assignment=spanet_assignment, scaledLogReco=self.scaledLogRecoParticles,
+                                               maskJets=self.mask_jets, order=[0, 1, 2])
+
+        # at this point the missing Spanet jets and the padding have -100 values
+        # 'scaledLogReco_sortedBySpanet' doesn't contain the 'exist' flag for each jet
+        exist = torch.where((scaledLogReco_sortedBySpanet[:,:,0] != -100), 1, 0).unsqueeze(dim=2)
+        # attach exist flag to each jet
+        scaledLogReco_sortedBySpanet = torch.cat((exist, scaledLogReco_sortedBySpanet), dim=2)
+
+        # check exist flag is ok
+        if torch.count_nonzero((scaledLogReco_sortedBySpanet[...,0]*scaledLogReco_sortedBySpanet[...,1]) == -100) > 0:
+            raise Exception("Check mask... this product must be 0")
+
+        # last part: modify the missing SPANET jets to be [-1...]
+        # keep padding jets as [-100...]
+        # take the first 6 spanet jets
+        scaledLogReco_sortedBySpanet[:,:6,:] = torch.where((scaledLogReco_sortedBySpanet[:,:6,:] == -100), -1, scaledLogReco_sortedBySpanet[:,:6,:])
+
+        # check if the change works (8 because lepton and MET are not -100)
+        if torch.count_nonzero(scaledLogReco_sortedBySpanet[:,:8,:] == -100) > 0:
+            raise Exception("Missing jets are still -100")
+
+        # check pt != -100
+        mask_scaledLogReco_sortedBySpanet = (scaledLogReco_sortedBySpanet[:,:,1] != -100).bool()
+        torch.save((scaledLogReco_sortedBySpanet, mask_scaledLogReco_sortedBySpanet, self.meanRecoParticles, self.stdRecoParticles),
+                    self.processed_file_names('scaledLogReco_sortedBySpanet'))
 
     def __getitem__(self, index):
         
