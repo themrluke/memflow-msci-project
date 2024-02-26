@@ -1,0 +1,2 @@
+cd /work/dvalsecc/MEM/MEMFlow && source myenv/bin/activate &&python scripts/run_UnscaleTensor_labframe.py --model-dir /work/dvalsecc/MEM/models_archive/flow_pretraining_huber_mmd_labframe_gluon_boostpzscale/preTraining_spanet_labframe_v1-gluon-redo_hiddenFeatures:64_dimFeedForward:256_nheadEnc:8_LayersEnc:4_nheadDec:8_LayersDec:4// --conf config_spanet_labframe_v1-gluon-redo.yaml --on-GPU --data-validation /work/dvalsecc/MEM/datasets/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part2.parquet
+
