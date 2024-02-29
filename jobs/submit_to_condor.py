@@ -2,14 +2,16 @@ import htcondor
 import sys
 import argparse
 import os
+import yaml
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--version', type=str, required=True)
+parser.add_argument('--path-configFile', type=str, required=True)
 parser.add_argument('--dry', action="store_true")
-parser.add_argument('--antonio', action="store_true")
 parser.add_argument('--interactive', action="store_true")
 parser.add_argument('--ngpu', type=int, default=1)
+parser.add_argument('--ncpu', type=int, default=3)
 parser.add_argument("--good-gpus", action="store_true")
 parser.add_argument("--args", nargs="+", type=str, help="additional args")
 args = parser.parse_args()
@@ -17,17 +19,24 @@ args = parser.parse_args()
 model = args.model
 version = args.version
 dry = args.dry
-antonio = args.antonio
 interactive = args.interactive
+path_to_conf = args.path_configFile
 
 col = htcondor.Collector()
 credd = htcondor.Credd()
 credd.add_user_cred(htcondor.CredTypes.Kerberos, None)
 
-if antonio:
-    basedir = "/afs/cern.ch/user/a/adpetre/public/memflow/MEMFlow"
-else:
-    basedir = "/afs/cern.ch/work/d/dvalsecc/private/MEM/MEMFlow"
+# Read config file in 'conf'
+with open(path_to_conf) as f:
+    try:
+        conf = yaml.safe_load(f)
+    except yaml.YAMLError as exc:
+        print(exc)
+
+print("Path to root & outputDir: \n", conf)
+
+basedir = conf['path_to_root']
+outputDir = conf['path_to_outputDir']
 
 sub = htcondor.Submit()
 
@@ -42,7 +51,7 @@ if model == "huber_mmd":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"pretraining_huber_mmd/pretraining_huber_mmd_v{version}.yaml flow_pretraining_huber_mmd"
+    sub['arguments'] = f"{basedir} configs/pretraining_huber_mmd/pretraining_huber_mmd_v{version}.yaml {outputDir}/flow_pretraining_huber_mmd"
 
     
 elif model == "mmd_huber":
@@ -53,7 +62,7 @@ elif model == "mmd_huber":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"pretraining_mmd_huber/pretraining_mmd_huber_v{version}.yaml flow_pretraining_mmd_huber"  
+    sub['arguments'] = f"{basedir} configs/pretraining_mmd_huber/pretraining_mmd_huber_v{version}.yaml {outputDir}/flow_pretraining_mmd_huber"  
 
 elif model == "huber_mmd_labframe":
     sub['Executable'] = f"{basedir}/jobs/script_condor_pretraining_huber_mmd_labframe.sh"
@@ -63,7 +72,7 @@ elif model == "huber_mmd_labframe":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"testmatch"'
-    sub['arguments'] = f"pretraining_huber_mmd_labframe/pretraining_huber_mmd_labframe_v{version}.yaml flow_pretraining_huber_mmd_labframe"
+    sub['arguments'] = f"{basedir} configs/pretraining_huber_mmd_labframe/pretraining_huber_mmd_labframe_v{version}.yaml {outputDir}/flow_pretraining_huber_mmd_labframe"
 
 elif model == "huber_mmd_labframe_gluon":
     sub['Executable'] = f"{basedir}/jobs/script_condor_pretraining_huber_mmd_labframe_gluon.sh"
@@ -73,7 +82,7 @@ elif model == "huber_mmd_labframe_gluon":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"testmatch"'
-    sub['arguments'] = f"pretraining_huber_mmd_labframe_gluon/pretraining_huber_mmd_labframe_v{version}.yaml flow_pretraining_huber_mmd_labframe_gluon"
+    sub['arguments'] = f"{basedir} configs/pretraining_huber_mmd_labframe_gluon/pretraining_huber_mmd_labframe_v{version}.yaml {outputDir}/flow_pretraining_huber_mmd_labframe_gluon"
 
 elif model == "huber_mmd_labframe_gluon_distributed":
     sub['Executable'] = f"{basedir}/jobs/script_condor_pretraining_distributed_labframe_gluon.sh"
@@ -83,7 +92,7 @@ elif model == "huber_mmd_labframe_gluon_distributed":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"testmatch"'
-    sub['arguments'] = f"pretraining_huber_mmd_labframe_gluon/pretraining_huber_mmd_labframe_v{version}.yaml flow_pretraining_huber_mmd_labframe_gluon/distrubuted_lxplus"
+    sub['arguments'] = f"{basedir} configs/pretraining_huber_mmd_labframe_gluon/pretraining_huber_mmd_labframe_v{version}.yaml {outputDir}/flow_pretraining_huber_mmd_labframe_gluon/distrubuted_lxplus"
 
 
 elif model == "flow_labframe":
@@ -94,7 +103,7 @@ elif model == "flow_labframe":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"flow_pretrain_labframe_logit/flow_pretrain_labframe_logit_v{version}.yaml flow_pretrain_labframe_logit"
+    sub['arguments'] = f"{basedir} configs/flow_pretrain_labframe_logit/flow_pretrain_labframe_logit_v{version}.yaml {outputDir}/flow_pretrain_labframe_logit"
 
 
 elif model == "flow_labframe_psloss":
@@ -105,7 +114,7 @@ elif model == "flow_labframe_psloss":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"flow_pretrain_labframe_psloss_logit/flow_labframe_psloss_v{version}.yaml flow_labframe_psloss_logit"
+    sub['arguments'] = f"{basedir} configs/flow_pretrain_labframe_psloss_logit/flow_labframe_psloss_v{version}.yaml {outputDir}/flow_labframe_psloss_logit"
 
 
 elif model == "flow_labframe_sampling":
@@ -116,7 +125,7 @@ elif model == "flow_labframe_sampling":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"flow_pretrain_labframe_sampling/flow_labframe_sampling_v{version}.yaml flow_labframe_sampling"
+    sub['arguments'] = f"{basedir} configs/flow_pretrain_labframe_sampling/flow_labframe_sampling_v{version}.yaml {outputDir}/flow_labframe_sampling"
 
 
 elif model == "flow_nopretrain":
@@ -127,7 +136,7 @@ elif model == "flow_nopretrain":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"flow_nopretrain_spanet_logit/flow_nopretrain_v{version}.yaml flow_nopretrain_spanet_logit"
+    sub['arguments'] = f"{basedir} configs/flow_nopretrain_spanet_logit/flow_nopretrain_v{version}.yaml {outputDir}/flow_nopretrain_spanet_logit"
 
 
 elif model == "flow_evaluation_labframe":
@@ -148,7 +157,7 @@ elif model == "transfer_flow_firstVersion":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_train/transferFlow_v{version}.yaml transferFlow_v{version}"
+    sub['arguments'] = f"{basedir} configs/transferFlow_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_v{version}"
 
 elif model == "transfer_flow_paperVersion":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper.sh"
@@ -158,17 +167,7 @@ elif model == "transfer_flow_paperVersion":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper_v{version}"
-    
-elif model == "run_transferFlow_paperVersion-fake_partons-NoBtag":
-    sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_fakepartons_nobtag.sh"
-    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper_fakepartons_nobtag-$(ClusterId).$(ProcId).err"
-    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_paper_fakepartons_nobtag-$(ClusterId).$(Proc1Id).out"
-    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_paper_fakepartons_nobtag-$(ClusterId).log"
-    sub['MY.SendCredential'] = True
-    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
-    sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper__fakepartons_nobtag_v{version}"
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paper_v{version}"
 
 elif model == "run_transferFlow_paperVersion-Nofake_partons-NoBtag":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_Nofakepartons_nobtag.sh"
@@ -178,7 +177,10 @@ elif model == "run_transferFlow_paperVersion-Nofake_partons-NoBtag":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper__Nofakepartons_nobtag_v{version}"
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paper__Nofakepartons_nobtag_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
 
 elif model == "run_transferFlow_paperVersion-MDMM-Nofake_partons-NoBtag":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_MDMM_Nofakepartons_nobtag.sh"
@@ -188,7 +190,23 @@ elif model == "run_transferFlow_paperVersion-MDMM-Nofake_partons-NoBtag":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper_MDMM_Nofakepartons_nobtag_v{version}"
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paper_MDMM_Nofakepartons_nobtag_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "pretrain_transferFlow_exist":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_pretrain_transferFlow_exist.sh"
+    sub['Error'] = f"{basedir}/jobs/error/pretrain_transferFlow_exist-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/pretrain_transferFlow_exist-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/pretrain_transferFlow_exist-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paper_MDMM_Nofakepartons_nobtag_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
 
 elif model == "run_transferFlow_paperVersion-MDMM-MMD-Nofake_partons-NoBtag":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_MDMM_MMD_Nofakepartons_nobtag.sh"
@@ -198,7 +216,10 @@ elif model == "run_transferFlow_paperVersion-MDMM-MMD-Nofake_partons-NoBtag":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_paper_train/transferFlow_v{version}.yaml transferFlow_paper_MDMM_MMD_Nofakepartons_nobtag_v{version}"
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paper_MDMM_MMD_Nofakepartons_nobtag_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
 
 elif model == "transfer_flow_idea3":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_idea3.sh"
@@ -208,7 +229,7 @@ elif model == "transfer_flow_idea3":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_idea3_train/transferFlow_v{version}.yaml transferFlow_idea3_train_v{version}"
+    sub['arguments'] = f"{basedir} configs/transferFlow_idea3_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_idea3_train_v{version}"
 
 elif model == "transfer_flow_idea3_conditioned":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_idea3_conditioned.sh"
@@ -218,7 +239,7 @@ elif model == "transfer_flow_idea3_conditioned":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
-    sub['arguments'] = f"transferFlow_idea3_conditioning_train/transferFlow_v{version}.yaml transferFlow_idea3_conditioned_train_v{version}"
+    sub['arguments'] = f"{basedir} configs/transferFlow_idea3_conditioning_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_idea3_conditioned_train_v{version}"
     
 elif model == "classifier_nojets":
     sub['Executable'] = f"{basedir}/jobs/script_classifier_nojets.sh"
@@ -228,7 +249,7 @@ elif model == "classifier_nojets":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"longlunch"'
-    sub['arguments'] = f"classifier_no_jets/classifier_v{version}.yaml classifier_nojets_train_v{version}"
+    sub['arguments'] = f"{basedir} configs/classifier_no_jets/classifier_v{version}.yaml {outputDir}/classifier_nojets_train_v{version}"
     
 elif model == "classifier_nojets_v2":
     sub['Executable'] = f"{basedir}/jobs/script_classifier_nojets_v2.sh"
@@ -238,7 +259,7 @@ elif model == "classifier_nojets_v2":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"longlunch"'
-    sub['arguments'] = f"classifier_no_jets_v2/classifier_v{version}.yaml classifier_nojets_2nd_train_v{version}"
+    sub['arguments'] = f"{basedir} configs/classifier_no_jets_v2/classifier_v{version}.yaml {outputDir}/classifier_nojets_2nd_train_v{version}"
     
 elif model == "classifier_nojets_v3":
     sub['Executable'] = f"{basedir}/jobs/script_classifier_nojets_v3.sh"
@@ -248,21 +269,19 @@ elif model == "classifier_nojets_v3":
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"longlunch"'
-    sub['arguments'] = f"classifier_no_jets_v2/classifier_v{version}.yaml classifier_nojets_3rdVersion_2024_v{version}"
+    sub['arguments'] = f"{basedir} configs/classifier_no_jets_v2/classifier_v{version}.yaml {outputDir}/classifier_nojets_3rdVersion_2024_v{version}"
 
 # General
-sub['request_cpus'] = f"{args.ngpu*3}"
+sub['request_cpus'] = f"{args.ncpu}"
 sub['request_gpus'] = f"{args.ngpu}"
 if args.good_gpus:
     sub['requirements'] = 'regexp("A100", TARGET.CUDADeviceName) || regexp("V100", TARGET.CUDADeviceName)'
 
-    
-if model != "flow_evaluation_labframe" and not os.path.exists(f"{basedir}/configs/{sub['arguments'].split()[0]}"):
+print(f"{basedir}/{sub['arguments'].split()[1]}")
+
+if model != "flow_evaluation_labframe" and not os.path.exists(f"{basedir}/{sub['arguments'].split()[1]}"):
     print("Missing configuration file! The jobs has not been submitted")
     exit(1)
-
-if antonio:
-    sub['arguments'] = sub['arguments'] + " antonio"
     
 print(sub)
 if not dry:
