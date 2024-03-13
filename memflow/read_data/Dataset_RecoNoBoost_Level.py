@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 from .utils_orderJetsSpanet import higgsAssignment_SPANET
 from .utils_orderJetsSpanet import sortObjects_bySpanet
-
+from .utils_orderJetsSpanet import sortObjects_byProv
 
 
 class Dataset_RecoLevel_NoBoost(Dataset):
@@ -68,6 +68,11 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             print("Create new file for sortJets_bySpanet")
             self.sortJets_bySpanet()
 
+            print("Create new file for sortJets_byProv")
+            self.sortJets_byMatched()
+
+        
+
         self.mask_jets, self.data_jets = torch.load(self.processed_file_names("jets"))
         self.mask_lepton, self.data_lepton = torch.load(self.processed_file_names("lepton_reco"))
         self.mask_met, self.data_met = torch.load(self.processed_file_names("met"))
@@ -124,6 +129,10 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             self.scaledLogReco_sortedBySpanet, self.mask_scaledLogReco_sortedBySpanet, self.meanRecoParticles, self.stdRecoParticles = \
                                     torch.load(self.processed_file_names('scaledLogReco_sortedBySpanet'))
 
+        if 'scaledLogReco_sortedByProv' in self.reco_list:
+            print("Load scaledLogReco_sortedByProv")
+            self.scaledLogReco_sortedByProv, self.mask_scaledLogReco_sortedByProv, self.meanRecoParticles, self.stdRecoParticles = \
+                                    torch.load(self.processed_file_names('scaledLogReco_sortedByProv'))
 
         if dtype != None:
             for field in self.reco_list:
@@ -380,6 +389,38 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         mask_scaledLogReco_sortedBySpanet = (scaledLogReco_sortedBySpanet[:,:,1] != -100).bool()
         torch.save((scaledLogReco_sortedBySpanet, mask_scaledLogReco_sortedBySpanet, self.meanRecoParticles, self.stdRecoParticles),
                     self.processed_file_names('scaledLogReco_sortedBySpanet'))
+
+
+    def sortJets_byMatched(self):
+        prov_tensor = self.scaledLogRecoParticles[:,:16,-1] # only jets
+        
+        # order H1, H2, thad1, thad2, thad3, tlep1, lepton, MET
+        scaledLogReco_sortedByProv = sortObjects_byProv(scaledLogReco=self.scaledLogRecoParticles,
+                                               maskJets=self.mask_jets, order=[0, 1, 2])
+
+        # at this point the missing prov jets and the padding have -100 values
+        # 'scaledLogReco_sortedByProv' doesn't contain the 'exist' flag for each jet
+        exist = torch.where((scaledLogReco_sortedByProv[:,:,0] != -100), 1, 0).unsqueeze(dim=2)
+        # attach exist flag to each jet
+        scaledLogReco_sortedByProv = torch.cat((exist, scaledLogReco_sortedByProv), dim=2)
+
+        # check exist flag is ok
+        if torch.count_nonzero((scaledLogReco_sortedByProv[...,0]*scaledLogReco_sortedByProv[...,1]) == -100) > 0:
+            raise Exception("Check mask... this product must be 0")
+
+        # last part: modify the missing PROV jets to be [-1...]
+        # keep padding jets as [-100...]
+        # take the first 6 jets
+        scaledLogReco_sortedByProv[:,:6,:] = torch.where((scaledLogReco_sortedByProv[:,:6,:] == -100), -1, scaledLogReco_sortedByProv[:,:6,:])
+
+        # check if the change works (8 because lepton and MET are not -100)
+        if torch.count_nonzero(scaledLogReco_sortedByProv[:,:8,:] == -100) > 0:
+            raise Exception("Missing jets are still -100")
+
+        # check pt != -100
+        mask_scaledLogReco_sortedByProv = (scaledLogReco_sortedByProv[:,:,1] != -100).bool()
+        torch.save((scaledLogReco_sortedByProv, mask_scaledLogReco_sortedByProv, self.meanRecoParticles, self.stdRecoParticles),
+                    self.processed_file_names('scaledLogReco_sortedByProv'))
 
     def __getitem__(self, index):
         

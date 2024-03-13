@@ -12,6 +12,7 @@ import matplotlib as mpl
 prov = {
   "higgs": 1,
   "thad": 2,
+  "thad_lightQ": 5,
   "tlep": 3
 }
 
@@ -174,7 +175,7 @@ def find_unassignedJets(objects_sortedbySpanet, maskJets, jetsPositions_Sortedby
     # 22 values as spanet_assignment_higgs (check in higgsAssignment_SPANET function)
     mask_jetsPositions_SortedbySpanet = torch.zeros((jetsPositions_SortedbySpanet.shape[0], 22), device=objects_sortedbySpanet.device)
     mask_ones = torch.ones((jetsPositions_SortedbySpanet.shape[0], 22), device=objects_sortedbySpanet.device)
-    
+
     # if I have the position tensors [[1, 2], [0,2]] -> build the mask tensor as [[0,1,1],[1,0,1]]
     mask_jetsPositions_SortedbySpanet = mask_jetsPositions_SortedbySpanet.scatter_(dim=1,
                                                             index=jetsPositions_SortedbySpanet,
@@ -234,3 +235,142 @@ def sortObjects_bySpanet(spanet_assignment, scaledLogReco, maskJets, order=[0, 1
     
     
     return objects_sortedbySpanet
+
+# build padding Tensor for the proveniance
+# I do this because sometimes the events are not fully matched
+# so: when I look for the positions of Higgs: if there is only one matched Higgs -> I add another prov=Higgs at position 17
+# position 17 doesn't exist in data -> it's just a padding to keep the dimension fixed for pytorch
+# Input: prov_assignment -> tensor with matched assignments: [Ev, prov]
+#        padding_tensor -> tensor which is updated
+#        max_matched_jets -> no_jets for the corresponding particle (e.g. higgs=2, tlep=1 etc.)
+#        particle -> we read the prov value of the jet from the 'prov' dictionary (see above)
+#        first_elem -> index of the element where the assignment starts
+def build_paddingTensor(prov_assignment, padding_tensor, max_matched_jets=2, first_elem=0, particle='higgs'):
+    particle_pos = prov_assignment == prov[particle]
+    no_jet_matched = torch.count_nonzero(particle_pos, dim=1)
+
+    # for over all posible cases: events with 0/1/2/... matched jets
+    for NoMatched_jets in range(max_matched_jets):
+        mask = no_jet_matched == NoMatched_jets
+        
+        padding_tensor[mask,first_elem:first_elem+max_matched_jets-NoMatched_jets] = prov[particle]
+
+    return padding_tensor
+
+# Important: the higgs jets are ordered by pt
+#            Same for the other jets
+# IMPORTANT 2: Here the first jet from the thad decay is the b-jet
+def get_JetsPositions_ForEachParticle_prov(prov_tensor):
+    # use all the events
+    all_events = torch.ones(prov_tensor.shape[0], dtype=torch.bool, device=prov_tensor.device)
+    
+    # get jets positions for each of the particles
+    # important: some tensors contain positions > 16 -> these are the ghosts positions added for padding
+    #            not real positions
+    positions_higgs, _ = get_JetPositions_forParticle(prov_tensor, all_events, prov['higgs'], no_jets_required=2)
+    positions_thad_lightQ, _ = get_JetPositions_forParticle(prov_tensor, all_events, prov['thad_lightQ'], no_jets_required=2)
+    positions_thad, _ = get_JetPositions_forParticle(prov_tensor, all_events, prov['thad'], no_jets_required=1)
+    positions_tlep, _ = get_JetPositions_forParticle(prov_tensor, all_events, prov['tlep'], no_jets_required=1)
+
+    return positions_higgs, positions_thad, positions_thad_lightQ, positions_tlep
+
+
+# By default order: higgs, thad_b, thad_lightQ, tlep
+def sortJets_byProv(prov_tensor, order=[0, 1, 2, 3]):
+    
+    positions_higgs, positions_thad, positions_thad_lightQ, positions_tlep = get_JetsPositions_ForEachParticle_prov(prov_tensor)
+    
+    list_positions = [positions_higgs, positions_thad, positions_thad_lightQ, positions_tlep]
+    
+    jetsPositions_SortedbyProv = torch.cat((list_positions[order[0]],
+                                     list_positions[order[1]],
+                                     list_positions[order[2]],
+                                     list_positions[order[3]]), dim=1)
+    
+    return jetsPositions_SortedbyProv
+
+def find_unassignedJets_prov(objects_sortedbySpanet, maskJets, jetsPositions_SortedbySpanet):
+    
+    # 24 values because 16 jets + 2 lepton/MET + 6 padding
+    mask_jetsPositions_SortedbySpanet = torch.zeros((jetsPositions_SortedbySpanet.shape[0], 24), device=objects_sortedbySpanet.device)
+    mask_ones = torch.ones((jetsPositions_SortedbySpanet.shape[0], 24), device=objects_sortedbySpanet.device)
+
+    # if I have the position tensors [[1, 2], [0,2]] -> build the mask tensor as [[0,1,1],[1,0,1]]
+    mask_jetsPositions_SortedbySpanet = mask_jetsPositions_SortedbySpanet.scatter_(dim=1,
+                                                            index=jetsPositions_SortedbySpanet,
+                                                            src=mask_ones)
+    
+    # apply xor function to find the unattached jets jets
+    # the result is a tensor which values 0 and 1 with 1 meaning not attached
+    mask_jetsPositions_NotAttached = torch.logical_xor(mask_jetsPositions_SortedbySpanet[:,:16], maskJets)
+    
+    # get the positions of jets not attached 
+    jetsPositions_NotAttached = mask_jetsPositions_NotAttached.nonzero()
+    
+    return jetsPositions_NotAttached, mask_jetsPositions_NotAttached
+
+# By default order: higgs, thad, tlep
+def sortObjects_byProv(scaledLogReco, maskJets, order=[0, 1, 2]):
+    
+    # 21 objects because before we had 18 objects before
+    # but due to our new way of sorting, there could be some missing jets due to the spanet overlapping
+    objects_sortedbyProv = torch.ones((scaledLogReco.shape[0], 24, 8), dtype=scaledLogReco.dtype, device=scaledLogReco.device) * -100
+
+    prov_assignment = scaledLogReco[:,:,-1]
+
+    padding_tensor = torch.ones((scaledLogReco.shape[0],6), device=scaledLogReco.device) * -1
+
+    padding_tensor = build_paddingTensor(prov_assignment=prov_assignment, padding_tensor=padding_tensor,
+                                         max_matched_jets=1, first_elem=0, particle='thad')
+    padding_tensor = build_paddingTensor(prov_assignment=prov_assignment, padding_tensor=padding_tensor,
+                                         max_matched_jets=2, first_elem=1, particle='thad_lightQ')
+    padding_tensor = build_paddingTensor(prov_assignment=prov_assignment, padding_tensor=padding_tensor,
+                                         max_matched_jets=1, first_elem=3, particle='tlep')
+    padding_tensor = build_paddingTensor(prov_assignment=prov_assignment, padding_tensor=padding_tensor,
+                                         max_matched_jets=2, first_elem=4, particle='higgs')
+
+    # now this prov_withPadding contains events with 2 higgs assigned, 1 tlep assigned etc (fully matched)
+    # the positions > 16 represent the padding
+    prov_withPadding = torch.cat((prov_assignment, padding_tensor), dim=1)
+
+    # order: higgs, thad_b, thad_lightQ, tlep
+    jetsPositions_SortedbyProv = sortJets_byProv(prov_withPadding, order=[0, 1, 2, 3])
+    
+    no_jets = 6 # example: H1, H2, thad1, thad2, thad3, tlep1
+    for i in range(no_jets):
+        good_events = jetsPositions_SortedbyProv[:,i] < 16 # if position >= 16 => this is a padding (not real position)
+        objects_sortedbyProv[good_events, i] = scaledLogReco[good_events, jetsPositions_SortedbyProv[good_events,i]]
+
+    # now attach the lepton and MET
+    objects_sortedbyProv[:,6] = scaledLogReco[:,16]
+    objects_sortedbyProv[:,7] = scaledLogReco[:,17]
+
+    # TODO from here
+    
+    jetsPositions_NotAttached, mask_jetsPositions_NotAttached = find_unassignedJets_prov(objects_sortedbyProv, maskJets, jetsPositions_SortedbyProv)
+    max_NoUnassignedJets = torch.max(torch.count_nonzero(mask_jetsPositions_NotAttached, dim=1))
+    
+    # strategy: 1. attach one jet for each event with unassigned jets
+    # 2. remove the attached jets -> do these 2 steps until there are no events with unassigned jets
+    for i in range(max_NoUnassignedJets):
+
+        # find the events which still have unassigned jets
+        # here the result will be [0,2,4,18...] for i=0
+        unassignedEvents, counts = torch.unique(jetsPositions_NotAttached[:,0], return_counts=True)
+
+        # I must compute the 'indexOf_firstAppearanceEvent' which represent the first index of each event from 'jetsPositions_NotAttached'
+        # in my case: event 0 has 2 unassigned jets, event 2 has 2 unassigned jets, event 4 has 5 unassigned jets
+        # => indexOf_firstAppearanceEvent = [0,2,4,9,...]
+        indexOf_firstAppearanceEvent = torch.cumsum(counts, dim=0)
+        firstElem = torch.zeros(1, dtype=torch.int64, device=scaledLogReco.device)
+        indexOf_firstAppearanceEvent = torch.cat((firstElem, indexOf_firstAppearanceEvent[:-1]), dim=0) 
+
+        # for the unassigned_events -> attach the jets from jetsPositions_NotAttached[indexOf_firstAppearanceEvent,1]
+        objects_sortedbyProv[unassignedEvents,8+i] = scaledLogReco[unassignedEvents, jetsPositions_NotAttached[indexOf_firstAppearanceEvent,1]]
+
+        # remove the assigned jets at this step -> keep only the unassigned jets
+        # repeat until the tensor is empty
+        jetsPositions_NotAttached = tensor_delete(jetsPositions_NotAttached, indexOf_firstAppearanceEvent)
+    
+    
+    return objects_sortedbyProv
