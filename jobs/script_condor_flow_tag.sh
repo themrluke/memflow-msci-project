@@ -7,5 +7,5 @@ source myenv/bin/activate
 cd $1
 pip install -e .
 
-python scripts/run_transferFlow_idea3_conditioned.py \
+python scripts/run_flowTag.py \
       --path-config  "{$1}/{$2}" --output-dir  $3 --on-GPU $4

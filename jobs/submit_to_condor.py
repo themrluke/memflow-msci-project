@@ -7,7 +7,7 @@ import yaml
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--version', type=str, required=True)
-parser.add_argument('--path-configFile', type=str, required=True)
+parser.add_argument('--path-configFile', type=str, required=True) # should be ./path-config.yaml
 parser.add_argument('--dry', action="store_true")
 parser.add_argument('--interactive', action="store_true")
 parser.add_argument('--ngpu', type=int, default=1)
@@ -182,6 +182,19 @@ elif model == "run_transferFlow_paperVersion-Nofake_partons-NoBtag":
         args_string = " ".join(args.args)
         sub['arguments'] = sub['arguments'] + f" {args_string}"
 
+elif model == "run_transferFlow_paperVersion-pretrained":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_paperVersion-pretrained.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transferFlow_paperVersion-pretrained-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transferFlow_paperVersion-pretrained-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transferFlow_paperVersion-pretrained-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paperVersion-pretrained_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
 elif model == "run_transferFlow_paperVersion-MDMM-Nofake_partons-NoBtag":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transfer_flow_paper_MDMM_Nofakepartons_nobtag.sh"
     sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper_MDMM_Nofakepartons_nobtag-$(ClusterId).$(ProcId).err"
@@ -270,6 +283,30 @@ elif model == "classifier_nojets_v3":
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"longlunch"'
     sub['arguments'] = f"{basedir} configs/classifier_no_jets_v2/classifier_v{version}.yaml {outputDir}/classifier_nojets_3rdVersion_2024_v{version}"
+
+elif model == "classifier_exist":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_classifier_exist.sh"
+    sub['Error'] = f"{basedir}/jobs/error/classifier_exist-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/classifier_exist-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/classifier_exist-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/preTrain_exist/transferFlow_v{version}.yaml {outputDir}/classifier_exist_{version}"
+
+elif model == "classifier_exist_matched":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_classifier_exist_matched.sh"
+    sub['Error'] = f"{basedir}/jobs/error/classifier_exist-matched-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/classifier_exist-matched-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/classifier_exist-matched-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/preTrain_exist/transferFlow_v{version}.yaml {outputDir}/classifier_exist_matched_{version}"
+
+    if args.args != None:
+            args_string = " ".join(args.args)
+            sub['arguments'] = sub['arguments'] + f" {args_string}"
 
 # General
 sub['request_cpus'] = f"{args.ncpu}"
