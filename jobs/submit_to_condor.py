@@ -261,6 +261,84 @@ elif model == "run_transferFlow_paperVersion-pretrained_v3_onlyExist_leptonMET":
     if args.args != None:
         args_string = " ".join(args.args)
         sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "run_transferFlow_paperVersion-pretrained_v3_onlyExist_leptonMET_bPartons":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_bPartons.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_bPartons-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_bPartons-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_bPartons-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paperVersion-pretrained_3rdVersion_onlyExist_leptonMET_bPartons_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "run_transferFlow_paperVersion-pretrained_v3_onlyExist_leptonMET_OnlyPartons":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paperVersion-pretrained_3rdVersion_onlyExist_leptonMET_OnlyPartons_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "run_transferFlow_paperVersion-pretrained_v3_onlyExist_leptonMET_OnlyPartons_btag":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons_btag.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons_btag-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons_btag-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transferFlow_paperVersion-pretrained_v3_onlyExist-leptonMET_OnlyPartons_btag-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paperVersion-pretrained_3rdVersion_onlyExist_leptonMET_OnlyPartons_btag_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "run_transferFlow_paperVersion_OnlyPartons_btag_boxcox":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_OnlyPartons_btag_boxcox.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transferFlow_paperVersion_OnlyPartons_btag_boxcox-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transferFlow_paperVersion_OnlyPartons_btag_boxcox-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transferFlow_paperVersion_OnlyPartons_btag_boxcox-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paperVersion_OnlyPartons_btag_boxcox_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "run_transferFlow_paperVersion_AllPartons_btag":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_AllPartons_btag.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transferFlow_paperVersion_AllPartons_btag-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transferFlow_paperVersion_AllPartons_btag-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transferFlow_paperVersion_AllPartons_btag-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paperVersion_AllPartons_btag_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "run_unfoldingFlow_v2":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_unfoldingFlow_v2.sh"
+    sub['Error'] = f"{basedir}/jobs/error/unfoldingFlow_v2-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/unfoldingFlow_v2-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/unfoldingFlow_v2-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/unfoldingFlow_v2_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
         
 elif model == "run_transferFlow_paperVersion-pretrained_v2_ExistCond":
     sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_paperVersion-pretrained_ExistCond.sh"
@@ -306,6 +384,19 @@ elif model == "run_transferFlow_paperVersion-lepMET_sampling":
     sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper_lepMET_sampling-$(ClusterId).$(ProcId).err"
     sub['Output'] = f"{basedir}/jobs/output/transfer_flow_paper_lepMET_sampling-$(ClusterId).$(Proc1Id).out"
     sub['Log'] = f"{basedir}/jobs/log/transfer_flow_paper_lepMET_sampling-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} {path_to_dir}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
+elif model == "run_transferFlow_paperVersion-lepMET_onlyPartons_sampling":    
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_paper_lepMET_onlyPartons_sampling.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transfer_flow_paper_lepMET_onlyPartons_sampling-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transfer_flow_paper_lepMET_onlyPartons_sampling-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transfer_flow_paper_lepMET_onlyPartons_sampling-$(ClusterId).log"
     sub['MY.SendCredential'] = True
     sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
     sub['+JobFlavour'] = '"nextweek"'
@@ -406,7 +497,7 @@ if args.good_gpus:
 
 #print(f"{basedir}/{sub['arguments'].split()[1]}")
 
-if model != "flow_evaluation_labframe" and model != "run_transferFlow_paperVersion-lepMET_sampling" and not os.path.exists(f"{basedir}/{sub['arguments'].split()[1]}"):
+if model != "flow_evaluation_labframe" and model != "run_transferFlow_paperVersion-lepMET_sampling" and model != "run_transferFlow_paperVersion-lepMET_onlyPartons_sampling" and not os.path.exists(f"{basedir}/{sub['arguments'].split()[1]}"):
     print("Missing configuration file! The jobs has not been submitted")
     exit(1)
     
