@@ -31,14 +31,22 @@ class TransferFlow_Paper_AllPartons_btag(nn.Module):
                  flow_bins=16,
                  flow_autoregressive=True,
                  flow_base=BoxUniform,
-                 flow_base_btag=BoxUniform,
                  flow_base_first_arg=-1,
                  flow_base_second_arg=1,
                  flow_bound=1.,
-                 flow_bound_btag=6.3,
                  randPerm=False,
                  no_max_objects=10,
 
+                 flow_nfeatures_btag=1,
+                 flow_ntransforms_btag=2,
+                 flow_bins_btag=30,
+                 flow_hiddenMLP_LayerDim_btag=128,
+                 flow_hiddenMLP_NoLayers_btag=2,
+                 flow_base_btag=BoxUniform,
+                 flow_base_first_arg_btag=-1,
+                 flow_base_second_arg_btag=1,
+                 flow_bound_btag=6.3,
+            
                  flow_lepton_ntransforms=3,
                  flow_lepton_bound=4,
                  flow_lepton_hiddenMLP_NoLayers=4,
@@ -108,14 +116,14 @@ class TransferFlow_Paper_AllPartons_btag(nn.Module):
                               passes= 2 if not flow_autoregressive else flow_nfeatures)
 
         # flow for jets
-        self.flow_btag = zuko.flows.NSF(features=1,
+        self.flow_btag = zuko.flows.NSF(features=flow_nfeatures_btag,
                               context=transformer_input_features + 1, # additional position of 'jet'
-                              transforms=flow_ntransforms, 
-                              bins=flow_bins, 
-                              hidden_features=[flow_hiddenMLP_LayerDim]*flow_hiddenMLP_NoLayers, 
+                              transforms=flow_ntransforms_btag, 
+                              bins=flow_bins_btag, 
+                              hidden_features=[flow_hiddenMLP_LayerDim_btag]*flow_hiddenMLP_NoLayers_btag, 
                               randperm=randPerm,
                               base=eval(flow_base_btag),
-                              base_args=[-1*torch.ones(1)*flow_bound_btag, torch.ones(1)*flow_bound_btag],
+                              base_args=[-1*torch.ones(flow_nfeatures_btag)*flow_base_first_arg_btag, torch.ones(flow_nfeatures_btag)*flow_base_second_arg_btag],
                               dtype=dtype,
                               univariate_kwargs={"bound": flow_bound_btag }, # Keeping the flow in the [-B,B] box.
                               passes= 2 if not flow_autoregressive else flow_nfeatures)

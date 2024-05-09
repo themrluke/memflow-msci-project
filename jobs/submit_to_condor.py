@@ -327,6 +327,19 @@ elif model == "run_transferFlow_paperVersion_AllPartons_btag":
         args_string = " ".join(args.args)
         sub['arguments'] = sub['arguments'] + f" {args_string}"
 
+elif model == "run_transferFlow_paperVersion_AllPartons_btag_4D":
+    sub['Executable'] = f"{basedir}/jobs/script_condor_transferFlow_AllPartons_btag_4D.sh"
+    sub['Error'] = f"{basedir}/jobs/error/transferFlow_paperVersion_AllPartons_btag_4D-$(ClusterId).$(ProcId).err"
+    sub['Output'] = f"{basedir}/jobs/output/transferFlow_paperVersion_AllPartons_btag_4D-$(ClusterId).$(Proc1Id).out"
+    sub['Log'] = f"{basedir}/jobs/log/transferFlow_paperVersion_AllPartons_btag_4D-$(ClusterId).log"
+    sub['MY.SendCredential'] = True
+    sub['MY.SingularityImage'] = '"/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/dvalsecc/memflow:latest"'
+    sub['+JobFlavour'] = '"nextweek"'
+    sub['arguments'] = f"{basedir} configs/transferFlow_paper_train/transferFlow_v{version}.yaml {outputDir}/transferFlow_paperVersion_AllPartons_btag_4D_v{version}"
+    if args.args != None:
+        args_string = " ".join(args.args)
+        sub['arguments'] = sub['arguments'] + f" {args_string}"
+
 elif model == "run_unfoldingFlow_v2":
     sub['Executable'] = f"{basedir}/jobs/script_condor_unfoldingFlow_v2.sh"
     sub['Error'] = f"{basedir}/jobs/error/unfoldingFlow_v2-$(ClusterId).$(ProcId).err"

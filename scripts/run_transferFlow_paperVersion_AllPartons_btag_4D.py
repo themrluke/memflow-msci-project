@@ -3,9 +3,9 @@ from comet_ml import Experiment
 
 import torch
 from memflow.read_data.dataset_all import DatasetCombined
-from memflow.transfer_flow.transfer_flow_paper_AllPartons_btag import TransferFlow_Paper_AllPartons_btag
+from memflow.transfer_flow.transfer_flow_paper_pretrained_v3_onlyExist_met_partons_btag import TransferFlow_Paper_pretrained_v3_onlyExist_MET_partons_btag
 from memflow.unfolding_flow.utils import *
-from utils_transferFlow_paper import sample_fullRecoEvent_classifier_AllPartons_btag
+from utils_transferFlow_paper import sample_fullRecoEvent_classifier_v3_leptonMET_partons_btag
 from utils_transferFlow_paper import existQuality_print
 from utils_transferFlow_paper import sampling_print_btag
 from utils_transferFlow_paper import validation_print
@@ -142,8 +142,8 @@ def train( device, name_dir, config,  outputDir, dtype,
     pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500]
 
     # Initialize model
-    model = TransferFlow_Paper_AllPartons_btag(no_recoVars=6, # exist + 3-mom + encoded_position + btag
-                no_partonVars=5,
+    model = TransferFlow_Paper_pretrained_v3_onlyExist_MET_partons_btag(no_recoVars=6, # exist + 3-mom + encoded_position + btag
+                no_partonVars=6,
                 no_recoObjects=no_recoObjs,
 
                 no_transformers=config.transformerConditioning.no_transformers,
@@ -166,16 +166,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                 flow_bound=config.transferFlow.bound,
                 randPerm=config.transferFlow.randPerm,
                 no_max_objects=config.transferFlow.no_max_objects,
-
-                flow_nfeatures_btag=1,
-                flow_ntransforms_btag=config.transferFlow_btag.ntransforms,
-                flow_bins_btag=config.transferFlow_btag.bins,
-                flow_hiddenMLP_LayerDim_btag=config.transferFlow_btag.hiddenMLP_LayerDim,
-                flow_hiddenMLP_NoLayers_btag=config.transferFlow_btag.hiddenMLP_NoLayers,
-                flow_base_first_arg_btag=config.transferFlow_btag.base_first_arg,
-                flow_base_second_arg_btag=config.transferFlow_btag.base_second_arg,
-                flow_base_btag=config.transferFlow_btag.base,
-                flow_bound_btag=config.transferFlow_btag.bound,
 
                 flow_lepton_ntransforms=config.transferFlow_lepton.ntransforms,
                 flow_lepton_hiddenMLP_NoLayers=config.transferFlow_lepton.hiddenMLP_NoLayers,
@@ -204,14 +194,13 @@ def train( device, name_dir, config,  outputDir, dtype,
             auto_histogram_activation_logging=True
             # disabled=True
         )
-        exp.add_tags(['paper_Impl', 'btag-logit-NotStandardized', 'leptonMETFirst+newFlows+H/thad/tlep', '3DFlow', 'onlyExistJets', f'min5Jets={min5Jets}', 'HiggsAssignment', f'scheduler={config.training_params.scheduler}'])
+        exp.add_tags(['paper_Impl', 'btag-logit-standardized', 'AllPartons-4D', 'leptonMETFirst+newFlows+H/thad/tlep', '4DFlow', 'onlyExistJets', f'min5Jets={min5Jets}', 'HiggsAssignment', f'scheduler={config.training_params.scheduler}'])
         exp.log_parameters(config)
         exp.log_parameters({"model_param_tot": count_parameters(model)})
         exp.log_parameters({"model_param_transformer": count_parameters(model.classifier_exist.transformer_model)})
         exp.log_parameters({"model_param_flow_jets": count_parameters(model.flow_kinematics_jets)})
         exp.log_parameters({"model_param_flow_lepton": count_parameters(model.flow_kinematics_lepton)})
         exp.log_parameters({"model_param_flow_MET": count_parameters(model.flow_kinematics_MET)})
-        exp.log_parameters({"model_param_flow_btag": count_parameters(model.flow_btag)})
     else:
         exp = None
 
@@ -339,10 +328,10 @@ def train( device, name_dir, config,  outputDir, dtype,
             logScaled_reco_sortedBySpanet = attach_position(logScaled_reco_sortedBySpanet, pos_logScaledReco)
 
             # remove prov from partons
-            logScaled_partons = logScaled_partons[:,:,[0,1,2,4]] # [pt,eta,phi,type] -> skip type=1/2 for partons/leptons
+            logScaled_partons = logScaled_partons # [pt,eta,phi,decay_parton,type] -> skip type=1/2 for partons/leptons
             logScaled_partons = attach_position(logScaled_partons, pos_partons)
 
-            avg_flow_prob, flow_prob_batch, flow_prob_jet, flow_prob_btag, flow_prob_MET, flow_prob_lepton, \
+            avg_flow_prob, flow_prob_batch, flow_prob_jet, flow_prob_MET, flow_prob_lepton, \
             avg_flow_prob_exist, flow_prob_exist_batch, flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                 logScaled_partons,
                                                                                 data_boost_reco,
@@ -468,13 +457,13 @@ def train( device, name_dir, config,  outputDir, dtype,
     
                 # attach 1 hot-encoded position
                 logScaled_reco_sortedBySpanet = attach_position(logScaled_reco_sortedBySpanet, pos_logScaledReco)
-    
-                # remove prov from partons
-                logScaled_partons = logScaled_partons[:,:,[0,1,2,4]] # [pt,eta,phi,type] -> skip type=1/2 for partons/leptons
+
+                # remove prov from partons 
+                logScaled_partons = logScaled_partons # [pt,eta,phi,decay_parton,type] -> skip type=1/2 for partons/leptons
                 logScaled_partons = attach_position(logScaled_partons, pos_partons)
 
                 # The provenance is remove in the model
-                avg_flow_prob, flow_prob_batch, flow_prob_jet, flow_prob_btag, flow_prob_MET, flow_prob_lepton, \
+                avg_flow_prob, flow_prob_batch, flow_prob_jet, flow_prob_MET, flow_prob_lepton, \
                 avg_flow_prob_exist, flow_prob_exist_batch, flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                     logScaled_partons,
                                                                                     data_boost_reco,
@@ -553,7 +542,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                                             reco=1)
                                         
                     wrongPT_avg_flow_prob_jet, wrongPT_flow_prob_jet_batch, wrongPT_flow_prob_jet, \
-                    wrongPT_flow_prob_btag, \
                     wrongPT_flow_prob_MET, wrongPT_flow_prob_lepton, \
                     wrongPT_avg_flow_prob_exist, wrongPT_flow_prob_exist_batch, wrongPT_flow_prob_exist= ddp_model(wrong_logScaled_reco,
                                                                                                                 logScaled_partons,
@@ -580,7 +568,6 @@ mask_partonsLeptons,
                                             reco=1)
                     
                     wrongPTandETA_avg_flow_prob_jet, wrongPTandETA_flow_prob_jet_batch, wrongPTandETA_flow_prob_jet, \
-                    wrongPTandETA_flow_prob_btag, \
                     wrongPTandETA_flow_prob_MET, wrongPTandETA_flow_prob_lepton, \
                     wrongPTandETA_avg_flow_prob_exist, wrongPTandETA_flow_prob_exist_batch, wrongPTandETA_flow_prob_exist = ddp_model(wrong_logScaled_reco,
                                                                                                             logScaled_partons,
@@ -625,7 +612,6 @@ mask_partonsLeptons,
                                             reco=0)
                                         
                     wrongPT_avg_flow_prob_jet, wrongPT_flow_prob_jet_batch, wrongPT_flow_prob_jet, \
-                    wrongPT_flow_prob_btag, \
                     wrongPT_flow_prob_MET, wrongPT_flow_prob_lepton, \
                     wrongPT_avg_flow_prob_exist, wrongPT_flow_prob_exist_batch, wrongPT_flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                                                 wrong_logScaled_parton,
@@ -652,7 +638,6 @@ mask_partonsLeptons,
                                             reco=0)
                     
                     wrongPTandETA_avg_flow_prob_jet, wrongPTandETA_flow_prob_jet_batch, wrongPTandETA_flow_prob_jet, \
-                    wrongPTandETA_flow_prob_btag, \
                     wrongPTandETA_flow_prob_MET, wrongPTandETA_flow_prob_lepton, \
                     wrongPTandETA_avg_flow_prob_exist, wrongPTandETA_flow_prob_exist_batch, wrongPTandETA_flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
                                                                                                             wrong_logScaled_parton,
@@ -680,7 +665,7 @@ mask_partonsLeptons,
                 if i == 0 and e % 2 == 0:
                         
                     # print sampled partons
-                    fullGeneratedEvent, mask_reco = sample_fullRecoEvent_classifier_AllPartons_btag(model, logScaled_partons, mask_partonsLeptons, logScaled_reco_sortedBySpanet.shape[0], device, dtype, No_samples=1)
+                    fullGeneratedEvent, mask_reco = sample_fullRecoEvent_classifier_v3_leptonMET_partons_btag(model, logScaled_partons, mask_partonsLeptons, logScaled_reco_sortedBySpanet.shape[0], device, dtype, No_samples=1)
         
                     allJets = [i for i in range(config.transferFlow.no_max_objects)]
                     sampling_print_btag(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, allJets, e, onlyExistElem=True)
@@ -755,7 +740,7 @@ if __name__ == '__main__':
     world_size = len(actual_devices)
 
     outputDir = os.path.abspath(outputDir)
-    name_dir = f'{outputDir}/Transfer_Flow_Paper_AllPartons_btag_scaled_min5Jets={min5Jets}_{conf.name}_{conf.version}_{conf.transferFlow.base}_NoTransf{conf.transferFlow.ntransforms}_NoBins{conf.transferFlow.bins}_DNN:{conf.transferFlow.hiddenMLP_NoLayers}_{conf.transferFlow.hiddenMLP_LayerDim}'
+    name_dir = f'{outputDir}/Transfer_Flow_Paper_AllPartons_btag_4D_scaled_min5Jets={min5Jets}_{conf.name}_{conf.version}_{conf.transferFlow.base}_NoTransf{conf.transferFlow.ntransforms}_NoBins{conf.transferFlow.bins}_DNN:{conf.transferFlow.hiddenMLP_NoLayers}_{conf.transferFlow.hiddenMLP_LayerDim}'
     
 
     os.makedirs(name_dir, exist_ok=True)
