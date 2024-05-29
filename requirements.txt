@@ -13,12 +13,8 @@ numba
 particle
 awkward>=2
 omegaconf
-tensorboardX
 pyarrow
 fsspec
-pynvml
-jupyter
-correctionlib
 comet_ml
 h5py
 zuko @ git+https://github.com/valsdav/zuko@master
