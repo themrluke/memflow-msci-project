@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 def logmodulus(X):
@@ -77,8 +78,12 @@ class PreprocessingStep:
                     # Need to use a loop here, because application of the mask
                     # linearizes the 2D tensor
                     x_feat = self.function_dict[field](x[:,j,i][mask[:,j]].unsqueeze(-1))
-                    if not torch.is_tensor(x_feat): # sklearn functions return np array
+                    if torch.is_tensor(x_feat):
+                        pass
+                    elif isinstance(x_feat,np.ndarray): # sklearn functions return np array
                         x_feat = torch.tensor(x_feat)
+                    else:
+                        raise NotImplementedError(f'Preprocessing output for field {field} is of type {type(x_feat)}')
                     if x_feat.dtype != x.dtype:
                         x_feat = x_feat.to(x.dtype)
                     x[:,j,i][mask[:,j]] = x_feat.squeeze()

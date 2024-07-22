@@ -56,9 +56,27 @@ class CombinedDataset(Dataset):
     def __getitem__(self, index):
         """ Returns the event info of both gen and reco level variables """
         if self.intersection_branch is None:
-            return list(chain.from_iterable([self.gen_dataset[index],self.reco_dataset[index]]))
+            return {
+                'gen'  : self.gen_dataset[index],
+                'reco' : self.reco_dataset[index],
+            }
         else:
-            return list(chain.from_iterable([self.gen_dataset[self.gen_idx[index]],self.reco_dataset[self.reco_idx[index]]]))
+            return {
+                'gen'  : self.gen_dataset[self.gen_idx[index]],
+                'reco' : self.reco_dataset[self.reco_idx[index]],
+            }
+
+    def batch_by_index(self,idx):
+        if self.intersection_branch is None:
+            return {
+                'gen'  : self.gen_dataset.batch_by_index(idx),
+                'reco' : self.reco_dataset.batch_by_index(idx),
+            }
+        else:
+            return {
+                'gen'  : self.gen_dataset.batch_by_index(self.gen_idx[index]),
+                'reco' : self.reco_dataset.batch_by_index(self.reco_idx[index]),
+            }
 
     def __len__(self):
         return self.N
@@ -223,6 +241,8 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             mask = torch.tensor(np.array(mask))
         if mask.dim() == 1:
             mask = mask.unsqueeze(-1)
+        # Adapt mask to number of fields/features #
+        #mask = mask.unsqueeze(-1).repeat(1,1,len(fields))
         # Apply preprocessing #
         if preprocessing is not None:
             data = preprocessing(data,mask,fields)
@@ -300,21 +320,26 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         """
         out_tensor = []
         out_fields = []
-        # Include the original fields, unless None in which case discard
-        for field in fields:
-            if field in default_values.keys() and default_values[field] is None:
-                continue
-            idx = fields.index(field)
-            out_tensor.append(data[:,:,idx].unsqueeze(-1))
-            out_fields.append(field)
-        # Add default fields if they are not there already #
+        # Add default fields #
         for field,default_val in default_values.items():
-            if field in fields or default_val is None:
+            if default_val is None:
                 continue
-            out_tensor.append(
-                torch.full((data.shape[0],data.shape[1],1),fill_value=default_val)
-            )
-            out_fields.append(field)
+            if field in fields:
+                idx = fields.index(field)
+                out_tensor.append(data[:,:,idx].unsqueeze(-1))
+                out_fields.append(field)
+            else:
+                out_tensor.append(
+                    torch.full((data.shape[0],data.shape[1],1),fill_value=default_val)
+                )
+                out_fields.append(field)
+        # Include the original fields that were not in the default #
+        for field in fields:
+            if field not in default_values.keys():
+                idx = fields.index(field)
+                out_tensor.append(data[:,:,idx].unsqueeze(-1))
+                out_fields.append(field)
+        # Return concat data and fields #
         return torch.cat(out_tensor,dim=-1),out_fields
 
     def standardize(self):
@@ -340,6 +365,37 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             self._objects[name] = (data,mask)
             self._fields[name] = fields
 
+    ##### Intrinsic properties #####
+    @property
+    def input_features(self):
+        return [
+            self._fields[name]
+            for name in self.selection
+        ]
+
+    def number_particles(self,name):
+        return self._objects[name][0].shape[1]
+
+    @property
+    def number_particles_per_type(self):
+        return [self.number_particles(name) for name in self.selection]
+
+    @property
+    def number_particles_total(self):
+        return sum(self.number_particles_per_type)
+
+    def object_correlation_mask(self,name):
+        if self.correlation_idx is not None and name in self.correlation_idx.keys():
+            return [
+                True if i in self.correlation_idx[name] else False
+                for i in range(self.number_particles(name))
+            ]
+        else:
+            return [True]*self.number_particles(name)
+
+    @property
+    def correlation_mask(self):
+        return torch.tensor(list(chain.from_iterable([self.object_correlation_mask(name) for name in self.selection])))
 
     ##### Type and device helpers #####
     def to_device(self,device=None):
@@ -381,9 +437,14 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
 
     ##### Magic methods #####
     def __getitem__(self,index):
-        """ For each object specified in the selections, returns the element from index """
-        return [self._objects[name][0][index] for name in self.selection]
-        # TODO : figure out the mask bit
+        """
+            For each object specified in the selections, returns the element from index
+            Joins the data and mask along new dimension (axis = 2)
+        """
+        return {
+            'data': [self._objects[name][0][index] for name in self.selection],
+            'mask': [self._objects[name][1][index] for name in self.selection],
+        }
 
     def __len__(self):
         """ Number of events """
@@ -397,16 +458,49 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             props = mask.sum(axis=0) / mask.shape[0] * 100
             prop_str = ', '.join([f'{prop:3.2f}%' if prop>=0.01 else '<0.01%' for prop in props])
             s += f'\n{name:{names_len}s} : data ({list(data.shape)}), mask ({list(mask.shape)})'
-            s += f'\n{" "*names_len}   Presences : [{prop_str}]'
+            s += f'\n{" "*names_len}   Mask exist : [{prop_str}]'
+            s += f'\n{" "*names_len}   Mask corr  : {self.object_correlation_mask(name)}'
             s += f'\n{" "*names_len}   Features : {self._fields[name]}'
             s += f'\n{" "*names_len}   Selected for batches : {name in self.selection}'
         return s
+
+    ##### User accessible helper methods #####
+    def batch_by_index(self,idx):
+        if not torch.is_tensor(idx):
+            idx = torch.tensor(idx)
+            if idx.dim() == 0:
+                idx = idx.unsqueeze(-1)
+        return {
+            'data': [
+                torch.index_select(
+                    input = self._objects[name][0],
+                    dim = 0,
+                    index = idx,
+                )
+                for name in self.selection
+            ],
+            'mask': [
+                torch.index_select(
+                    input = self._objects[name][1],
+                    dim = 0,
+                    index = idx,
+                )
+                for name in self.selection
+            ],
+
+        }
+
 
     ##### Abstract method to be implemented by user #####
     @property
     @abstractmethod
     def energy(self):
         """ Energy of CM, to be defined by user, should use hepunits.units """
+        pass
+
+    @property
+    def correlation_idx(self):
+        """ """
         pass
 
     def init(self):
@@ -548,12 +642,12 @@ class GenDataset(AbsDataset):
         detjinv = detjinv.unsqueeze(-1)
         self._objects['ps'] = (
             ps.unsqueeze(dim=-1),
-            torch.full(ps.shape,True),
+            torch.full(ps.shape,True)#.unsqueeze(-1),
         )
         self._fields['ps'] = [f'ps_{i}' for i in range(ps.shape[1])]
         self._objects['detjinv'] = (
             detjinv.unsqueeze(-1),
-            np.full(detjinv.shape,True),
+            torch.full(detjinv.shape,True)#.unsqueeze(-1),
         )
         self._fields['detjinv'] = ['det']
 

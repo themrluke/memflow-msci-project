@@ -50,9 +50,9 @@ class ttHGenDataset(GenDataset):
     def final_states_pdgid(self):
         return [25,6,-6,21]
 
-    @property
-    def final_states_object_name(self):
-        return ['higgs','top_leptonic','top_hadronic','ISR']
+#    @property
+#    def final_states_object_name(self):
+#        return ['higgs','top_leptonic','top_hadronic','ISR']
 
     @property
     def processed_path(self):
@@ -72,10 +72,10 @@ class ttHGenDataset(GenDataset):
                 ),
                 PreprocessingStep(
                     {
-                        'pt'   : lambda x : power_transform(x,method='yeo-johnson'),
-                        'eta'  : lambda x : power_transform(x,method='yeo-johnson'),
-                        'phi'  : lambda x : power_transform(x,method='yeo-johnson'),
-                        'mass' : lambda x : power_transform(x,method='yeo-johnson'),
+                        'pt'   : scale,
+                        'eta'  : scale,
+                        'phi'  : scale,
+                        'mass' : scale,
                     }
                 )
 
@@ -115,8 +115,9 @@ class ttHGenDataset(GenDataset):
 
         # Make ME final states #
         higgs = self.data.make_particles('higgs_vec','higgs')
-        higgs['mass'] = higgs['m'] # renaming for convention
-        del higgs['m']
+        if 'm' in higgs.fields:
+            higgs['mass'] = higgs['m'] # renaming for convention
+            del higgs['m']
 
         W_leptonic = leptons[:,0] + leptons[:,1]
         partons_from_W = partons[partons.prov==5]
@@ -164,6 +165,7 @@ class ttHGenDataset(GenDataset):
             fields = ME_fields,
         )
 
+
 class ttHRecoDataset(RecoDataset):
     struct_jets = ak.zip(
         {
@@ -209,10 +211,9 @@ class ttHRecoDataset(RecoDataset):
                         'pt'   : scale,
                         'eta'  : scale,
                         'phi'  : scale,
-                        'mass' : scale,
+                        'm'    : scale,
                     }
                 )
-
             ]
         )
 
@@ -261,3 +262,8 @@ class ttHRecoDataset(RecoDataset):
             preprocessing = reco_preprocess,
         )
 
+    @property
+    def correlation_idx(self):
+        return {
+            'jets' : [0,1,2,3]
+        }
