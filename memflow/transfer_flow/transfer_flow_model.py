@@ -25,6 +25,7 @@ class TransferFlow(L.LightningModule):
         gen_mask_corr,
         transformer_args = {},
         flow_args = {},
+        onehot_encoding = False,
         optimizer = None,
         scheduler_config = None,
     ):
@@ -40,6 +41,7 @@ class TransferFlow(L.LightningModule):
         self.flow_input_features = flow_input_features
         self.reco_mask_corr = torch.cat((torch.tensor([True]),reco_mask_corr),dim=0) # Adding True at index=0 for null token
         self.gen_mask_corr  = gen_mask_corr
+        self.onehot_encoding = onehot_encoding
 
         # Safety checks #
         assert len(n_reco_particles_per_type) == len(reco_input_features), f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features)} sets of input features'
@@ -50,9 +52,20 @@ class TransferFlow(L.LightningModule):
         self._optimizer = optimizer
         self._scheduler_config = scheduler_config
 
+        # Make onehot encoded vectors #
+        if self.onehot_encoding:
+            onehot_dim = sum(self.n_reco_particles_per_type)+1
+            onehot_matrix = F.one_hot(torch.arange(onehot_dim))
+            reco_indices = torch.tensor(self.n_reco_particles_per_type)
+            reco_indices[0] += 1 # add the null
+            reco_indices = torch.cat([torch.tensor([0]),reco_indices.cumsum(dim=0)],dim=0)
+            self.onehot_tensors = [onehot_matrix[:,ia:ib].T for ia,ib in zip(reco_indices[:-1],reco_indices[1:]) ]
+        else:
+            onehot_dim = 0
+
         # Make embedding layers #
-        self.reco_embeddings = self.make_embeddings(self.reco_input_features)
         self.gen_embeddings  = self.make_embeddings(self.gen_input_features)
+        self.reco_embeddings = self.make_embeddings(self.reco_input_features,onehot_dim)
 
         # Define transformer #
         if 'd_model' in transformer_args:
@@ -77,7 +90,7 @@ class TransferFlow(L.LightningModule):
                 flow_args['features'] = len(indices)
                 self.flows.append(zuko.flows.NSF(**flow_args))
 
-    def make_embeddings(self,input_features):
+    def make_embeddings(self,input_features,onehot_dim=0):
         feature_embeddings = {}
         embeddings = nn.ModuleList()
         # Make sure inputs with same features are processed through same embedding #
@@ -87,7 +100,7 @@ class TransferFlow(L.LightningModule):
             if features not in feature_embeddings.keys():
                 layers = [
                     nn.Linear(
-                        in_features = len(features),
+                        in_features = len(features)+onehot_dim,
                         out_features = self.embed_dim,
                     )
                 ]
@@ -143,7 +156,7 @@ class TransferFlow(L.LightningModule):
         reco_data_null = [
             torch.cat(
                 (
-                    null_token,
+                    null_token.to(reco_data[0].device),
                     reco_data[0],
                 ),
                 dim = 1, # along particle axis
@@ -152,13 +165,26 @@ class TransferFlow(L.LightningModule):
         reco_mask_exist_null = [
             torch.cat(
                 (
-                    torch.full((reco_mask_exist[0].shape[0],1),fill_value=True),
+                    torch.full((reco_mask_exist[0].shape[0],1),fill_value=True).to(reco_mask_exist[0].device),
                     reco_mask_exist[0],
                 ),
                 dim = 1,
             )
 
         ] + [mask[:] for mask in reco_mask_exist[1:]]
+
+        # Apply onehot encoding #
+        if self.onehot_encoding:
+            reco_data_null = [
+                torch.cat(
+                    [
+                        data,
+                        onehot.repeat(data.shape[0],1,1).to(data.device),
+                    ],
+                    dim = 2,
+                )
+                for data,onehot in zip(reco_data_null,self.onehot_tensors)
+            ]
 
         # Apply embeddings and concat along particle axis #
         gen_data = torch.cat(
@@ -180,8 +206,14 @@ class TransferFlow(L.LightningModule):
 
         # Expand correlation mask #
         # Need to turn 0->1 when particle exists #
-        gen_mask_corr  = torch.logical_or(self.gen_mask_corr,gen_mask_exist)
-        reco_mask_corr = torch.logical_or(self.reco_mask_corr,reco_mask_exist_null)
+        gen_mask_corr  = torch.logical_or(
+            self.gen_mask_corr.to(gen_mask_exist.device),
+            gen_mask_exist,
+        )
+        reco_mask_corr = torch.logical_or(
+            self.reco_mask_corr.to(reco_mask_exist_null.device),
+            reco_mask_exist_null,
+        )
         # -> Make sure that particles we want in the attention are considered even if missing
         # (in which case the default values are set in the dataset class, no need to re default them)
 
@@ -189,7 +221,7 @@ class TransferFlow(L.LightningModule):
         condition = self.transformer(
             src = gen_data,
             tgt = reco_data_null,
-            tgt_mask = self.tgt_mask,
+            tgt_mask = self.tgt_mask.to(gen_data.device),
             src_key_padding_mask = (~gen_mask_corr).to(self.tgt_mask.dtype),
             tgt_key_padding_mask = (~reco_mask_corr).to(self.tgt_mask.dtype),
         )
@@ -227,7 +259,7 @@ class TransferFlow(L.LightningModule):
                 idx += 1
 
         # Sum object wise and average event wise #
-        return sum(log_probs).mean()
+        return -sum(log_probs).mean()
 
     def sample(self,gen_data,gen_mask_exist,reco_data,reco_mask_exist,N):
         # Obtain condition #
@@ -242,11 +274,12 @@ class TransferFlow(L.LightningModule):
                 samples.append(
                     self.flows[idx](
                         condition[:,idx:idx+1,:]
-                    ).sample((N,)).squeeze(2)
+                    ).sample((N,))
                 )
                 idx += 1
-        # Return list of [S,N,F]
+        # Return list of [S,N,P,F]
         # S = number of samples
         # N = number of events in the batch
+        # P = number of particles in the batch
         # F = number of features
         return samples

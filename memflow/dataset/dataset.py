@@ -5,6 +5,7 @@ import awkward as ak
 import torch
 import numpy as np
 import vector
+import matplotlib.pyplot as plt
 from itertools import chain
 from operator import itemgetter
 from functools import reduce
@@ -120,9 +121,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         self.default_features = default_features
         assert len(self.selection) > 0, 'You need to have at least some object selected'
 
-        self._intermediates = None
         self._objects = {}
         self._fields = {}
+        self._preprocessing = {}
         self._reserved_object_names = ['ps','detjinv']
 
         # Calling methods #
@@ -242,13 +243,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         if mask.dim() == 1:
             mask = mask.unsqueeze(-1)
         # Adapt mask to number of fields/features #
-        #mask = mask.unsqueeze(-1).repeat(1,1,len(fields))
         # Apply preprocessing #
         if preprocessing is not None:
-            data = preprocessing(data,mask,fields)
+            preprocessing = copy.deepcopy(preprocessing)
+            # if same pipeline for several objects, need to avoid to fit on one and apply on another
+            data = preprocessing.transform(data,mask,fields)
         # Record #
         self._objects[name] = (data,mask)
         self._fields[name] = fields
+        self._preprocessing[name] = preprocessing
 
     @staticmethod
     def reshape(input,value,ax,max_no=None):
@@ -457,10 +460,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         for name,(data,mask) in self._objects.items():
             props = mask.sum(axis=0) / mask.shape[0] * 100
             prop_str = ', '.join([f'{prop:3.2f}%' if prop>=0.01 else '<0.01%' for prop in props])
+            if self._preprocessing[name] is None:
+                prep = [False] * len(self._fields[name])
+            else:
+                prep = [self._preprocessing[name].is_processed(field) for field in self._fields[name]]
             s += f'\n{name:{names_len}s} : data ({list(data.shape)}), mask ({list(mask.shape)})'
-            s += f'\n{" "*names_len}   Mask exist : [{prop_str}]'
-            s += f'\n{" "*names_len}   Mask corr  : {self.object_correlation_mask(name)}'
-            s += f'\n{" "*names_len}   Features : {self._fields[name]}'
+            s += f'\n{" "*names_len}   Mask exist    : [{prop_str}]'
+            s += f'\n{" "*names_len}   Mask corr     : {self.object_correlation_mask(name)}'
+            s += f'\n{" "*names_len}   Features      : {self._fields[name]}'
+            s += f'\n{" "*names_len}   Preprocessing : {prep}'
             s += f'\n{" "*names_len}   Selected for batches : {name in self.selection}'
         return s
 
@@ -489,6 +497,46 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             ],
 
         }
+
+    def plot(self,raw=False,selection=False,log=False):
+        names = self.selection if selection else self._objects.keys()
+        for name in names:
+            # Get objects for name #
+            data,mask = self._objects[name]
+            fields = self._fields[name]
+            # Some processing #
+            if mask.dtype != torch.bool:
+                mask = mask > 0
+            if raw:
+                if self._preprocessing[name] is not None:
+                    data = self._preprocessing[name].inverse(data,mask,fields)
+            # Generate figure #
+            n_parts = data.shape[1]
+            n_cols = data.shape[2]
+            print (name,n_parts)
+            if n_parts > 1:
+                fig,axs = plt.subplots(1,n_cols+1,figsize=(4.5*(n_cols+1),4))
+            else:
+                fig,axs = plt.subplots(1,n_cols,figsize=(4.5*n_cols,4))
+            fig.suptitle(f'Objects : {name}')
+            # Loop over features #
+            for i in range(n_cols):
+                bins = np.linspace(data[:,:,i].min(),data[:,:,i].max(),50)
+                # Loop over particles #
+                for j in range(n_parts):
+                    #print (name,f'particle {j}',f'mask {mask[:,j].sum()}',f'feature {fields[i]}',data[:,j,i][mask[:,j]].mean(),data[:,j,i][mask[:,j]].std())
+                    axs[i].hist(data[:,j,i][mask[:,j]],bins=bins,histtype='step',linewidth=2) #,label=f'Object {j}')
+                axs[i].set_xlabel(fields[i])
+                if log:
+                    axs[i].set_yscale('log')
+                #axs[i].legend()
+            # Add legend in last subplot #
+            if n_parts > 1:
+                axs[-1].axis('off')
+                for j in range(n_parts):
+                    axs[-1].plot([],[],label=f'Object {j}')
+                axs[-1].legend(loc='center left')
+            plt.show()
 
 
     ##### Abstract method to be implemented by user #####
