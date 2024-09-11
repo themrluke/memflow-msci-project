@@ -1,5 +1,4 @@
 from memflow.read_data import utils
-from memflow.phasespace.phasespace import PhaseSpace
 import os
 import numpy.ma as ma
 from torch.utils.data import DataLoader
@@ -19,7 +18,7 @@ M_HIGGS = 125.25
 M_TOP = 172.5
 M_GLUON = 1e-3
 
-class Dataset_PartonLevel_NoBoost(Dataset):
+class Dataset_PartonLevel_NoBoost_newHiggs(Dataset):
     def __init__(self, root, object_types=["partons", "lepton_partons", "boost",
                                            "H_thad_tlep_ISR", "H_thad_tlep_ISR_cartesian"], dev=None, debug=False,
                  dtype=None, build=False, parton_list=[]):
@@ -30,16 +29,14 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             "incoming_particles_boost": ["t", "x", "y", "z"],
             "lepton_partons": ["pt", "eta", "phi", "mass", "pdgId"],
             "H_thad_tlep_ISR": ["pt", "eta", "phi", "mass"],
-            "scaled_partons": ["pt", "eta", "phi", "prov"],
-            "scaled_leptons": ["pt", "eta", "phi", "pdgId"],
+            "scaled_partons": ["pt", "eta", "phi", "E", "px", "py", "pz", "prov"],
+            "scaled_leptons": ["pt", "eta", "phi", "E", "px", "py", "pz", "pdgId"],
             "H_thad_tlep_ISR_cartesian": ["E", "px", "py", "pz"]
         }
 
         tensors_bydefault = ['mask_partons', 'data_partons', 'mask_lepton_partons', 'data_lepton_partons',
                             'mask_boost', 'data_boost', 'data_higgs_t_tbar_ISR', 'data_higgs_t_tbar_ISR_cartesian',
                             'data_higgs_t_tbar_ISR_cartesian_onShell']
-        
-
         
         print("PartonLevel LAB")
         self.debug = debug
@@ -54,12 +51,14 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             build=True
 
         self.parton_list = parton_list
-        os.makedirs(self.rootDir + "/processed_partonsNoBoost", exist_ok=True)
+        self.dir_name = '/processed_partonsNoBoost_newHiggs/'
+        print(self.rootDir + self.dir_name)
+        os.makedirs(self.rootDir + self.dir_name, exist_ok=True)
         self.object_types = object_types
         self.build = build
 
         # if build flag set or number of files in processed partons directory is 0
-        if (build or len(os.listdir(self.rootDir + '/processed_partonsNoBoost/')) == 0):
+        if (build or len(os.listdir(self.rootDir + self.dir_name)) == 0):
 
             (self.partons, self.leptons,
             self.higgs, self.generator,
@@ -106,12 +105,13 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
             self.logScaled_data_higgs_t_tbar_ISR_phiScaled = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR_phiScaled"))
-            logScaled_data_higgs_t_tbar_ISR_cartesian = torch.load(
+            
+            self.logScaled_data_higgs_t_tbar_ISR_cartesian = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR_cartesian"))
             
             # Add Energy as the last feature: ["pt", "eta", "phi", "Energy"]
             logScaled_data_higgs_t_tbar_ISR_withEnergy = \
-                torch.cat((self.logScaled_data_higgs_t_tbar_ISR, logScaled_data_higgs_t_tbar_ISR_cartesian[...,0].unsqueeze(dim=2)), dim=2)
+                torch.cat((self.logScaled_data_higgs_t_tbar_ISR, self.logScaled_data_higgs_t_tbar_ISR_cartesian[...,0].unsqueeze(dim=2)), dim=2)
                           
             print("Create new file for logScaled_data_higgs_t_tbar_ISR_withEnergy")
             torch.save(logScaled_data_higgs_t_tbar_ISR_withEnergy,
@@ -125,6 +125,9 @@ class Dataset_PartonLevel_NoBoost(Dataset):
 
             print("Create new file for ScaledDecayProducts_ptcut")
             self.ProcessScaledDecayProducts_ptcut()
+
+            print("Create new file for angles in the CM frame")
+            self.ProcessAnglesInCMFrame()
             
 
         print("Reading parton_level Files")
@@ -147,11 +150,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             self.processed_file_names("H_thad_tlep_ISR_cartesian"))
         self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
             self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
-
-        if 'phasespace_intermediateParticles' in self.parton_list:
-            print("Load phasespace_intermediateParticles")
-            self.phasespace_intermediateParticles = torch.load(
-                self.processed_file_names("phasespace_intermediateParticles"))
 
         if 'H_thad_tlep_ISR_bPartons' in self.parton_list:
             print("Load H_thad_tlep_ISR_bPartons")
@@ -282,6 +280,11 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             self.logScaled_data_boost = torch.load(
                 self.processed_file_names("LogScaled_boost"))
 
+        if 'Hb1_thad_b_q1_tlep_b_el_CM' in self.parton_list:
+            print("Load Hb1_thad_b_q1_tlep_b_el_CM")
+            self.Hb1_thad_b_q1_tlep_b_el_CM = torch.load(
+                self.processed_file_names("Hb1_thad_b_q1_tlep_b_el_CM"))
+
         if dtype != None:
             for field in self.parton_list:
                 setattr(self, field, getattr(self, field).to(dtype))
@@ -299,7 +302,7 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         return [self.root]
 
     def processed_file_names(self, type):
-        return (self.rootDir + '/processed_partonsNoBoost/' + type + '_data.pt')
+        return (self.rootDir + self.dir_name + type + '_data.pt')
 
     def get_PartonsAndLeptons(self):
         for file in self.raw_file_names:
@@ -321,10 +324,20 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             leptons = df["lepton_partons"]
             leptons = ak.with_name(leptons, name="Momentum4D")
 
-            higgs = df["higgs"]
-            higgs = ak.with_name(higgs, name="Momentum4D")[:,0] # for the new dataset format
+            higgs = self.get_Higgs_bPartons(partons)
+            higgs = ak.with_name(higgs, name="Momentum4D") # for the new dataset format
 
         return partons, leptons, higgs, generator, gluon, boost
+
+    def get_Higgs_bPartons(self, partons):
+        partons = partons
+
+        # find partons with provenance 1 (b from Higgs decay)
+        prov1_partons = partons[partons.prov == 1]
+
+        higgs = prov1_partons[:, 0] + prov1_partons[:, 1]
+
+        return higgs
 
     def get_incoming_particles_boost(self, generator):
 
@@ -667,12 +680,12 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         tensor_partonsLeptons = torch.tensor(intermediate_np) # H1 H2 thad1 thad2
         tensor_partonsLeptons_boxcox = torch.clone(tensor_partonsLeptons)
         mask_partonsLeptons = (tensor_partonsLeptons[...,3] != -1).bool() # pt > 0
-        tensor_partonsLeptons[:,:,0] = torch.log(1 + tensor_partonsLeptons[:,:,0]) # take log of masked
-        # I don't care because I will mask these elems when I do any computations
+        tensor_partonsLeptons[:,:,0] = torch.log(1 + tensor_partonsLeptons[:,:,0]) # take log of pt
+        tensor_partonsLeptons[:,:,3:7] = torch.sign(tensor_partonsLeptons[:,:,3:7])*torch.log(1 + torch.abs(tensor_partonsLeptons[:,:,3:7])) # take log of E/px/py/pz
 
         mean_list = []
         std_list = []
-        for i in range(3):
+        for i in range(7):
             feature = tensor_partonsLeptons[...,i]
             mean_feature = torch.mean(feature[mask_partonsLeptons]) # masked mean
             std_feature = torch.std(feature[mask_partonsLeptons]) # masked std
@@ -689,12 +702,13 @@ class Dataset_PartonLevel_NoBoost(Dataset):
 
         tensor_partonsLeptons = torch.cat((tensor_partonsLeptons, parton_type), dim=2)
 
-        tensor_partonsLeptons_phiScaled = torch.clone(tensor_partonsLeptons)
+        tensor_partonsLeptons_phiScaled = torch.clone(tensor_partonsLeptons[...,[0,1,2,7,8]]) # DON'T INCLUDE E/PX/PY/PZ
         tensor_partonsLeptons_phiScaled[:,:,:3] = \
-            (tensor_partonsLeptons[:,:,:3] - mean_tensor_partonsLeptons[None,None,:])/std_tensor_partonsLeptons[None,None,:]
-        
-        tensor_partonsLeptons[:,:,:2] = \
-            (tensor_partonsLeptons[:,:,:2] - mean_tensor_partonsLeptons[None,None,:2])/std_tensor_partonsLeptons[None,None,:2]
+            (tensor_partonsLeptons[:,:,:3] - mean_tensor_partonsLeptons[None,None,:3])/std_tensor_partonsLeptons[None,None,:3]
+
+        # scale everything except phi: pt/eta/E/px/py/pz
+        tensor_partonsLeptons[:,:,[0,1,3,4,5,6]] = \
+            (tensor_partonsLeptons[:,:,[0,1,3,4,5,6]] - mean_tensor_partonsLeptons[None,None,[0,1,3,4,5,6]])/std_tensor_partonsLeptons[None,None,[0,1,3,4,5,6]]
 
         # sort higgs and thad decay products (based on pt)
         tensor_partonsLeptons = self.sort_pt(tensor_partonsLeptons)
@@ -713,8 +727,8 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         # type = 1 for jets, 2 for lepton/MET, 3 for high level parton (Higgs, t, tbar)
         parton_type = torch.Tensor([[[1,3], [2,3], [3,3], [4,3]]]).repeat(self.logScaled_data_higgs_t_tbar_ISR.size(0), 1, 1)
         
-        # attach parton type to our common higgs/tops tensor
-        self.logScaled_data_higgs_t_tbar_ISR = torch.cat((self.logScaled_data_higgs_t_tbar_ISR, parton_type), dim=2)
+        # attach parton type to our common higgs/tops tensor + attach E/px/py/pz scaled
+        self.logScaled_data_higgs_t_tbar_ISR = torch.cat((self.logScaled_data_higgs_t_tbar_ISR, self.logScaled_data_higgs_t_tbar_ISR_cartesian, parton_type), dim=2)
         self.logScaled_data_higgs_t_tbar_ISR_phiScaled = torch.cat((self.logScaled_data_higgs_t_tbar_ISR_phiScaled, parton_type), dim=2)
 
         # merge decay products and partons
@@ -905,6 +919,148 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         torch.save(mask_AllPartons, self.processed_file_names("mask_AllPartons_ptcut"))
         torch.save((mean_tensor_allPartons, std_tensor_AllPartons), self.processed_file_names("mean_std_AllPartons_ptcut"))
 
+    def boost_CM(self, objects_array, boost):
+
+        objects_CM = objects_array.boost_p4(boost.neg3D)
+
+        # Overwriting old pt by calling the function on the boosted object
+        # overwrite objects_array because i dont like "objects_CM.type"
+        objects_array["rho"] = objects_CM.pt
+        objects_array["pt"] = objects_CM.pt
+        objects_array["eta"] = objects_CM.eta
+        objects_array["phi"] = objects_CM.phi
+
+        return ak.with_name(objects_array, "Momentum4D")
+
+    def ProcessAnglesInCMFrame(self):
+
+        higgs = self.get_Higgs()
+        thad = self.get_top_hadronic()
+        tlep = self.get_top_leptonic()
+        W_had = self.get_W_hadronic()
+        W_lep = self.get_W_leptonic()
+
+        # find partons with provenance 1 (b from Higgs decay)
+        prov1_partons = self.partons[self.partons.prov == 1]
+        # find partons with provenance 2 (b from top hadronic decay)
+        prov2_partons = self.partons[self.partons.prov == 2]
+        # find partons with provenance 3 (b from top leptonic decay)
+        prov3_partons = self.partons[self.partons.prov == 3]
+        # find partons with provenance 5 (light q from top had decay)
+        prov5_partons = self.partons[self.partons.prov == 5]
+
+        leptons = self.leptons
+
+        # higgs b1 and b2
+        index_sort = ak.argsort(prov1_partons.pt, axis=-1, ascending=False, stable=True)
+        prov1_partons_sorted = prov1_partons[index_sort]
+
+        # check if Higgs b partons are sorted by pt
+        mask_pt = prov1_partons_sorted.pt[:,0] < prov1_partons_sorted.pt[:,1]
+        if ak.any(mask_pt):
+            raise Exception("Higgs b1 and b2 not sorted by pt")
+
+        # boost first parton in the CM
+        prov1_partons_sorted_CM = self.boost_CM(prov1_partons_sorted, higgs)
+        check_CM = prov1_partons_sorted_CM[:,0] + prov1_partons_sorted_CM[:,1]
+
+        # check if Higgs b partons were corrected boosted in CM
+        mask_px = abs(check_CM.px) > 1e-5
+        mask_py = abs(check_CM.py) > 1e-5
+        mask_pz = abs(check_CM.pz) > 1e-5
+
+        if (ak.any(mask_px) or ak.any(mask_py) or ak.any(mask_pz)):
+            raise Exception("Higgs b1 and b2 not in CM")
+
+        # transform in tensor
+        H_b1 = prov1_partons_sorted_CM[:,0]
+        H_b1_tensor = utils.to_flat_tensor(H_b1, ['pt', 'eta', 'phi'], axis=1, allow_missing=False)
+
+        # light quarks
+        index_sort = ak.argsort(prov5_partons.pt, axis=-1, ascending=False, stable=True)
+        prov5_partons_sorted = prov5_partons[index_sort]
+
+        # check if thad q partons are sorted by pt
+        mask_pt = prov5_partons_sorted.pt[:,0] < prov5_partons_sorted.pt[:,1]
+        if ak.any(mask_pt):
+            raise Exception("thad q1 and q2 not sorted by pt")
+
+        # boost first parton in the CM
+        prov5_partons_sorted_CM = self.boost_CM(prov5_partons_sorted, W_had)
+
+        check_CM = prov5_partons_sorted_CM[:,0] + prov5_partons_sorted_CM[:,1]
+
+        # check if Higgs b partons were corrected boosted in CM
+        mask_px = abs(check_CM.px) > 1
+        mask_py = abs(check_CM.py) > 1
+        mask_pz = abs(check_CM.pz) > 1
+
+        if (ak.any(mask_px) or ak.any(mask_py) or ak.any(mask_pz)):
+            raise Exception("thad q1 and q2 not in CM")
+
+        # transform in tensor
+        thad_q1 = prov5_partons_sorted_CM[:,0]
+        thad_q1_tensor = utils.to_flat_tensor(thad_q1, ['pt', 'eta', 'phi'], axis=1, allow_missing=False)
+
+        # LEPTONS: check if first lepton = el/muon   
+        mask_1 = abs(leptons[:,0].pdgId) == 11
+        mask_2 = abs(leptons[:,0].pdgId) == 13
+
+        if ak.count_nonzero(mask_1) + ak.count_nonzero(mask_2) != ak.num(mask_1, axis=0):
+            raise Exception("the first object is not electron or muon")
+
+        # boost first parton in the CM
+        leptons_sorted_CM = self.boost_CM(leptons, W_lep)
+
+        check_CM = leptons_sorted_CM[:,0] + leptons_sorted_CM[:,1]
+
+        # check if Higgs b partons were corrected boosted in CM
+        mask_px = abs(check_CM.px) > 1
+        mask_py = abs(check_CM.py) > 1
+        mask_pz = abs(check_CM.pz) > 1
+
+        if (ak.any(mask_px) or ak.any(mask_py) or ak.any(mask_pz)):
+            raise Exception("leptons are not in CM")
+
+        # transform in tensor
+        el_mu = leptons_sorted_CM[:,0]
+        el_mu_tensor = utils.to_flat_tensor(el_mu, ['pt', 'eta', 'phi'], axis=1, allow_missing=False)
+
+        # tlep
+        tlep_b_CM = self.boost_CM(prov3_partons[:,0], tlep)
+        W_lep_CM = self.boost_CM(W_lep, tlep)
+
+        check_CM = tlep_b_CM + W_lep_CM
+
+        mask_px = abs(check_CM.px) > 1e-1
+        mask_py = abs(check_CM.py) > 1e-1
+        mask_pz = abs(check_CM.pz) > 1e-1
+
+        if (ak.any(mask_px) or ak.any(mask_py) or ak.any(mask_pz)):
+            raise Exception("tlep b and W not in CM")
+
+        tlep_b_tensor = utils.to_flat_tensor(tlep_b_CM, ['pt', 'eta', 'phi'], axis=1, allow_missing=False)
+
+        # check if thad b and W are corrected boosted in the CM
+        thad_b_CM = self.boost_CM(prov2_partons[:,0], thad)
+        thad_W_CM = self.boost_CM(W_had, thad)
+
+        check_CM = thad_b_CM + thad_W_CM
+
+        mask_px = abs(check_CM.px) > 1e-5
+        mask_py = abs(check_CM.py) > 1e-5
+        mask_pz = abs(check_CM.pz) > 1e-5
+
+        if (ak.any(mask_px) or ak.any(mask_py) or ak.any(mask_pz)):
+            raise Exception("thad b and W not in CM")
+
+        thad_b_tensor = utils.to_flat_tensor(thad_b_CM, ['pt', 'eta', 'phi'], axis=1, allow_missing=False)
+
+        Hb1_thad_b_q1_tlep_b_el_CM = torch.cat((H_b1_tensor[:,None,:], thad_b_tensor[:,None,:], thad_q1_tensor[:,None,:],
+                                                tlep_b_tensor[:,None,:], el_mu_tensor[:,None,:]), dim=1)
+
+        torch.save(Hb1_thad_b_q1_tlep_b_el_CM,  self.processed_file_names("Hb1_thad_b_q1_tlep_b_el_CM"))
+
     def sort_pt(self, tensor_AllPartons):
         pt_0 = tensor_AllPartons[:,0,0]
         pt_1 = tensor_AllPartons[:,1,0]
@@ -916,16 +1072,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                                                     tensor_AllPartons[:,[0,1]],
                                                     tensor_AllPartons[:,[1,0]])
 
-        pt_2 = tensor_AllPartons[:,2,0]
-        pt_4 = tensor_AllPartons[:,4,0]
-        
-        mask_thad1 = pt_2 > pt_4        
-
-        # sort thad based on pt
-        tensor_AllPartons[:,[2,4]] = torch.where(mask_thad1[:,None,None],
-                                                    tensor_AllPartons[:,[2,4]],
-                                                    tensor_AllPartons[:,[4,2]])
-
         pt_4 = tensor_AllPartons[:,4,0]
         pt_5 = tensor_AllPartons[:,5,0]
         
@@ -935,16 +1081,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         tensor_AllPartons[:,[4,5]] = torch.where(mask_thad2[:,None,None],
                                                     tensor_AllPartons[:,[4,5]],
                                                     tensor_AllPartons[:,[5,4]])
-
-        pt_2 = tensor_AllPartons[:,2,0]
-        pt_4 = tensor_AllPartons[:,4,0]
-        
-        mask_thad3 = pt_2 > pt_4        
-
-        # sort thad based on pt
-        tensor_AllPartons[:,[2,4]] = torch.where(mask_thad3[:,None,None],
-                                                    tensor_AllPartons[:,[2,4]],
-                                                    tensor_AllPartons[:,[4,2]])
 
         return tensor_AllPartons
 
@@ -1041,7 +1177,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                     self.mask_lepton_partons[index], self.data_lepton_partons[index],
                     self.mask_boost[index], self.data_boost[index],
                     self.data_higgs_t_tbar_ISR[index], self.data_higgs_t_tbar_ISR_cartesian[index],
-                    self.phasespace_intermediateParticles[index],
                     self.log_data_higgs_t_tbar_ISR_cartesian[index],
                     # no index for mean/std because size is [4]
                     self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian,
