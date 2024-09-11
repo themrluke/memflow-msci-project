@@ -42,6 +42,9 @@ class UnfoldingFlow(nn.Module):
                  flow_base_second_arg=1,
                  flow_bound=1.,
                  randPerm=False,
+
+                 DNN_nodes=64,
+                 DNN_layers=8,
                  
                  device=torch.device('cpu'),
                  dtype=torch.float32,

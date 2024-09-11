@@ -195,7 +195,7 @@ def sortObjects_bySpanet(spanet_assignment, scaledLogReco, maskJets, order=[0, 1
     
     # 21 objects because before we had 18 objects before
     # but due to our new way of sorting, there could be some missing jets due to the spanet overlapping
-    objects_sortedbySpanet = torch.ones((spanet_assignment.shape[0], 21, 8), dtype=scaledLogReco.dtype, device=spanet_assignment.device) * -100
+    objects_sortedbySpanet = torch.ones((spanet_assignment.shape[0], 21, scaledLogReco.shape[2]), dtype=scaledLogReco.dtype, device=spanet_assignment.device) * -100
     
     jetsPositions_SortedbySpanet = sortJets_bySpanet(spanet_assignment, order=[0, 1, 2])
     
@@ -314,7 +314,7 @@ def sortObjects_byProv(scaledLogReco, maskJets, order=[0, 1, 2]):
     
     # 21 objects because before we had 18 objects before
     # but due to our new way of sorting, there could be some missing jets due to the spanet overlapping
-    objects_sortedbyProv = torch.ones((scaledLogReco.shape[0], 24, 8), dtype=scaledLogReco.dtype, device=scaledLogReco.device) * -100
+    objects_sortedbyProv = torch.ones((scaledLogReco.shape[0], 24, scaledLogReco.shape[2]), dtype=scaledLogReco.dtype, device=scaledLogReco.device) * -100
 
     prov_assignment = scaledLogReco[:,:,-1]
 

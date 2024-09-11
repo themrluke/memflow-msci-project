@@ -15,7 +15,7 @@ def set_square_t(inputt, square, negative=False):
     ret[:, 0] = (rho2_t(inputt) + square) ** 0.5
 
     if negative:
-        ret[:, 0] *= -1
+        ret[:, 0] *= -1.0
     ret[:, 1:] = inputt[:, 1:]
 
     return ret
