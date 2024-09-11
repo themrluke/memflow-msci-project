@@ -3,7 +3,7 @@ from comet_ml import Experiment
 
 import torch
 from memflow.read_data.dataset_all import DatasetCombined
-from memflow.transfer_flow.transfer_flow_paper_pretrained_v3_onlyExist_met import TransferFlow_Paper_pretrained_v3_onlyExist_MET
+from memflow.transfer_flow.transfer_flow_paper_pretrained_v3_onlyExist-btag import TransferFlow_Paper_pretrained_v3_onlyExist_btag
 from memflow.unfolding_flow.utils import *
 from utils_transferFlow_paper import sample_fullRecoEvent_classifier_v3_leptonMET
 from utils_transferFlow_paper import existQuality_print
@@ -11,9 +11,6 @@ from utils_transferFlow_paper import sampling_print
 from utils_transferFlow_paper import validation_print
 from utils_transferFlow_paper import unscale_pt
 from utils_transferFlow_paper import compute_loss_per_pt
-from utils_transferFlow_paper import plot_grad_flow
-from utils_transferFlow_paper import plot_grad_hist
-
 import mdmm
 
 import numpy as np
@@ -26,7 +23,6 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from math import floor
-
 
 # from tensorboardX import SummaryWriter
 from omegaconf import OmegaConf
@@ -72,7 +68,7 @@ def ddp_setup(rank, world_size, port):
     torch.cuda.set_device(rank)
 
 def train( device, name_dir, config,  outputDir, dtype,
-           world_size=None, device_ids=None, easy_version=False, min5Jets=False):
+           world_size=None, device_ids=None, easy_version=False):
     # device is device when not distributed and rank when distributed
     print("START OF RANK:", device)
     if world_size is not None:
@@ -84,15 +80,17 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     train_dataset = DatasetCombined(config.input_dataset_train, dev=device,
                                     dtype=dtype, datasets=['partons_lab', 'reco_lab'],
-                           reco_list_lab=['scaledLogReco_sortedBySpanet',
-                                          'mask_scaledLogReco_sortedBySpanet',
+                           reco_list_lab=['scaledLogRecoParticles',
+                                          'mask_lepton', 
+                                          'mask_jets','mask_met',
                                           'mask_boost', 'scaledLogBoost'],
                            parton_list_lab=['logScaled_data_higgs_t_tbar_ISR'])
 
     val_dataset = DatasetCombined(config.input_dataset_validation,dev=device,
                                   dtype=dtype, datasets=['partons_lab', 'reco_lab'],
-                           reco_list_lab=['scaledLogReco_sortedBySpanet',
-                                          'mask_scaledLogReco_sortedBySpanet',
+                           reco_list_lab=['scaledLogRecoParticles',
+                                          'mask_lepton', 
+                                          'mask_jets','mask_met',
                                           'mask_boost', 'scaledLogBoost'],
                            parton_list_lab=['logScaled_data_higgs_t_tbar_ISR'])
 
@@ -117,20 +115,6 @@ def train( device, name_dir, config,  outputDir, dtype,
             else:
                  val_dataset = torch.utils.data.Subset(val_dataset, indices)
 
-    elif min5Jets:
-        print('Load events with min 5 Jets')
-        scaledRecoList = [train_dataset.reco_lab.scaledLogReco_sortedBySpanet, val_dataset.reco_lab.scaledLogReco_sortedBySpanet]
-
-        for i in range(2):
-            scaledReco = scaledRecoList[i]
-            no_objs = torch.sum(scaledReco[:,:,0], dim=1)
-            mask_5Jets = (no_objs >= 5)
-            indices = mask_5Jets.nonzero().squeeze(dim=1)
-            if i == 0:
-                train_dataset = torch.utils.data.Subset(train_dataset, indices)
-            else:
-                 val_dataset = torch.utils.data.Subset(val_dataset, indices)
-
     if device == torch.device('cuda'):
         log_mean_reco = log_mean_reco.cuda()
         log_std_reco = log_std_reco.cuda()
@@ -141,7 +125,7 @@ def train( device, name_dir, config,  outputDir, dtype,
     pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500]
 
     # Initialize model
-    model = TransferFlow_Paper_pretrained_v3_onlyExist_MET(no_recoVars=5, # exist + 3-mom + encoded_position
+    model = TransferFlow_Paper_pretrained_v3_onlyExist_btag(no_recoVars=5, # 3-mom + btag + encoded_position
                 no_partonVars=4,
                 no_recoObjects=no_recoObjs,
 
@@ -166,11 +150,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                 randPerm=config.transferFlow.randPerm,
                 no_max_objects=config.transferFlow.no_max_objects,
 
-                flow_lepton_ntransforms=config.transferFlow_lepton.ntransforms,
-                flow_lepton_hiddenMLP_NoLayers=config.transferFlow_lepton.hiddenMLP_NoLayers,
-                flow_lepton_hiddenMLP_LayerDim=config.transferFlow_lepton.hiddenMLP_LayerDim,
-                flow_lepton_bins=config.transferFlow_lepton.bins,
-
                 DNN_nodes=config.DNN.nodes, DNN_layers=config.DNN.layers,
                 pretrained_classifier=config.DNN.path_pretraining,
                 load_classifier=False,
@@ -188,18 +167,14 @@ def train( device, name_dir, config,  outputDir, dtype,
             project_name="MEMFlow",
             workspace="antoniopetre",
             auto_output_logging = "simple",
-            auto_histogram_weight_logging=True,
-            auto_histogram_gradient_logging=True,
-            auto_histogram_activation_logging=True
             # disabled=True
         )
-        exp.add_tags(['paper_Impl', 'leptonMETFirst+newFlows+H/thad/tlep', 'noMDMM', '3DFlow', 'eta_removedFromMET', 'onlyExistJets', 'no-btag', f'min5Jets={min5Jets}', 'HiggsAssignment', 'null_token_only_in_transformer', f'scheduler={config.training_params.scheduler}'])
+        exp.add_tags(['paper_Impl', 'orderByPt+btag', 'noSpanet', 'noMDMM', '3DFlow', 'eta_removedFromMET', 'onlyExistJets', 'no-btag', f'min6Jets_max8={easy_version}', 'HiggsAssignment', 'null_token_only_in_transformer', f'scheduler={config.training_params.scheduler}'])
+        #exp.log_parameters(config.training_params)
+        #exp.log_parameters(config.transferFlow)
         exp.log_parameters(config)
         exp.log_parameters({"model_param_tot": count_parameters(model)})
         exp.log_parameters({"model_param_transformer": count_parameters(model.classifier_exist.transformer_model)})
-        exp.log_parameters({"model_param_flow_jets": count_parameters(model.flow_kinematics_jets)})
-        exp.log_parameters({"model_param_flow_lepton": count_parameters(model.flow_kinematics_lepton)})
-        exp.log_parameters({"model_param_flow_MET": count_parameters(model.flow_kinematics_MET)})
     else:
         exp = None
 
@@ -276,6 +251,7 @@ def train( device, name_dir, config,  outputDir, dtype,
     pos_partons = torch.tensor([0,1,2,3], device=device, dtype=dtype).unsqueeze(dim=1) # higgs, t1, t2, ISR
 
     # new order: lepton MET higgs1 higgs2 etc
+    # to do: change order here
     new_order_list = [6,7,0,1,2,3,4,5]
     lastElems = [i+8 for i in range(no_recoObjs - 8)]
     new_order_list = new_order_list + lastElems
@@ -311,10 +287,13 @@ def train( device, name_dir, config,  outputDir, dtype,
             optimizer.zero_grad()
             
             (logScaled_partons,
-             logScaled_reco_sortedBySpanet, mask_recoParticles,
+             logScaled_reco_sortedBySpanet, mask_lepton, 
+             mask_jets, mask_met,
              mask_boost, data_boost_reco) = data_batch
+
+            mask_recoParticles = torch.cat((mask_lepton_reco, mask_met, mask_jets), dim=1)
                             
-            # exist + 3-mom
+            # 3-mom + btag
             logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:4]
             # The provenance is remove in the model
 
@@ -326,12 +305,12 @@ def train( device, name_dir, config,  outputDir, dtype,
             logScaled_reco_sortedBySpanet = attach_position(logScaled_reco_sortedBySpanet, pos_logScaledReco)
             logScaled_partons = attach_position(logScaled_partons, pos_partons)
 
-            avg_flow_prob, flow_prob_batch, flow_prob_jet, flow_prob_MET, flow_prob_lepton, \
-            avg_flow_prob_exist, flow_prob_exist_batch, flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
-                                                                                logScaled_partons,
-                                                                                data_boost_reco,
-                                                                                mask_recoParticles,
-                                                                                mask_boost)
+            avg_flow_prob_jet, flow_prob_jet_batch, flow_pr, \
+            prob_avg, prob_each_event, prob_each_jet = ddp_model(logScaled_reco_sortedBySpanet,
+                                                                logScaled_partons,
+                                                                data_boost_reco,
+                                                                mask_recoParticles,
+                                                                mask_boost)
 
 
             loss_main_perObj = loss_BCE(flow_prob_exist, logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects,0])
@@ -339,11 +318,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             loss_per_batch = -flow_prob_batch + torch.sum(loss_main_perObj, dim=1)
             
             loss_main = loss_per_batch.mean() 
-            flow_prob_lepton = flow_prob_lepton.unsqueeze(dim=1)
-            flow_prob_MET = flow_prob_MET.unsqueeze(dim=1)
             
-            flow_pr = torch.cat((flow_prob_lepton, flow_prob_MET, flow_prob_jet), dim=1)
-
             # modify mask_recoParticles: use only jets with exist==1
             mask_recoParticles_exist = logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects, 0] == 1
             logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects]
@@ -366,30 +341,6 @@ def train( device, name_dir, config,  outputDir, dtype,
                 print(f'ii= {ii} Training_pt: nans = {torch.count_nonzero(torch.isnan(total_loss_per_pt))}       infs = {torch.count_nonzero(torch.isinf(total_loss_per_pt))}')
 
             loss_main.backward()
-
-            
-
-            if i == 0:
-
-                plot_grad_flow(exp, named_parameters=ddp_model.classifier_exist.transformer_model.named_parameters(),
-                               epoch=e, modelName='transformer')
-                plot_grad_flow(exp, named_parameters=ddp_model.flow_kinematics_jets.named_parameters(),
-                               epoch=e, modelName='flow_jet')
-                plot_grad_flow(exp, named_parameters=ddp_model.flow_kinematics_lepton.named_parameters(),
-                               epoch=e, modelName='flow_lepton')
-                plot_grad_flow(exp, named_parameters=ddp_model.flow_kinematics_MET.named_parameters(),
-                               epoch=e, modelName='flow_MET')
-
-                plot_grad_hist(exp, named_parameters=ddp_model.classifier_exist.transformer_model.named_parameters(),
-                           epoch=e, modelName='grad_transformer')
-                plot_grad_hist(exp, named_parameters=ddp_model.flow_kinematics_jets.named_parameters(),
-                           epoch=e, modelName='flow_jet')
-                plot_grad_hist(exp, named_parameters=ddp_model.flow_kinematics_lepton.named_parameters(),
-                           epoch=e, modelName='flow_lepton')
-                plot_grad_hist(exp, named_parameters=ddp_model.flow_kinematics_MET.named_parameters(),
-                           epoch=e, modelName='flow_MET')
-                
-                
             optimizer.step()
             sum_loss += loss_main.item()
             #sum_loss_exist += torch.sum(loss_main_perObj*mask_recoParticles, dim=1).mean()
@@ -439,10 +390,13 @@ def train( device, name_dir, config,  outputDir, dtype,
             with torch.no_grad():
 
                 (logScaled_partons,
-                logScaled_reco_sortedBySpanet, mask_recoParticles,
-                mask_boost, data_boost_reco) = data_batch
+                 logScaled_reco_sortedBySpanet, mask_lepton, 
+                 mask_jets, mask_met,
+                 mask_boost, data_boost_reco) = data_batch
+
+                mask_recoParticles = torch.cat((mask_lepton_reco, mask_met, mask_jets), dim=1)
                 
-                # exist + 3-mom
+                # 3-mom + btag
                 logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,:4] 
 
                 # put the lepton first:
@@ -454,12 +408,12 @@ def train( device, name_dir, config,  outputDir, dtype,
                 logScaled_partons = attach_position(logScaled_partons, pos_partons)
 
                 # The provenance is remove in the model
-                avg_flow_prob, flow_prob_batch, flow_prob_jet, flow_prob_MET, flow_prob_lepton, \
-                avg_flow_prob_exist, flow_prob_exist_batch, flow_prob_exist = ddp_model(logScaled_reco_sortedBySpanet,
-                                                                                    logScaled_partons,
-                                                                                    data_boost_reco,
-                                                                                    mask_recoParticles,
-                                                                                    mask_boost)
+                avg_flow_prob_jet, flow_prob_jet_batch, flow_pr, \
+                prob_avg, prob_each_event, prob_each_jet = ddp_model(logScaled_reco_sortedBySpanet,
+                                                                    logScaled_partons,
+                                                                    data_boost_reco,
+                                                                    mask_recoParticles,
+                                                                    mask_boost)
     
 
                 loss_main_perObj = loss_BCE(flow_prob_exist, logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects,0])
@@ -467,12 +421,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 loss_per_batch = -flow_prob_batch + torch.sum(loss_main_perObj, dim=1)
                 
                 loss_main = loss_per_batch.mean() 
-                flow_prob_lepton = flow_prob_lepton.unsqueeze(dim=1)
-                flow_prob_MET = flow_prob_MET.unsqueeze(dim=1)
-                
-                flow_pr = torch.cat((flow_prob_lepton, flow_prob_MET, flow_prob_jet), dim=1)
                 batch_flow_pr = +loss_per_batch
-                
                     
                 total_valid_loss += loss_main.item() # using only the main loss
                 #sum_valid_loss_exist += torch.sum(loss_main_perObj*mask_recoParticles, dim=1).mean()
@@ -647,7 +596,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                     if e % 2 == 0:
                         
                         # print sampled partons
-                        fullGeneratedEvent, mask_reco = sample_fullRecoEvent_classifier_v3_leptonMET(model, logScaled_partons, logScaled_reco_sortedBySpanet.shape[0], device, dtype, No_samples=1)
+                        fullGeneratedEvent = sample_fullRecoEvent_classifier_v3_leptonMET(model, logScaled_partons, logScaled_reco_sortedBySpanet.shape[0], device, dtype, No_samples=1)
     
                         allJets = [i for i in range(config.transferFlow.no_max_objects)]
                         sampling_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, allJets, e, onlyExistElem=True)
@@ -697,7 +646,6 @@ if __name__ == '__main__':
     parser.add_argument('--output-dir', type=str, required=True, help='Output directory')
     parser.add_argument('--on-GPU', action="store_true",  help='run on GPU boolean')
     parser.add_argument('--easy-version', action="store_true",  help='6 Jets')
-    parser.add_argument('--min5Jets', action="store_true",  help='min5Jets')
     parser.add_argument('--distributed', action="store_true")
     args = parser.parse_args()
     
@@ -705,7 +653,6 @@ if __name__ == '__main__':
     on_GPU = args.on_GPU # by default run on CPU
     outputDir = args.output_dir
     easy_version = args.easy_version
-    min5Jets = args.min5Jets
 
     # Read config file in 'conf'
     with open(path_to_conf) as f:
@@ -722,7 +669,7 @@ if __name__ == '__main__':
     world_size = len(actual_devices)
 
     outputDir = os.path.abspath(outputDir)
-    name_dir = f'{outputDir}/Transfer_Flow_Paper_pretrained_v3_MET_min5Jets={min5Jets}_{conf.name}_{conf.version}_{conf.transferFlow.base}_NoTransf{conf.transferFlow.ntransforms}_NoBins{conf.transferFlow.bins}_DNN:{conf.transferFlow.hiddenMLP_NoLayers}_{conf.transferFlow.hiddenMLP_LayerDim}'
+    name_dir = f'{outputDir}/Transfer_Flow_Paper_pretrained_v3_btag_{conf.name}_{conf.version}_{conf.transferFlow.base}_NoTransf{conf.transferFlow.ntransforms}_NoBins{conf.transferFlow.bins}_DNN:{conf.transferFlow.hiddenMLP_NoLayers}_{conf.transferFlow.hiddenMLP_LayerDim}'
     
 
     os.makedirs(name_dir, exist_ok=True)
@@ -745,13 +692,13 @@ if __name__ == '__main__':
         mp.spawn(
             train,
             args=(name_dir, conf,  outputDir, dtype,
-                    world_size, dev_dct, easy_version, min5Jets),
+                    world_size, dev_dct, easy_version),
             nprocs=world_size,
             # join=True
         )
     else:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        train(device, name_dir, conf,  outputDir, dtype, None, None, easy_version, min5Jets)
+        train(device, name_dir, conf,  outputDir, dtype, None, None, easy_version)
     
     print(f"Flow training finished succesfully! Version: {conf.version}")
     
