@@ -1,0 +1,108 @@
+name: transfer_flow_2nd
+version: 2nd
+description: Second version
+input_dataset_train: /eos/user/a/adpetre/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_train.parquet
+input_dataset_validation: /eos/user/a/adpetre/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part1_validation.parquet
+input_dataset_test: /eos/user/a/adpetre/www/ttHbbAnalysis/training_dataset/v3_sig_forTrainingDataset/all_jets_fullRun2_ttHbb_forTraining_allyears_spanetprov_part2.parquet
+cartesian: false
+ddp_port: 12346
+noProv: true
+input_shape:
+  no_recoVars: 7
+  no_partonVars: 3
+training_params:
+  dtype: float32
+  lr: 0.0001
+  batch_size_training: 2048
+  batch_size_validation: 2048
+  subsplit: 8
+  nepochs: 1000
+  training_sample: 0.9
+  validation_sample: 0.1
+  mmd_kernel: multiscale
+  nEpochsPatience: 400
+  minDeltaPatience: 0.001
+  huber_delta: 1.0
+  eps: 1.0e-05
+  scheduler: reduce_on_plateau
+  reduce_on_plateau:
+    factor: 0.75
+    patience: 40
+    threshold: 0.4
+    min_lr: 1.0e-06
+  cosine_scheduler:
+    after_N_epochs: 0
+    Tmax: 10
+    eta_min: 3.0e-05
+  cyclic_lr:
+    max_lr: 0.001
+    base_lr: 0.0001
+    step_size_up: 15000
+    last_epoch: 15000
+    mode: triangular2
+  interval_logging_steps: 3
+transformerConditioning:
+  no_transformers: 3
+  input_features: 16
+  nhead: 2
+  no_encoder_layers: 2
+  no_decoder_layers: 2
+  dim_feedforward: 64
+transferFlow_lepton:
+  nfeatures: 1
+  ntransforms: 1
+  hiddenMLP_NoLayers: 4
+  hiddenMLP_LayerDim: 128
+  bins: 50
+  autoregressive: true
+  base: DiagNormal
+  base_first_arg: 0
+  base_second_arg: 0.35
+  bound: 3
+  randPerm: true
+  no_max_objects: 12
+transferFlow:
+  nfeatures: 1
+  ntransforms: 1
+  hiddenMLP_NoLayers: 4
+  hiddenMLP_LayerDim: 128
+  bins: 50
+  autoregressive: true
+  base: DiagNormal
+  base_first_arg: 0
+  base_second_arg: 0.35
+  bound: 3
+  randPerm: true
+  no_max_objects: 12
+  bound_btag: 6.3
+  base_btag: BoxUniform
+transferFlow_btag:
+  nfeatures: 1
+  bound: 6.3
+  base: BoxUniform
+  ntransforms: 1
+  hiddenMLP_NoLayers: 2
+  hiddenMLP_LayerDim: 64
+  bins: 20
+  autoregressive: true
+  base_first_arg: -6.3
+  base_second_arg: 6.3
+  randPerm: true
+DNN:
+  nodes: 64
+  layers: 4
+  path_pretraining: /eos/user/a/adpetre/www/ttHbbAnalysis/MEMFlow/models_archive/classifier_exist_test/Transfer_Flow_transfer_flow_2nd_2nd_DiagNormal_NoTransf2_NoBins10_DNN:2_64/model_transfer_flow_2nd_2nd.pt
+  freeze_weights: true
+MDMM:
+  huber_max: 10.0
+  huber_scale: 1.0
+  huber_damping: 1.0
+  mmd_max: 2.0
+  mmd_scale: 1.0
+  mmd_damping: 1.0
+  exist_tight: 0.0
+  exist_loose: 0.0
+  max: 0.2
+  scale: 1.0
+  damping: 1.0
+comet_token: xqHlmMeY0BtVThjkd7pDKxLGt
