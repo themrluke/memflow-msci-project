@@ -282,6 +282,8 @@ class Dataset_PartonLevel_NoBoost_newHiggs(Dataset):
 
         if 'Hb1_thad_b_q1_tlep_b_el_CM' in self.parton_list:
             print("Load Hb1_thad_b_q1_tlep_b_el_CM")
+            self.mean_log_partonsLeptons, self.std_log_partonsLeptons = torch.load(
+                self.processed_file_names("Log_mean_std_partonsLeptons"))
             self.Hb1_thad_b_q1_tlep_b_el_CM = torch.load(
                 self.processed_file_names("Hb1_thad_b_q1_tlep_b_el_CM"))
 
@@ -576,8 +578,7 @@ class Dataset_PartonLevel_NoBoost_newHiggs(Dataset):
         #    "Log_H_thad_tlep_ISR"))
         torch.save((mean_LogIntermediateParticles, std_LogIntermediateParticles), self.processed_file_names(
             "Log_mean_std_H_thad_tlep_ISR"))
-        torch.save(scaledIntermediateParticles, self.processed_file_names(
-            "LogScaled_H_thad_tlep_ISR"))
+        torch.save(scaledIntermediateParticles, self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
         torch.save(scaledIntermediateParticles_phiScaled, self.processed_file_names("LogScaled_H_thad_tlep_ISR_phiScaled"))
 
         # Scaling also the boost

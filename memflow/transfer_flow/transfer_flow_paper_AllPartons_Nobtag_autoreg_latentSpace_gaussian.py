@@ -44,6 +44,7 @@ class TransferFlow_Paper_AllPartons_Nobtag_autoreg_latentSpace_gaussian(nn.Modul
 
                  DNN_nodes=64, DNN_layers=8,
                  pretrained_classifier='',
+                 dropout=False,
                  load_classifier=False,
                  freeze_classifier=True,
                  encode_position=True,
@@ -127,7 +128,7 @@ class TransferFlow_Paper_AllPartons_Nobtag_autoreg_latentSpace_gaussian(nn.Modul
                                                      transformer_dim_feedforward,
                                                      transformer_activation,
                                                      DNN_nodes, DNN_layers,
-                                                     no_max_objects, device, dtype, eps)
+                                                     no_max_objects, dropout, device, dtype, eps)
 
         if load_classifier:
             state_dict = torch.load(pretrained_classifier, map_location="cpu")

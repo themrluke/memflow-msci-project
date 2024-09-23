@@ -144,7 +144,7 @@ def train( device, name_dir, config,  outputDir, dtype,
 
     # Initialize model
     model = TransferFlow_Paper_AllPartons_Nobtag_autoreg_latentSpace_gaussian(no_recoVars=5, # exist + 3-mom + encoded_position,
-                                 no_partonVars=6,
+                                 no_partonVars=4,
                                  no_recoObjects=no_recoObjs,
                 
                                  no_transformers=config.transformerConditioning.no_transformers,
@@ -176,6 +176,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                                  pretrained_classifier=config.DNN.path_pretraining,
                                  load_classifier=False,
                                  encode_position=True,
+                                 dropout=False,
                                  
                                  device=device,
                                  dtype=dtype,
@@ -186,7 +187,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         # Loading comet_ai logging
         exp = Experiment(
             api_key=config.comet_token,
-            project_name="MEMFlow",
+            project_name="Transfer Flow",
             workspace="antoniopetre",
             auto_output_logging = "simple",
             # disabled=True
@@ -201,6 +202,8 @@ def train( device, name_dir, config,  outputDir, dtype,
         exp.log_parameters({"model_param_flow_pt_lepton": count_parameters(model.flow_kinematics_lepton_pt)})
         exp.log_parameters({"model_param_flow_eta_lepton": count_parameters(model.flow_kinematics_lepton_eta)})
         exp.log_parameters({"model_param_flow_phi_lepton": count_parameters(model.flow_kinematics_lepton_phi)})
+
+        exp.set_name(f"TransferFlow_gaussian_{randint(0, 1000)}")
     else:
         exp = None
 
@@ -327,7 +330,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             logScaled_reco_sortedBySpanet = attach_position(logScaled_reco_sortedBySpanet, pos_logScaledReco)
 
             # remove prov from partons
-            logScaled_partons = logScaled_partons[:,:,[0,1,2,3,4]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
+            logScaled_partons = logScaled_partons[:,:,[0,1,2]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
             logScaled_partons = attach_position(logScaled_partons, pos_partons)
 
             avg_flow_prob, flow_prob_batch, \
@@ -468,7 +471,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 logScaled_reco_sortedBySpanet = attach_position(logScaled_reco_sortedBySpanet, pos_logScaledReco)
     
                 # remove prov from partons
-                logScaled_partons = logScaled_partons[:,:,[0,1,2,3,4]] # [pt,eta,phi,type] -> skip type=1/2 for partons/leptons
+                logScaled_partons = logScaled_partons[:,:,[0,1,2]] # [pt,eta,phi,type] -> skip type=1/2 for partons/leptons
                 logScaled_partons = attach_position(logScaled_partons, pos_partons)
     
                 avg_flow_prob, flow_prob_batch, \
@@ -526,174 +529,18 @@ def train( device, name_dir, config,  outputDir, dtype,
                 for jet in range(config.transferFlow.no_max_objects - 4):
                     f1_valid_total_eachObject[jet] += multiclass_f1_score(prediction[:,4+jet], logScaled_reco_sortedBySpanet[:,4+jet,0], num_classes=2)
 
-                if i == 0:
-                    random = torch.rand(1)
-                    sign_1 = 1 if random[0] > 0.5 else -1
-                    # TODO ADD 10 % of eta
-                    difference_eta = [sign_1*0.1]
-
-                    # Jets validation
-                    # difference_pt = 10% of first jet
-                    difference_pt = 1/10*unscale_pt(logScaled_reco_sortedBySpanet[...,1], mask_recoParticles,
-                                                    log_mean_reco, log_std_reco)[:,0]
-                    
-                
-                    # wrong pt
-                    wrong_logScaled_reco = alter_variables(difference=difference_pt,
-                                            object_no=[0],
-                                            variable_altered=[1], # pt = 1 for reco objs
-                                            target_var=logScaled_reco_sortedBySpanet, 
-                                            log_mean=log_mean_reco[:2], 
-                                            log_std=log_std_reco[:2],
-                                            mask_target=mask_recoParticles,
-                                            no_max_objects=config.transferFlow.no_max_objects,
-                                            device=device,
-                                            reco=1)
-
-                    wrongPT_avg_flow_prob, wrongPT_flow_prob_batch, \
-                    wrongPT_avg_flow_prob_pt, wrongPT_flow_prob_pt_batch, wrongPT_flow_prob_pt, \
-                    wrongPT_avg_flow_prob_eta, wrongPT_flow_prob_eta_batch, wrongPT_flow_prob_eta, \
-                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi, \
-                    wrongPT_avg_flow_prob_exist, wrongPT_flow_prob_exist_batch, wrongPT_flow_prob_exist= ddp_model(wrong_logScaled_reco,
-                                                                                                    logScaled_partons,
-                                                                                                    data_boost_reco,
-                                                                                                    mask_partonsLeptons,
-                                                                                                    mask_recoParticles,
-                                                                                                    mask_boost)
-                    
-                    wrong_pt_loss_main_perObj = loss_BCE(wrongPT_flow_prob_exist, logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects,0])
-                    wrong_pt_loss_main_perObj[:,:4] = 0
-                    #wrong_pt_batch_flow_pr = -wrongPT_flow_prob_jet_batch + torch.sum(wrong_pt_loss_main_perObj*mask_recoParticles, dim=1)
-                    wrong_pt_batch_flow_pr = -wrongPT_flow_prob_batch + torch.sum(wrong_pt_loss_main_perObj, dim=1)
-                    wrong_pt_batch_flow_pr = -1*wrong_pt_batch_flow_pr # positive log likelihood
-
-                    # wrong pt and eta
-                    wrong_logScaled_reco = alter_variables(difference=difference_eta, 
-                                            object_no=[1],
-                                            variable_altered=[2], # eta = 2 for reco objs
-                                            target_var=wrong_logScaled_reco,
-                                            log_mean=log_mean_reco[:2], 
-                                            log_std=log_std_reco[:2],
-                                            mask_target=mask_recoParticles,
-                                            no_max_objects=config.transferFlow.no_max_objects,
-                                            device=device,
-                                            reco=1)
-                    
-                    wrongPTandETA_avg_flow_prob, wrongPTandETA_flow_prob_batch, \
-                    wrongPTandETA_avg_flow_prob_pt, wrongPTandETA_flow_prob_pt_batch, wrongPTandETA_flow_prob_pt, \
-                    wrongPTandETA_avg_flow_prob_eta, wrongPTandETA_flow_prob_eta_batch, wrongPTandETA_flow_prob_eta, \
-                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi, \
-                    wrongPTandETA_avg_flow_prob_exist, wrongPTandETA_flow_prob_exist_batch, wrongPTandETA_flow_prob_exist= ddp_model(wrong_logScaled_reco,
-                                                                                logScaled_partons,
-                                                                                data_boost_reco,
-                                                                                mask_partonsLeptons,
-                                                                                mask_recoParticles,
-                                                                                mask_boost)
-                    
-                    wrong_ptAndEta_loss_main_perObj = loss_BCE(wrongPTandETA_flow_prob_exist, logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects,0])
-                    wrong_ptAndEta_loss_main_perObj[:,:4] = 0
-                    #wrong_ptAndEta_batch_flow_pr = -wrongPTandETA_flow_prob_jet_batch + torch.sum(wrong_ptAndEta_loss_main_perObj*mask_recoParticles, dim=1)
-                    wrong_ptAndEta_batch_flow_pr = -wrongPTandETA_flow_prob_batch + torch.sum(wrong_ptAndEta_loss_main_perObj, dim=1)
-                    wrong_ptAndEta_batch_flow_pr = -1*wrong_ptAndEta_batch_flow_pr # positive log likelihood
-
-                    # sometimes there are nans if the difference_pt is too large
-                    if torch.isnan(wrong_pt_batch_flow_pr).any() or torch.isnan(wrong_ptAndEta_batch_flow_pr).any():
-                        print(f'validation_plots_nans: wrong_pt = {torch.count_nonzero(torch.isnan(wrong_pt_batch_flow_pr))}     & wrong_pt_eta = {torch.count_nonzero(torch.isnan(wrong_ptAndEta_batch_flow_pr))}')
-
-                    # print jet validation
-                    validation_print(experiment=exp, flow_pr=batch_flow_pr,
-                                    wrong_pt_batch_flow_pr=wrong_pt_batch_flow_pr,
-                                    wrong_ptAndEta_batch_flow_pr=wrong_ptAndEta_batch_flow_pr, epoch=e,
-                                    range_x=(-60,60), no_bins=120, label1='diff: pt_0 10%',
-                                    label2=f'diff: pt_0 10% and eta {difference_eta}', particles='jets')
-
-                    # Partons validation
-                    # difference_pt = 10% of Higgs
-                    maskPartons = torch.ones(logScaled_partons[:,:,0].shape, device=device)
-                    difference_pt = 1/10*unscale_pt(logScaled_partons[...,0], maskPartons,
-                                                    log_mean_parton, log_std_parton)[:,0]
-
-                    # wrong pt
-                    wrong_logScaled_parton = alter_variables(difference=difference_pt,
-                                            object_no=[0],
-                                            variable_altered=[0], # pt = 0 for partons
-                                            target_var=logScaled_partons, 
-                                            log_mean=log_mean_parton[:2], 
-                                            log_std=log_std_parton[:2],
-                                            mask_target=maskPartons,
-                                            no_max_objects=4,
-                                            device=device,
-                                            reco=0)
-                                        
-                    wrongPT_avg_flow_prob, wrongPT_flow_prob_batch, \
-                    wrongPT_avg_flow_prob_pt, wrongPT_flow_prob_pt_batch, wrongPT_flow_prob_pt, \
-                    wrongPT_avg_flow_prob_eta, wrongPT_flow_prob_eta_batch, wrongPT_flow_prob_eta, \
-                    wrongPT_avg_flow_prob_phi, wrongPT_flow_prob_phi_batch, wrongPT_flow_prob_phi, \
-                    wrongPT_avg_flow_prob_exist, wrongPT_flow_prob_exist_batch, wrongPT_flow_prob_exist= ddp_model(logScaled_reco_sortedBySpanet,
-                                                                                wrong_logScaled_parton,
-                                                                                data_boost_reco,
-                                                                                mask_partonsLeptons,
-                                                                                mask_recoParticles,
-                                                                                mask_boost)
-                    
-                    wrong_pt_loss_main_perObj = loss_BCE(wrongPT_flow_prob_exist, logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects,0])
-                    wrong_pt_loss_main_perObj[:,:4] = 0
-                    #wrong_pt_batch_parton_flow_pr = -wrongPT_flow_prob_jet_batch + torch.sum(wrong_pt_loss_main_perObj*mask_recoParticles, dim=1)
-                    wrong_pt_batch_parton_flow_pr = -wrongPT_flow_prob_batch + torch.sum(wrong_pt_loss_main_perObj, dim=1)
-                    wrong_pt_batch_parton_flow_pr = -1*wrong_pt_batch_parton_flow_pr
-
-                    # wrong pt and eta
-                    wrong_logScaled_parton = alter_variables(difference=difference_eta, 
-                                            object_no=[1],
-                                            variable_altered=[1], # eta = 1 for partons
-                                            target_var=wrong_logScaled_parton,
-                                            log_mean=log_mean_parton[:2], 
-                                            log_std=log_std_parton[:2],
-                                            mask_target=maskPartons,
-                                            no_max_objects=4,
-                                            device=device,
-                                            reco=0)
-                    
-                    wrongPTandETA_avg_flow_prob, wrongPTandETA_flow_prob_batch, \
-                    wrongPTandETA_avg_flow_prob_pt, wrongPTandETA_flow_prob_pt_batch, wrongPTandETA_flow_prob_pt, \
-                    wrongPTandETA_avg_flow_prob_eta, wrongPTandETA_flow_prob_eta_batch, wrongPTandETA_flow_prob_eta, \
-                    wrongPTandETA_avg_flow_prob_phi, wrongPTandETA_flow_prob_phi_batch, wrongPTandETA_flow_prob_phi, \
-                    wrongPTandETA_avg_flow_prob_exist, wrongPTandETA_flow_prob_exist_batch, wrongPTandETA_flow_prob_exist= ddp_model(logScaled_reco_sortedBySpanet,
-                                                                                                        wrong_logScaled_parton,
-                                                                                                        data_boost_reco,
-                                                                                                        mask_partonsLeptons,
-                                                                                                        mask_recoParticles,
-                                                                                                        mask_boost)
-                    
-                    wrong_ptAndEta_loss_main_perObj = loss_BCE(wrongPTandETA_flow_prob_exist, logScaled_reco_sortedBySpanet[:,:config.transferFlow.no_max_objects,0])
-                    wrong_ptAndEta_loss_main_perObj[:,:4] = 0
-                    #wrong_ptAndEta_batch_parton_flow_pr = -wrongPTandETA_flow_prob_jet_batch + torch.sum(wrong_ptAndEta_loss_main_perObj*mask_recoParticles, dim=1)
-                    wrong_ptAndEta_batch_parton_flow_pr = -wrongPTandETA_flow_prob_batch + torch.sum(wrong_ptAndEta_loss_main_perObj, dim=1)
-                    wrong_ptAndEta_batch_parton_flow_pr = -1*wrong_ptAndEta_batch_parton_flow_pr
-
-                   # sometimes there are nans if the difference_pt is too large
-                    if torch.isnan(wrong_pt_batch_parton_flow_pr).any() or torch.isnan(wrong_ptAndEta_batch_parton_flow_pr).any():
-                        print(f'validation_plots_nans: wrong_pt = {torch.count_nonzero(torch.isnan(wrong_pt_batch_parton_flow_pr))}     & wrong_pt_eta = {torch.count_nonzero(torch.isnan(wrong_ptAndEta_batch_parton_flow_pr))}')
-
-                    # print parton validation
-                    validation_print(experiment=exp, flow_pr=batch_flow_pr,
-                                    wrong_pt_batch_flow_pr=wrong_pt_batch_parton_flow_pr,
-                                    wrong_ptAndEta_batch_flow_pr=wrong_ptAndEta_batch_parton_flow_pr, epoch=e,
-                                    range_x=(-60,60), no_bins=120, label1='diff: pt_0 10%',
-                                    label2=f'diff: pt_0 10% and eta {difference_eta}', particles='partons')
-
-                    if i == 0 and e % 2 == 0:
-                            
-                        # print sampled partons
-                        fullGeneratedEvent, mask_reco = sample_fullRecoEvent_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian(model, logScaled_partons, mask_partonsLeptons, logScaled_reco_sortedBySpanet.shape[0], device, dtype, No_samples=1)
-                
-                        allJets = [i for i in range(config.transferFlow.no_max_objects)]
-                        sampling_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, allJets, e, onlyExistElem=True)
-                        existQuality_print(exp, fullGeneratedEvent[:,:,0], logScaled_reco_sortedBySpanet, allJets, e)
+                if i == 0 and e % 2 == 0:
+                        
+                    # print sampled partons
+                    fullGeneratedEvent, mask_reco = sample_fullRecoEvent_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian(model, logScaled_partons, mask_partonsLeptons, logScaled_reco_sortedBySpanet.shape[0], device, dtype, No_samples=1)
             
-                        for jet in range(config.transferFlow.no_max_objects):
-                            sampling_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, jet, e, onlyExistElem=True)
-                            existQuality_print(exp, fullGeneratedEvent[:,:,0], logScaled_reco_sortedBySpanet, jet, e)
+                    allJets = [i for i in range(config.transferFlow.no_max_objects)]
+                    sampling_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, allJets, e, onlyExistElem=True)
+                    existQuality_print(exp, fullGeneratedEvent[:,:,0], logScaled_reco_sortedBySpanet, allJets, e)
+        
+                    for jet in range(config.transferFlow.no_max_objects):
+                        sampling_print(exp, fullGeneratedEvent, logScaled_reco_sortedBySpanet, mask_recoParticles, jet, e, onlyExistElem=True)
+                        existQuality_print(exp, fullGeneratedEvent[:,:,0], logScaled_reco_sortedBySpanet, jet, e)
                     
                                                     
 

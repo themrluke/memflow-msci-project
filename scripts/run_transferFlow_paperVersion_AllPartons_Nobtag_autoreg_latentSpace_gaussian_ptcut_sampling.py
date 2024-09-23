@@ -95,7 +95,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
     log_std_reco = test_dataset.reco_lab.stdRecoParticles_ptcut
     #log_mean_parton = test_dataset.partons_lab.mean_log_data_higgs_t_tbar_ISR
     #log_std_parton = test_dataset.partons_lab.std_log_data_higgs_t_tbar_ISR
-    minPt_eachObj = train_dataset.reco_lab.min_pt_eachReco[:config.transferFlow.no_max_objects]
+    minPt_eachObj = test_dataset.reco_lab.min_pt_eachReco[:config.transferFlow.no_max_objects]
 
     if device == torch.device('cuda'):
         log_mean_reco = log_mean_reco.cuda()
@@ -107,7 +107,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
 
     # Initialize model
     model = TransferFlow_Paper_AllPartons_Nobtag_autoreg_latentSpace_gaussian(no_recoVars=5, # exist + 3-mom + encoded_position,
-                                 no_partonVars=6,
+                                 no_partonVars=4,
                                  no_recoObjects=no_recoObjs,
                 
                                  no_transformers=config.transformerConditioning.no_transformers,
@@ -139,6 +139,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
                                  pretrained_classifier=config.DNN.path_pretraining,
                                  load_classifier=False,
                                  encode_position=True,
+                                 dropout=False,
                                  
                                  device=device,
                                  dtype=dtype,
@@ -206,6 +207,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
     unscaled_sampledTensor = torch.empty((0, No_samples + 1, config.transferFlow.no_max_objects, 3), device=device, dtype=dtype)
                
     print("Before sampling loop")
+    model.eval()
     ddp_model.eval()
     
     for i, data_batch in enumerate(testLoader):
@@ -235,7 +237,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
             logScaled_reco_sortedBySpanet = attach_position(logScaled_reco_sortedBySpanet, pos_logScaledReco)
 
             # remove prov from partons
-            logScaled_partons = logScaled_partons[:,:,[0,1,2,3,4]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
+            logScaled_partons = logScaled_partons[:,:,[0,1,2]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
             logScaled_partons = attach_position(logScaled_partons, pos_partons)
                     
             # print sampled partons
@@ -251,19 +253,18 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
             fullGeneratedEvent[...,1] = (torch.exp(fullGeneratedEvent[...,1]) - 1) # unscale pt
             mask_pt = minPt_eachObj > 0
             fullGeneratedEvent[...,1] = torch.where(mask_pt, fullGeneratedEvent[...,1] + minPt_eachObj, fullGeneratedEvent[...,1])
-            
-            fullGeneratedEvent[...,1] = torch.where(
             fullGeneratedEvent[...,1:4] = torch.where(mask_nonExist, -5, fullGeneratedEvent[...,1:4])
 
-            maskTarget_nonExist = (logScaled_reco_sortedBySpanet[...,0] == 0).unsqueeze(dim=2)
+            maskTarget_nonExist = (logScaled_reco_sortedBySpanet[...,:config.transferFlow.no_max_objects,0] == 0).unsqueeze(dim=2)
 
             # without phi
-            unscaledTarget = torch.clone(logScaled_reco_sortedBySpanet[...,1:4])
+            unscaledTarget = torch.clone(logScaled_reco_sortedBySpanet[...,:config.transferFlow.no_max_objects,1:4])
             unscaledTarget[...,[0,1]] = (unscaledTarget[...,[0,1]]*log_std_reco[:2] + log_mean_reco[:2])
             unscaledTarget[...,0] = (torch.exp(unscaledTarget[...,0]) - 1) # unscale pt
+            unscaledTarget[...,0] = torch.where(mask_pt, unscaledTarget[...,0] + minPt_eachObj, unscaledTarget[...,0])
             unscaledTarget = torch.where(maskTarget_nonExist, -5, unscaledTarget).unsqueeze(dim=1)
 
-            fullGeneratedEvent_withFirstTarget = torch.cat((unscaledTarget[:,:,:config.transferFlow.no_max_objects],
+            fullGeneratedEvent_withFirstTarget = torch.cat((unscaledTarget,
                                                            fullGeneratedEvent[...,1:4]),
                                                            dim=1)
             

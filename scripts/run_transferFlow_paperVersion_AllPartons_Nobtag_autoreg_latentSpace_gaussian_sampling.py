@@ -104,7 +104,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
 
     # Initialize model
     model = TransferFlow_Paper_AllPartons_Nobtag_autoreg_latentSpace_gaussian(no_recoVars=5, # exist + 3-mom + encoded_position,
-                                 no_partonVars=6,
+                                 no_partonVars=4,
                                  no_recoObjects=no_recoObjs,
                 
                                  no_transformers=config.transformerConditioning.no_transformers,
@@ -134,6 +134,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
                 
                                  DNN_nodes=config.DNN.nodes, DNN_layers=config.DNN.layers,
                                  pretrained_classifier=config.DNN.path_pretraining,
+                                 dropout=False, # to be modified with dropout or not
                                  load_classifier=False,
                                  encode_position=True,
                                  
@@ -203,6 +204,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
     unscaled_sampledTensor = torch.empty((0, No_samples + 1, config.transferFlow.no_max_objects, 3), device=device, dtype=dtype)
                
     print("Before sampling loop")
+    model.eval()
     ddp_model.eval()
     
     for i, data_batch in enumerate(testLoader):
@@ -232,7 +234,7 @@ def train(device, path_to_dir, path_to_model, config, dtype, validation,
             logScaled_reco_sortedBySpanet = attach_position(logScaled_reco_sortedBySpanet, pos_logScaledReco)
 
             # remove prov from partons
-            logScaled_partons = logScaled_partons[:,:,[0,1,2,3,4]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
+            logScaled_partons = logScaled_partons[:,:,[0,1,2]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
             logScaled_partons = attach_position(logScaled_partons, pos_partons)
                     
             # print sampled partons

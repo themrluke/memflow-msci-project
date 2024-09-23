@@ -7,7 +7,7 @@ from datetime import datetime
 import torch
 from memflow.read_data.dataset_all import DatasetCombined
 
-from memflow.unfolding_flow.unfolding_flow_withDecay_v2_onlyAngles import UnfoldingFlow_withDecay_v2
+from memflow.unfolding_flow.unfolding_flow_withDecay_v2_onlyAngles_eta import UnfoldingFlow_withDecay_v2_eta
 from memflow.unfolding_flow.utils import *
 from memflow.unfolding_flow.mmd_loss import MMD
 from memflow.unfolding_flow.utils import Compute_ParticlesTensor
@@ -217,7 +217,7 @@ def train( device, name_dir, config,  outputDir, dtype,
         log_std_boost_parton = log_std_boost_parton.cuda()
 
 
-    model = UnfoldingFlow_withDecay_v2(
+    model = UnfoldingFlow_withDecay_v2_eta(
                                  regression_hidden_features=config.conditioning_transformer.hidden_features,
                                  regression_DNN_input=config.conditioning_transformer.hidden_features + 1,
                                  regression_dim_feedforward=config.conditioning_transformer.dim_feedforward_transformer,
@@ -286,12 +286,12 @@ def train( device, name_dir, config,  outputDir, dtype,
             auto_output_logging = "simple",
             # disabled=True
         )
-        exp.add_tags([config.name,config.version, 'only angles', 'Unfolding Flow', 'Sample Loss', 'withDecay', 'angles_CM_withTheta', 'likelihood+Samples',
+        exp.add_tags([config.name,config.version, 'eta-phi', 'only angles', 'Unfolding Flow', 'Sample Loss', 'withDecay', 'angles_CM_withTheta', 'likelihood+Samples',
                      f'autoreg={config.unfolding_flow.autoregressive}', f'freeze_pretrain={disable_grad_conditioning}'])
         exp.log_parameters({"model_param_tot": count_parameters(model)})
         exp.log_parameters(config)
         
-        exp.set_name(f"UnfoldingFlow_withDecay_SampleLoss_onlyAngles_freeze:{disable_grad_conditioning}_{randint(0, 1000)}")
+        exp.set_name(f"UnfoldingFlow_withDecay_SampleLoss_onlyAngles_eta_freeze:{disable_grad_conditioning}_{randint(0, 1000)}")
     else:
         exp = None
 
@@ -459,7 +459,7 @@ def train( device, name_dir, config,  outputDir, dtype,
              Hb1_thad_b_q1_tlep_b_el_CM,
              logScaled_reco_sortedBySpanet, mask_recoParticles,
              mask_boost_reco, data_boost_reco) = data_batch
-                                        
+            
             # exist + 3-mom
             logScaled_reco_sortedBySpanet = logScaled_reco_sortedBySpanet[:,:,[0,1,2,3]]
             # The provenance is remove in the model
@@ -474,7 +474,7 @@ def train( device, name_dir, config,  outputDir, dtype,
             # remove prov from partons
             logScaled_partons = logScaled_partons[:,:,[0,1,2]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
     
-            regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab, boost_regressed_Epz_scaled, \
+            decayVars_etaPhi_CM_unscaled, regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab, boost_regressed_Epz_scaled, \
             flow_prob_higgs, flow_prob_thad_b, flow_prob_thad_W, flow_prob_tlep_b, flow_prob_tlep_W, \
             higgs_etaPhi_unscaled_CM_sampled, thad_b_etaPhi_unscaled_CM_sampled, thad_W_etaPhi_unscaled_CM_sampled, \
             tlep_b_etaPhi_unscaled_CM_sampled, tlep_W_etaPhi_unscaled_CM_sampled  = ddp_model(logScaled_reco_sortedBySpanet,
@@ -653,7 +653,7 @@ def train( device, name_dir, config,  outputDir, dtype,
                 # remove prov from partons
                 logScaled_partons = logScaled_partons[:,:,[0,1,2]] # [pt,eta,phi,parton_id, type] -> skip type=1/2 for partons/leptons
         
-                regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab, boost_regressed_Epz_scaled, \
+                decayVars_etaPhi_CM_unscaled, regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab, boost_regressed_Epz_scaled, \
                 flow_prob_higgs, flow_prob_thad_b, flow_prob_thad_W, flow_prob_tlep_b, flow_prob_tlep_W, \
                 higgs_etaPhi_unscaled_CM_sampled, thad_b_etaPhi_unscaled_CM_sampled, thad_W_etaPhi_unscaled_CM_sampled, \
                 tlep_b_etaPhi_unscaled_CM_sampled, tlep_W_etaPhi_unscaled_CM_sampled  = ddp_model(logScaled_reco_sortedBySpanet,
@@ -694,6 +694,8 @@ def train( device, name_dir, config,  outputDir, dtype,
                 zeros_boost = torch.zeros((logScaled_parton_boost.shape[0], 1), device=device, dtype=dtype)
                 boost_regressed_Epz_scaled = torch.cat((boost_regressed_Epz_scaled[:,0], zeros_boost), dim=1)
                 MMD_input_regression.append(boost_regressed_Epz_scaled)
+
+                decayVars_list = [decayVars_etaPhi_CM_unscaled[:,i,:] for i in range(5)] # pt eta phi
     
                 MMD_target = [logScaled_partons[:,0],
                              logScaled_partons[:,1],
@@ -795,6 +797,27 @@ def train( device, name_dir, config,  outputDir, dtype,
                             ax.legend()
                             ax.set_xlabel(f"{partons_name[particle]} feature {partons_var[feature]}")
                             exp.log_figure(f"1D_sampled_{partons_name[particle]}_{partons_var[feature]}", fig, step=e)
+
+                            # plot regression
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            h = ax.hist2d(decayVars_list[particle][:,feature].detach().cpu().numpy().flatten(),
+                                          MMD_target_angles[particle][:,feature].cpu().detach().numpy().flatten(),
+                                          bins=40, range=((-5, 5),(-5, 5)), cmin=1)
+                            fig.colorbar(h[3], ax=ax)
+                            ax.set_xlabel(f"regression: {partons_var[feature]}")
+                            ax.set_ylabel(f"target {partons_var[feature]}")
+                            ax.set_title(f"particle {partons_name[particle]} feature {partons_var[feature]}")
+                            exp.log_figure(f"2D_regr_{partons_name[particle]}_{partons_var[feature]}", fig, step=e)
+
+                    
+                            fig, ax = plt.subplots(figsize=(7,6), dpi=100)
+                            ax.hist(decayVars_list[particle][:,feature].detach().cpu().numpy().flatten(),
+                                          bins=30, range=(-5, 5), label="regression", histtype="step")
+                            ax.hist(MMD_target_angles[particle][:,feature].cpu().detach().numpy().flatten(),
+                                          bins=30, range=(-5, 5), label="target",histtype="step")
+                            ax.legend()
+                            ax.set_xlabel(f"{partons_name[particle]} feature {partons_var[feature]}")
+                            exp.log_figure(f"1D_regr_{partons_name[particle]}_{partons_var[feature]}", fig, step=e)
                   
 
         if exp is not None and device==0 or world_size is None:
@@ -875,7 +898,7 @@ if __name__ == '__main__':
     
     outputDir = os.path.abspath(outputDir)
     latentSpace = conf.conditioning_transformer.use_latent
-    name_dir = f'{outputDir}/UnfoldingFlow_withDecay_SampleLoss_onlyAngles_freeze:{disable_grad_conditioning}_date&Hour_{datetime.now().strftime("%d_%m_%Y_%H_%M_%S")}'
+    name_dir = f'{outputDir}/UnfoldingFlow_withDecay_SampleLoss_onlyAngles_eta_freeze:{disable_grad_conditioning}_date&Hour_{datetime.now().strftime("%d_%m_%Y_%H_%M_%S")}'
 
     os.makedirs(name_dir, exist_ok=True)
     

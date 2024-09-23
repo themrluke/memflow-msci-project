@@ -1,7 +1,6 @@
 import torch.nn as nn
 import torch
 import numpy as np
-import utils
 import zuko
 #from zuko.flows import TransformModule, SimpleAffineTransform
 from zuko.distributions import BoxUniform

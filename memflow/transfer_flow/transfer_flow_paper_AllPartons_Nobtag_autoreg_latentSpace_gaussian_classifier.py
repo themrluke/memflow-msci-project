@@ -170,7 +170,7 @@ class TransferFlow_Paper_AllPartons_Nobtag_autoreg_latentSpace_gaussian_classifi
         null_token[:,0,0] = 0 # exist flag = 0 not -1
         # mask for the null token = True
         null_token_mask = torch.ones((mask_reco.shape[0], 1), device=self.device, dtype=torch.bool)
-
+        
         # attach null token and update the mask for the scaling_reco_lab
         scaling_reco_lab_withNullToken = torch.cat((null_token, scaling_reco_lab), dim=1)
         mask_reco_withNullToken = torch.cat((null_token_mask, mask_reco), dim=1)
@@ -194,7 +194,7 @@ class TransferFlow_Paper_AllPartons_Nobtag_autoreg_latentSpace_gaussian_classifi
             null_token_partons = torch.ones((scaling_partons_lab.shape[0], no_null_tokens, self.transformer_input_features), device=self.device, dtype=self.dtype) * -1
 
             # attach null tokens to scaledLogParton_afterLin
-            inputDNN_scaledLogParton = torch.cat((scaledLogParton_afterLin[:,:9], null_token_partons), dim=1)
+            inputDNN_scaledLogParton = torch.cat((scaledLogParton_afterLin, null_token_partons), dim=1)
 
             # new input for the DNN exist
             inputDNN_exist = torch.cat((output_decoder, inputDNN_scaledLogParton, hot_encoded), dim=2)

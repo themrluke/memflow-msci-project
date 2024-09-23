@@ -90,7 +90,7 @@ class UnfoldingFlow_withDecay_v2(nn.Module):
         # even if theta doesn't have any periodicity
         self.flow_higgs_thetaPhi_CM_unscaled = NCSF_gaussian(features=2,
                               context=2 + flow_context_angles,   # condition on regressed phi + sampled eta
-                              transforms=1, 
+                              transforms=flow_ntransforms_angles, 
                               bins=flow_nbins_angles, 
                               hidden_features=[flow_hiddenMLP_LayerDim_angles]*flow_hiddenMLP_NoLayers_angles, 
                               randperm=randPerm_angles,
@@ -206,7 +206,30 @@ class UnfoldingFlow_withDecay_v2(nn.Module):
                                                                   ptetaphi=True, eps=1e-4,
                                                                   pt_cut=None, unscale_phi=False, debug=False,
                                                                   final_scaling=True)
+
+
+        #mask_higgs_pt = regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,1,1] < regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,2,1]
+        #mask_thad_pt = regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,5,1] < regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,6,1]
+
+        #regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,[1,2]] = torch.where(mask_higgs_pt[:,None,None],
+                                                                                        #regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,[2,1]],
+                                                                                        #regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,[1,2]])
+
+        #regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,[5,6]] = torch.where(mask_thad_pt[:,None,None],
+                                                                                        #regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,[6,5]],
+                                                                                        #regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,[5,6]])
+
+        #mask_higgs_pt = regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,1,1] < regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,2,1]
+        #mask_thad_pt = regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,5,1] < regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab[:,6,1]
+        #if (mask_higgs_pt.any() or mask_thad_pt.any()):
+        #    raise Exception(f"wrong higgs pt: {torch.count_nonzero(mask_higgs_pt)} ------ and wrong thad pt: {torch.count_nonzero(mask_thad_pt)}")
         
+        #flow_higgs_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,0:1].clone() # Higgs b1: eta and phi
+        #flow_thad_b_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,1:2].clone() # thad b: eta and phi
+        #flow_thad_W_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,2:3].clone() # thad q1: eta and phi
+        #flow_tlep_b_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,3:4].clone() # tlep b: eta and phi
+        #flow_tlep_W_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,4:5].clone() # tlep el: eta and phi
+
         flow_higgs_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,0:1].clone() # Higgs b1: eta and phi
         flow_thad_b_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,1:2].clone() # thad b: eta and phi
         flow_thad_W_context_thetaPhi_unscaled_CM = decayVars_etaPhi_CM_unscaled[:,2:3].clone() # thad q1: eta and phi
@@ -247,9 +270,9 @@ class UnfoldingFlow_withDecay_v2(nn.Module):
         if flow_eval == "normalizing":
 
             # move to theta
-            higgs_thetaPhi_unscaled_CM_target = higgs_etaPhi_unscaled_CM_target
-            thad_thetaPhi_unscaled_CM_target = thad_etaPhi_unscaled_CM_target
-            tlep_thetaPhi_unscaled_CM_target = tlep_etaPhi_unscaled_CM_target
+            higgs_thetaPhi_unscaled_CM_target = higgs_etaPhi_unscaled_CM_target.clone()
+            thad_thetaPhi_unscaled_CM_target = thad_etaPhi_unscaled_CM_target.clone()
+            tlep_thetaPhi_unscaled_CM_target = tlep_etaPhi_unscaled_CM_target.clone()
             
             #for i in range(2):
             #    print(i)
@@ -271,13 +294,12 @@ class UnfoldingFlow_withDecay_v2(nn.Module):
             #print(f'theta: min: {torch.min(tlep_thetaPhi_unscaled_CM_target[...,0,0])} and max: {torch.max(tlep_thetaPhi_unscaled_CM_target[...,0,0])}')
             #print(f'theta: min: {torch.min(tlep_thetaPhi_unscaled_CM_target[...,1,0])} and max: {torch.max(tlep_thetaPhi_unscaled_CM_target[...,1,0])}')
             #print()
-        
             
             flow_prob_higgs = self.flow_higgs_thetaPhi_CM_unscaled(condition_higgs_thetaPhi_unscaled_CM).log_prob(higgs_thetaPhi_unscaled_CM_target)
-            flow_prob_thad_b = self.flow_thad_b_thetaPhi_CM_unscaled(condition_thad_b_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,0])
-            flow_prob_thad_W = self.flow_thad_W_thetaPhi_CM_unscaled(condition_thad_W_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,1])
-            flow_prob_tlep_b = self.flow_tlep_b_thetaPhi_CM_unscaled(condition_tlep_b_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,0])
-            flow_prob_tlep_W = self.flow_tlep_W_thetaPhi_CM_unscaled(condition_tlep_W_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,1])
+            flow_prob_thad_b = self.flow_thad_b_thetaPhi_CM_unscaled(condition_thad_b_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,0:1])
+            flow_prob_thad_W = self.flow_thad_W_thetaPhi_CM_unscaled(condition_thad_W_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,1:2])
+            flow_prob_tlep_b = self.flow_tlep_b_thetaPhi_CM_unscaled(condition_tlep_b_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,0:1])
+            flow_prob_tlep_W = self.flow_tlep_W_thetaPhi_CM_unscaled(condition_tlep_W_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,1:2])
 
             return regressed_Hb1b2_thad_b_q1q2_tlep_b_el_nu_ISR_Eptetaphi_scaled_lab, boost_regressed_Epz_scaled, \
                     flow_prob_higgs, flow_prob_thad_b, flow_prob_thad_W, flow_prob_tlep_b, flow_prob_tlep_W
@@ -315,20 +337,20 @@ class UnfoldingFlow_withDecay_v2(nn.Module):
 
         elif flow_eval == "both":
             # move to theta
-            higgs_thetaPhi_unscaled_CM_target = higgs_etaPhi_unscaled_CM_target
-            thad_thetaPhi_unscaled_CM_target = thad_etaPhi_unscaled_CM_target
-            tlep_thetaPhi_unscaled_CM_target = tlep_etaPhi_unscaled_CM_target
+            higgs_thetaPhi_unscaled_CM_target = higgs_etaPhi_unscaled_CM_target.clone()
+            thad_thetaPhi_unscaled_CM_target = thad_etaPhi_unscaled_CM_target.clone()
+            tlep_thetaPhi_unscaled_CM_target = tlep_etaPhi_unscaled_CM_target.clone()
             
             # change from unscaled eta to theta to have an angle
             higgs_thetaPhi_unscaled_CM_target[...,0] = 2*torch.atan(torch.exp(-1*higgs_thetaPhi_unscaled_CM_target[...,0]))
             thad_thetaPhi_unscaled_CM_target[...,0] = 2*torch.atan(torch.exp(-1*thad_thetaPhi_unscaled_CM_target[...,0]))
             tlep_thetaPhi_unscaled_CM_target[...,0] = 2*torch.atan(torch.exp(-1*tlep_thetaPhi_unscaled_CM_target[...,0]))
-                
+
             flow_prob_higgs = self.flow_higgs_thetaPhi_CM_unscaled(condition_higgs_thetaPhi_unscaled_CM).log_prob(higgs_thetaPhi_unscaled_CM_target)
-            flow_prob_thad_b = self.flow_thad_b_thetaPhi_CM_unscaled(condition_thad_b_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,0])
-            flow_prob_thad_W = self.flow_thad_W_thetaPhi_CM_unscaled(condition_thad_W_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,1])
-            flow_prob_tlep_b = self.flow_tlep_b_thetaPhi_CM_unscaled(condition_tlep_b_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,0])
-            flow_prob_tlep_W = self.flow_tlep_W_thetaPhi_CM_unscaled(condition_tlep_W_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,1])
+            flow_prob_thad_b = self.flow_thad_b_thetaPhi_CM_unscaled(condition_thad_b_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,0:1])
+            flow_prob_thad_W = self.flow_thad_W_thetaPhi_CM_unscaled(condition_thad_W_thetaPhi_unscaled_CM).log_prob(thad_thetaPhi_unscaled_CM_target[:,1:2])
+            flow_prob_tlep_b = self.flow_tlep_b_thetaPhi_CM_unscaled(condition_tlep_b_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,0:1])
+            flow_prob_tlep_W = self.flow_tlep_W_thetaPhi_CM_unscaled(condition_tlep_W_thetaPhi_unscaled_CM).log_prob(tlep_thetaPhi_unscaled_CM_target[:,1:2])
 
             # sampling
             higgs_thetaPhi_unscaled_CM_sampled = self.flow_higgs_thetaPhi_CM_unscaled(condition_higgs_thetaPhi_unscaled_CM).rsample((Nsamples,))

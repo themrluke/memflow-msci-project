@@ -234,18 +234,28 @@ class Compute_ParticlesTensor:
                                   log_std_parton,
                                   log_mean_boost, log_std_boost,
                                   device, cartesian=True, eps=1e-4,
-                                  return_both=False):
+                                  return_both=False, unscale_phi=True):
 
         boost = cond_X[3] # there was a bug here using -1, now fixed
         Htt = torch.stack((cond_X[0], cond_X[1],cond_X[2]), dim=1)
 
-        unscaledlog = Htt*log_std_parton + log_mean_parton
-        data_regressed = unscaledlog.clone()
-        data_regressed[:,:,0] = torch.exp(torch.abs(unscaledlog[:,:,0])) - 1
-
-        boost_regressed = boost*log_std_boost[1] + log_mean_boost[1]
-        # Do not rescale the pz of the boost, we removed the logscale and kept it only for E
-        #boost_regressed = torch.sign(boost_regressed)*torch.exp(torch.abs(boost_regressed)-1)        
+        if unscale_phi:
+            unscaledlog = Htt*log_std_parton + log_mean_parton
+            data_regressed = unscaledlog.clone()
+            data_regressed[:,:,0] = torch.exp(torch.abs(unscaledlog[:,:,0])) - 1
+    
+            boost_regressed = boost*log_std_boost[1] + log_mean_boost[1]
+            # Do not rescale the pz of the boost, we removed the logscale and kept it only for E
+            #boost_regressed = torch.sign(boost_regressed)*torch.exp(torch.abs(boost_regressed)-1)       
+        else:
+            unscaledlog = Htt
+            unscaledlog[...,:2] = unscaledlog[...,:2] * log_std_parton[:2] + log_mean_parton[:2]
+            
+            data_regressed = unscaledlog.clone()
+            data_regressed[:,:,0] = torch.exp(torch.abs(unscaledlog[:,:,0])) - 1
+    
+            boost_regressed = boost*log_std_boost[1] + log_mean_boost[1]
+            # Do not rescale the pz of the boost, we removed the logscale and kept it only for E
 
         higgs = data_regressed[:,0]
         thad = data_regressed[:,1]
