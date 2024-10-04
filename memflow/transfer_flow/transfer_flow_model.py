@@ -16,10 +16,12 @@ class TransferFlow(L.LightningModule):
         self,
         embed_dim,
         embed_act,
-        n_reco_particles_per_type,
         n_gen_particles_per_type,
-        reco_input_features,
-        gen_input_features,
+        gen_particle_type_names,
+        gen_input_features_per_type,
+        n_reco_particles_per_type,
+        reco_particle_type_names,
+        reco_input_features_per_type,
         flow_input_features,
         reco_mask_corr,
         gen_mask_corr,
@@ -34,19 +36,25 @@ class TransferFlow(L.LightningModule):
         # Public attributes #
         self.embed_dim = embed_dim
         self.embed_act = embed_act
-        self.n_reco_particles_per_type = n_reco_particles_per_type
+
         self.n_gen_particles_per_type = n_gen_particles_per_type
-        self.reco_input_features = reco_input_features
-        self.gen_input_features = gen_input_features
+        self.gen_particle_type_names = gen_particle_type_names
+        self.gen_input_features_per_type = gen_input_features_per_type
+
+        self.n_reco_particles_per_type = n_reco_particles_per_type
+        self.reco_particle_type_names = reco_particle_type_names
+        self.reco_input_features_per_type = reco_input_features_per_type
+
         self.flow_input_features = flow_input_features
+
         self.reco_mask_corr = torch.cat((torch.tensor([True]),reco_mask_corr),dim=0) # Adding True at index=0 for null token
         self.gen_mask_corr  = gen_mask_corr
         self.onehot_encoding = onehot_encoding
 
         # Safety checks #
-        assert len(n_reco_particles_per_type) == len(reco_input_features), f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features)} sets of input features'
-        assert len(n_gen_particles_per_type) == len(gen_input_features), f'{len(n_gen_particles_per_type)} sets of gen particles but got {len(gen_input_features)} sets of input features'
-        assert len(flow_input_features) == len(reco_input_features), f'Number of reco features ({len(reco_input_features)}) != number of flow features ({len(flow_input_features)})'
+        assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features_per_type)} sets of input features'
+        assert len(n_gen_particles_per_type) == len(gen_input_features_per_type), f'{len(n_gen_particles_per_type)} sets of gen particles but got {len(gen_input_features_per_type)} sets of input features'
+        assert len(flow_input_features) == len(reco_input_features_per_type), f'Number of reco features ({len(reco_input_features_per_type)}) != number of flow features ({len(flow_input_features)})'
 
         # Private attributes #
         self._optimizer = optimizer
@@ -64,8 +72,8 @@ class TransferFlow(L.LightningModule):
             onehot_dim = 0
 
         # Make embedding layers #
-        self.gen_embeddings  = self.make_embeddings(self.gen_input_features)
-        self.reco_embeddings = self.make_embeddings(self.reco_input_features,onehot_dim)
+        self.gen_embeddings  = self.make_embeddings(self.gen_input_features_per_type)
+        self.reco_embeddings = self.make_embeddings(self.reco_input_features_per_type,onehot_dim)
 
         # Define transformer #
         if 'd_model' in transformer_args:
@@ -82,7 +90,7 @@ class TransferFlow(L.LightningModule):
             print (f'Flow args: will override `features` depending on the number of features of each object')
         self.flows = nn.ModuleList()
         self.flow_indices = []
-        for i,(n,reco_features,flow_features) in enumerate(zip(self.n_reco_particles_per_type,self.reco_input_features,self.flow_input_features)):
+        for i,(n,reco_features,flow_features) in enumerate(zip(self.n_reco_particles_per_type,self.reco_input_features_per_type,self.flow_input_features)):
             assert len(set(flow_features).intersection(set(reco_features))) == len(flow_features), f'Not all flow features {flow_features} found in reco_features for particle set #{i}'
             indices = [reco_features.index(feature) for feature in flow_features]
             self.flow_indices.append(indices)
@@ -132,11 +140,35 @@ class TransferFlow(L.LightningModule):
 
     def shared_eval(self, batch, batch_idx, prefix):
         # Get log-prob loss #
-        loss = self(batch)
-        # Record #
-        self.log(f"{prefix}/loss", loss, prog_bar=True)
+        log_probs, mask, weights = self(batch)
+        assert log_probs.shape == mask.shape
+        assert log_probs.shape == weights.shape
+        # Record per object loss #
+        idx = 0
+        for i,n in enumerate(self.n_reco_particles_per_type):
+            for j in range(n):
+                if mask[:,idx].sum() != 0:
+                    # average over existing particles
+                    self.log(
+                        f"{prefix}/loss_{self.reco_particle_type_names[i]}_{j}",
+                        (log_probs[:,idx] * mask[:,idx]).sum() / mask[:,idx].sum(),
+                        # Only log the log_prob for existing objects
+                        # averaged over number of existing objects
+                        prog_bar=False,
+                    )
+                idx += 1
+        # Get total loss, weighted and averaged over existing objects and events #
+        log_prob_tot = (
+            (
+                torch.nan_to_num(
+                    (log_probs * mask * weights),   # log prob masked and weighted
+                    nan = 0.
+                )
+            ).sum(dim=1) #/ mask.sum(dim=1)          # averaged over number of existing particles
+        ).mean()                                    # averaged on all events
+        self.log(f"{prefix}/loss", log_prob_tot, prog_bar=True)
         # Return #
-        return loss
+        return log_prob_tot
 
     def training_step(self, batch, batch_idx):
         return self.shared_eval(batch, batch_idx, 'train')
@@ -187,22 +219,22 @@ class TransferFlow(L.LightningModule):
             ]
 
         # Apply embeddings and concat along particle axis #
+        gen_mask_exist = torch.cat(gen_mask_exist,dim=1)
         gen_data = torch.cat(
             [
                 self.gen_embeddings[i](gen_data[i])
                 for i in range(len(self.gen_embeddings))
             ],
             dim = 1
-        )
-        gen_mask_exist = torch.cat(gen_mask_exist,dim=1)
+        ) * gen_mask_exist[...,None]
+        reco_mask_exist_null = torch.cat(reco_mask_exist_null,dim=1)
         reco_data_null = torch.cat(
             [
                 self.reco_embeddings[i](reco_data_null[i])
                 for i in range(len(self.reco_embeddings))
             ],
             dim = 1
-        )
-        reco_mask_exist_null = torch.cat(reco_mask_exist_null,dim=1)
+        ) * reco_mask_exist_null[...,None]
 
         # Expand correlation mask #
         # Need to turn 0->1 when particle exists #
@@ -232,8 +264,10 @@ class TransferFlow(L.LightningModule):
         # Extract different components #
         gen_data  = batch['gen']['data']
         gen_mask_exist = batch['gen']['mask']
+        gen_weights = batch['gen']['weights']
         reco_data = batch['reco']['data']
         reco_mask_exist = batch['reco']['mask']
+        reco_weights = batch['reco']['weights']
 
         # Safety checks #
         assert len(gen_data) == len(self.gen_embeddings), f'{len(gen_data)} gen objects but {len(self.gen_embeddings)} gen embeddings'
@@ -254,12 +288,15 @@ class TransferFlow(L.LightningModule):
                         condition[:,idx:idx+1,:]        # Condition on the flow on idx-th condition
                     ).log_prob(
                         reco_data[i][:,j:j+1,indices]   # Apply on ith object (only take flow features)
-                    ) * reco_mask_exist[i][:,j:j+1]     # Apply mask
+                    ) #* reco_mask_exist[i][:,j:j+1] * reco_weights[i][:,j:j+1]
+                    # Apply mask x weights
                 )
                 idx += 1
+        log_probs = - torch.cat(log_probs,dim=1)
 
-        # Sum object wise and average event wise #
-        return -sum(log_probs).mean()
+        return log_probs, torch.cat(reco_mask_exist,dim=1), torch.cat(reco_weights,dim=1)
+        ## Sum object wise and average event wise #
+        #return -sum(log_probs).mean()
 
     def sample(self,gen_data,gen_mask_exist,reco_data,reco_mask_exist,N):
         # Obtain condition #

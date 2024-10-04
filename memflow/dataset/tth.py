@@ -3,13 +3,45 @@ import torch
 import awkward as ak
 import numpy as np
 from hepunits.units import MeV, GeV
-from sklearn.preprocessing import scale, power_transform, quantile_transform
+from sklearn import preprocessing
 
 from memflow.dataset.dataset import GenDataset, RecoDataset
-from memflow.dataset.preprocessing import logmodulus, PreprocessingPipeline, PreprocessingStep
+from memflow.dataset.preprocessing import (
+    lowercutshift,
+    logmodulus,
+    SklearnScaler,
+    PreprocessingPipeline,
+    PreprocessingStep,
+)
+
+class ttHBase:
+    def __init__(self,coordinates='cylindrical',apply_preprocessing=False,apply_boost=False,**kwargs):
+        self.coordinates = coordinates
+        self.apply_preprocessing = apply_preprocessing
+        self.apply_boost = apply_boost
+        assert self.coordinates in ['cartesian','cylindrical']
+
+    @staticmethod
+    def get_coordinates(obj):
+        if all([f in obj.fields for f in ['pt','eta','phi','mass']]):
+            return 'cylindrical'
+        elif all([f in obj.fields for f in ['px','py','pz','E']]):
+            return 'cartesian'
+        else:
+            raise RuntimeError(f'Could not find coordinates from {obj.fields}')
+
+    def change_coordinates(self,obj):
+        current_coord = self.get_coordinates(obj)
+        if current_coord == 'cartesian' and self.coordinates == 'cylindrical':
+            obj = self.cartesian_to_cylindrical(obj)
+        if current_coord == 'cylindrical' and self.coordinates == 'cartesian':
+            obj = self.cylindrical_to_cartesian(obj)
+        return obj
+
+
 
 M_GLUON = 1e-3
-class ttHGenDataset(GenDataset):
+class ttHGenDataset(ttHBase,GenDataset):
     struct_gluon = ak.zip(
         {
             "pt": np.float32(M_GLUON),
@@ -33,10 +65,9 @@ class ttHGenDataset(GenDataset):
 		with_name='Momentum4D',
 	)
 
-
     def __init__(self,**kwargs):
-        super().__init__(**kwargs)
-
+        ttHBase.__init__(self,**kwargs)
+        GenDataset.__init__(self,**kwargs)
 
     @property
     def energy(self):
@@ -62,25 +93,6 @@ class ttHGenDataset(GenDataset):
         )
 
     def process(self):
-        # Preprocessor #
-        gen_preprocess = PreprocessingPipeline(
-            [
-                PreprocessingStep(
-                    {
-                        'pt' : logmodulus,
-                    }
-                ),
-                PreprocessingStep(
-                    {
-                        'pt'   : scale,
-                        'eta'  : scale,
-                        'phi'  : scale,
-                        'mass' : scale,
-                    }
-                )
-
-            ]
-        )
         # Make generator info #
         generator = self.data['generator_info']
         boost = self.make_boost(generator.x1,generator.x2)
@@ -101,7 +113,6 @@ class ttHGenDataset(GenDataset):
             name = 'partons',
             obj = partons_padded,
             mask = partons_mask,
-            preprocessing = gen_preprocess,
         )
 
 
@@ -110,7 +121,6 @@ class ttHGenDataset(GenDataset):
         self.register_object(
             name = 'leptons',
             obj = leptons,
-            preprocessing = gen_preprocess,
         )
 
         # Make ME final states #
@@ -132,41 +142,125 @@ class ttHGenDataset(GenDataset):
             ax = 1,
         )
 
+        ## Boost objects #
+        if self.apply_boost:
+            higgs = self.boost(higgs,boost)
+            W_leptonic = self.boost(W_leptonic,boost)
+            W_hadronic = self.boost(W_hadronic,boost)
+            top_leptonic = self.boost(top_leptonic,boost)
+            top_hadronic = self.boost(top_hadronic,boost)
+            gluons = self.boost(gluons,boost)
+
+        # For PS #
         ME_fields = ['E','px','py','pz'] # in Rambo format
         self.register_object(
-            name = 'higgs',
-            obj = self.cylindrical_to_cartesian(self.data['higgs_vec']),
+            name = 'higgs_ME',
+            obj = self.data['higgs_vec'],
             fields = ME_fields,
         )
         self.register_object(
-            name = 'W_leptonic',
+            name = 'W_leptonic_ME',
             obj = W_leptonic,
             fields = ME_fields,
         )
         self.register_object(
-            name = 'W_hadronic',
+            name = 'W_hadronic_ME',
             obj = W_hadronic,
             fields = ME_fields,
         )
         self.register_object(
-            name = 'top_leptonic',
+            name = 'top_leptonic_ME',
             obj = top_leptonic,
             fields = ME_fields,
         )
         self.register_object(
-            name = 'top_hadronic',
+            name = 'top_hadronic_ME',
             obj = top_hadronic,
             fields = ME_fields,
         )
         self.register_object(
-            name = 'ISR',
+            name = 'ISR_ME',
             obj = gluons[:,0],
             mask = mask[:,0],
             fields = ME_fields,
         )
 
+        # For transfer #
+        if self.coordinates == 'cylindrical':
+            gen_fields = ['pt','eta','phi','mass']
+        if self.coordinates == 'cartesian':
+            gen_fields = ['px','py','pz','E']
+        self.register_object(
+            name = 'higgs',
+            obj = self.data['higgs_vec'],
+            fields = gen_fields,
+        )
+        self.register_object(
+            name = 'top_leptonic',
+            obj = top_leptonic,
+            fields = gen_fields,
+        )
+        self.register_object(
+            name = 'top_hadronic',
+            obj = top_hadronic,
+            fields = gen_fields,
+        )
+        self.register_object(
+            name = 'ISR',
+            obj = gluons[:,0],
+            mask = mask[:,0],
+            fields = gen_fields,
+        )
 
-class ttHRecoDataset(RecoDataset):
+        # Preprocessing #
+        if self.apply_preprocessing:
+            if self.coordinates == 'cylindrical':
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = ['higgs','top_leptonic','top_hadronic','ISR'],
+                        scaler_dict = {
+                            'pt' : logmodulus(),
+                            'mass' : logmodulus(),
+                        },
+                    )
+                )
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = ['higgs','top_leptonic','top_hadronic','ISR'],
+                        scaler_dict = {
+                            'pt'   : SklearnScaler(preprocessing.StandardScaler()),
+                            'eta'  : SklearnScaler(preprocessing.StandardScaler()),
+                            'phi'  : SklearnScaler(preprocessing.StandardScaler()),
+                            'mass' : SklearnScaler(preprocessing.StandardScaler()),
+                        },
+                    )
+                )
+            if self.coordinates == 'cartesian':
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = ['higgs','top_leptonic','top_hadronic','ISR'],
+                        scaler_dict = {
+                            'px' : logmodulus(),
+                            'py' : logmodulus(),
+                            'pz' : logmodulus(),
+                            'E'  : logmodulus(),
+                        },
+                    )
+                )
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = ['higgs','top_leptonic','top_hadronic','ISR'],
+                        scaler_dict = {
+                            'px' : SklearnScaler(preprocessing.StandardScaler()),
+                            'py' : SklearnScaler(preprocessing.StandardScaler()),
+                            'pz' : SklearnScaler(preprocessing.StandardScaler()),
+                            'E'  : SklearnScaler(preprocessing.StandardScaler()),
+                        },
+                    )
+                )
+
+
+class ttHRecoDataset(ttHBase,RecoDataset):
     struct_jets = ak.zip(
         {
             "pt": np.float32(0),
@@ -184,7 +278,8 @@ class ttHRecoDataset(RecoDataset):
     )
 
     def __init__(self,**kwargs):
-        super().__init__(**kwargs)
+        ttHBase.__init__(self,**kwargs)
+        RecoDataset.__init__(self,**kwargs)
 
     @property
     def energy(self):
@@ -198,25 +293,6 @@ class ttHRecoDataset(RecoDataset):
         )
 
     def process(self):
-        # Preprocessing #
-        reco_preprocess = PreprocessingPipeline(
-            [
-                PreprocessingStep(
-                    {
-                        'pt' : logmodulus,
-                    }
-                ),
-                PreprocessingStep(
-                    {
-                        'pt'   : scale,
-                        'eta'  : scale,
-                        'phi'  : scale,
-                        'm'    : scale,
-                    }
-                )
-            ]
-        )
-
         # Get jets leptons and met #
         jets = self.data.make_particles('jets_vec','jets')
         leptons = self.data.make_particles('lepton_reco_vec','lepton_reco')
@@ -226,16 +302,27 @@ class ttHRecoDataset(RecoDataset):
         # Make boost #
         boost = self.make_boost(jets,lepton,met)
 
-        # Boost objects #
-        jets = self.boost(jets,boost)
-        lepton = self.boost(lepton,boost)
-        met = self.boost(met,boost)
+        ## Boost objects #
+        if self.apply_boost:
+            jets = self.boost(jets,boost)
+            lepton = self.boost(lepton,boost)
+            met = self.boost(met,boost)
 
-        jets_padded, jets_mask = self.reshape(
-            input = jets,
-            value = self.struct_jets,
-            ax = 1,
-        )
+        # Re-order jets #
+        # Order : [b(H),b(H),b(thad),q(thad),q(thad),b(tlep),q(ISR),additional jets]
+        # prov flag : [1,1,2,5,5,3,4,-1,...,-1]
+        prov_flags = [1,2,5,3,4,-1]
+        jets_padded, jets_mask = [],[]
+        for prov_flag in prov_flags:
+            j,m = self.reshape(
+                input = jets[jets.prov == prov_flag],
+                value = self.struct_jets,
+                ax = 1,
+            )
+            jets_padded.append(j)
+            jets_mask.append(m)
+        jets_padded = ak.concatenate(jets_padded,axis=1)
+        jets_mask = ak.concatenate(jets_mask,axis=1)
 
         self.match_coordinates(boost,jets) # need to be done after the boost
 
@@ -243,27 +330,81 @@ class ttHRecoDataset(RecoDataset):
         self.register_object(
             name = 'boost',
             obj = boost,
-            preprocessing = reco_preprocess,
         )
         self.register_object(
             name = 'jets',
             obj = jets_padded,
             mask = jets_mask,
-            preprocessing = reco_preprocess,
         )
         self.register_object(
             name = 'lepton',
             obj = lepton,
-            preprocessing = reco_preprocess,
         )
         self.register_object(
             name = 'met',
             obj = met,
-            preprocessing = reco_preprocess,
         )
+        # Preprocessing #
+        if self.apply_preprocessing:
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['jets'],
+                    scaler_dict = {
+                        'pt' : lowercutshift(30),
+                    },
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['lepton'],
+                    scaler_dict = {
+                        'pt' : lowercutshift(25),
+                    },
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['met'],
+                    scaler_dict = {
+                        'pt' : lowercutshift(20),
+                    },
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['jets','lepton','met'],
+                    scaler_dict = {
+                        'pt' : logmodulus(),
+                        'm'  : logmodulus(),
+                    },
+                    fields_select = [
+                        ('pt','m'),
+                        ('pt','m'),
+                        ('pt',),
+                    ]
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['jets','lepton','met'],
+                    scaler_dict = {
+                        'pt'   : SklearnScaler(preprocessing.StandardScaler()),
+                        'eta'  : SklearnScaler(preprocessing.StandardScaler()),
+                        'phi'  : SklearnScaler(preprocessing.StandardScaler()),
+                        'm'    : SklearnScaler(preprocessing.StandardScaler()),
+                    },
+                    fields_select = [
+                        ('pt','eta','phi','m'),
+                        ('pt','eta','phi','m'),
+                        ('pt','phi'),
+                    ]
+                )
+            )
 
     @property
     def correlation_idx(self):
+        # jets to be always included
+        # [b(H),b(H),b(thad),q(thad),q(thad),b(tlep),q(ISR)]
         return {
-            'jets' : [0,1,2,3]
+            'jets' : [0,1,2,3,4,5,6]
         }

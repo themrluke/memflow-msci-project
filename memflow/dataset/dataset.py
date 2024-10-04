@@ -18,6 +18,7 @@ from torch.utils.data import Dataset
 
 from memflow.read_data import utils
 from memflow.dataset.data import get_intersection_indices
+from memflow.dataset.preprocessing import PreprocessingPipeline, PreprocessingStep
 from memflow.phasespace.phasespace import PhaseSpace
 
 
@@ -42,7 +43,7 @@ class CombinedDataset(Dataset):
         if self.intersection_branch is None:
             # Assume the trees are the same for both reco and gen,
             # will just check their length
-            if self.gen_dataset.data != self.reco_dataset.data:
+            if self.gen_dataset.data is not self.reco_dataset.data:
                 raise RuntimeError('Not the same `data` for reco and gen datasets, you should use `intersection_branch` to help resolve ambiguities')
             assert len(self.gen_dataset) == len(self.reco_dataset), f'Different number of entries between gen ({len(self.gen_dataset)}) compared to reco ({len(self.reco_dataset)})'
             self.N = len(self.gen_dataset)
@@ -67,17 +68,51 @@ class CombinedDataset(Dataset):
                 'reco' : self.reco_dataset[self.reco_idx[index]],
             }
 
-    def batch_by_index(self,idx):
+    def batch_by_index(self,index):
         if self.intersection_branch is None:
             return {
-                'gen'  : self.gen_dataset.batch_by_index(idx),
-                'reco' : self.reco_dataset.batch_by_index(idx),
+                'gen'  : self.gen_dataset.batch_by_index(index),
+                'reco' : self.reco_dataset.batch_by_index(index),
             }
         else:
             return {
                 'gen'  : self.gen_dataset.batch_by_index(self.gen_idx[index]),
                 'reco' : self.reco_dataset.batch_by_index(self.reco_idx[index]),
             }
+
+    def find_indices(self,reco_masks=[],gen_masks=[]):
+        # safety checks #
+        for i,gen_mask in enumerate(gen_masks):
+            assert len(gen_mask) == self.gen_dataset.data.events, f'Gen mass entry {i} has length {len(gen_mask)} but gen data object has {self.gen_dataset.data.events} events'
+        for i,reco_mask in enumerate(reco_masks):
+            assert len(reco_mask) == self.reco_dataset.data.events, f'Reco mass entry {i} has length {len(reco_mask)} but reco data object has {self.reco_dataset.data.events} events'
+
+        # Make total masks #
+        if len(gen_masks) > 0:
+            gen_mask = np.logical_and.reduce(gen_masks)
+        else:
+            gen_mask = np.full((self.gen_dataset.data.events),fill_value=True)
+        if len(reco_masks) > 0:
+            reco_mask = np.logical_and.reduce(reco_masks)
+        else:
+            reco_mask = np.full((self.reco_dataset.data.events),fill_value=True)
+
+        if self.intersection_branch is None:
+            # gen and reco data are the same, just select the ones passing both masks #
+            mask = np.logical_and(gen_mask,reco_mask)
+            indices = np.arange(self.reco_dataset.data.events)[mask]
+            return indices
+        else:
+            # different data objects, find the intersection between mask and common events #
+            # Find in gen idx the events passing the gen cut
+            mask_gen_idx = gen_mask[self.gen_idx]
+            # Find in reco idx the events passing the reco cut
+            mask_reco_idx = reco_mask[self.reco_idx]
+            # Combine masks #
+            mask = np.logical_and(mask_gen_idx,mask_reco_idx)
+            indices = np.arange(len(self))[mask]
+            return indices
+
 
     def __len__(self):
         return self.N
@@ -121,9 +156,10 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         self.default_features = default_features
         assert len(self.selection) > 0, 'You need to have at least some object selected'
 
+        # Private attributes #
         self._objects = {}
         self._fields = {}
-        self._preprocessing = {}
+        self._preprocessing = PreprocessingPipeline()
         self._reserved_object_names = ['ps','detjinv']
 
         # Calling methods #
@@ -133,6 +169,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         else:
             self.process()
             self._save()
+        self.preprocessing()
         self.finalize()
         self.to_device(device)
         self.to_dtype(dtype)
@@ -143,7 +180,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             if name not in self._objects.keys():
                 raise RuntimeError(f'`{name}` not in registered objects {self._objects.keys()}')
         events = []
-        for key,(data,mask) in self._objects.items():
+        for key,(data,mask,weights) in self._objects.items():
             if data.shape[0] != mask.shape[0]:
                 raise RuntimeError(f'Object `{key}` has {data.shape[0]} data events but {mask.shape[0]} mask events')
             events.append(data.shape[0])
@@ -215,7 +252,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         # numpy to torch #
         return torch.tensor(arr)
 
-    def register_object(self,name,obj,mask=None,fields=None,preprocessing=None):
+    def register_object(self,name,obj,mask=None,weights=None,fields=None):
         """
             Function called by user to register an awkward+vector array as a torch tensor
             Args:
@@ -242,16 +279,45 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             mask = torch.tensor(np.array(mask))
         if mask.dim() == 1:
             mask = mask.unsqueeze(-1)
-        # Adapt mask to number of fields/features #
-        # Apply preprocessing #
-        if preprocessing is not None:
-            preprocessing = copy.deepcopy(preprocessing)
-            # if same pipeline for several objects, need to avoid to fit on one and apply on another
-            data = preprocessing.transform(data,mask,fields)
+        # Process mask ##
+        if weights is None:
+            weights = torch.ones_like(mask)
+        else:
+            if not torch.is_tensor(weights):
+                weights = torch.tensor(weights)
+            if weights.dim() == 0:
+                weights = torch.ones_like(mask) * weights
+            elif weights.dim() == 1:
+                weights = weights.reshape(-1,1)
+            elif weights.dim() == 2:
+                pass
+            else:
+                raise NotImplementedError(f'Dim {weights.dim()} of weights is not expected')
+            if weights.shape != mask.shape:
+                raise RuntimeError(f'Weights shape {weights.shape} of {name} objects differs from {mask.shape} object shape')
+
         # Record #
-        self._objects[name] = (data,mask)
+        self._objects[name] = (data,mask,weights)
         self._fields[name] = fields
-        self._preprocessing[name] = preprocessing
+
+    def register_preprocessing_step(self,preprocessing):
+        assert isinstance(preprocessing,PreprocessingStep), f'Preprocessing must be a PreprocessingStep instance'
+        assert len(set(preprocessing.keys())-set(self._objects.keys())) > 0, f'Object names {[key for key in preprocessing.keys() if key not in self._objects.keys()]} have not been registered yet'
+        self._preprocessing.add_step(preprocessing)
+
+    def preprocessing(self):
+        # First fit the different steps in the pipeline #
+        self._preprocessing.fit(
+            names = list(self._objects.keys()),
+            xs = [self._objects[name][0] for name in self._objects.keys()],
+            masks = [self._objects[name][1] for name in self._objects.keys()],
+            fields = [self._fields[name] for name in self._objects.keys()],
+        )
+        # Finally apply the preprocessing transform #
+        for name in self._objects.keys():
+            data, mask, weights = self._objects[name]
+            data = self._preprocessing.transform(name,data,mask,self._fields[name])
+            self._objects[name] = (data,mask,weights)
 
     @staticmethod
     def reshape(input,value,ax,max_no=None):
@@ -362,10 +428,10 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         else:
             raise NotImplementedError(f'Type {type(self.default_features)} of default_features not implemented')
         # Modify each object data #
-        for name,(data,mask) in self._objects.items():
+        for name,(data,mask,weights) in self._objects.items():
             fields = self._fields[name]
             data,fields = self.expand_tensor(data,fields,default_values)
-            self._objects[name] = (data,mask)
+            self._objects[name] = (data,mask,weights)
             self._fields[name] = fields
 
     ##### Intrinsic properties #####
@@ -405,15 +471,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         """ Move all tensors to device """
         if device is None:
             return
-        for name,(data,mask) in self._objects.items():
-            self._objects[name] = (data.to(device),mask.to(device))
+        for name,(data,mask,weights) in self._objects.items():
+            self._objects[name] = (data.to(device),mask.to(device),weights.to(device))
 
     def to_dtype(self,dtype=None):
         """ Modifies the type of all tensors """
         if dtype is None:
             return
-        for name,(data,mask) in self._objects.items():
-            self._objects[name] = (data.to(dtype),mask.to(dtype))
+        for name,(data,mask,weights) in self._objects.items():
+            self._objects[name] = (data.to(dtype),mask.to(dtype),weights.to(dtype))
 
     ##### Save and load methods ######
     def _save(self):
@@ -421,9 +487,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         if self.processed_path is not None:
             if not os.path.exists(self.processed_path):
                 os.makedirs(self.processed_path)
-            for name,(data,mask) in self._objects.items():
+            for name,(data,mask,weights) in self._objects.items():
                 torch.save(
-                    (data,mask),
+                    (data,mask,weights),
                     os.path.join(self.processed_path,f'{name}.pt')
                 )
         print (f'Saving objects to {self.processed_path}')
@@ -435,8 +501,8 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         print (f'Loading objects from {self.processed_path}')
         for f in glob.glob(os.path.join(self.processed_path,'*.pt')):
             name = os.path.basename(f).replace('.pt','')
-            data,mask = torch.load(f)
-            self._objects[name] = (data,mask)
+            data,mask,weights = torch.load(f)
+            self._objects[name] = (data,mask,weights)
 
     ##### Magic methods #####
     def __getitem__(self,index):
@@ -447,6 +513,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         return {
             'data': [self._objects[name][0][index] for name in self.selection],
             'mask': [self._objects[name][1][index] for name in self.selection],
+            'weights': [self._objects[name][2][index] for name in self.selection],
         }
 
     def __len__(self):
@@ -457,19 +524,18 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         """ Representation string to show all defined objects with some info """
         s = f'\nContaining the following tensors'
         names_len = max([len(name) for name in self._objects.keys()]) + 1
-        for name,(data,mask) in self._objects.items():
+        for name,(data,mask,weights) in self._objects.items():
             props = mask.sum(axis=0) / mask.shape[0] * 100
             prop_str = ', '.join([f'{prop:3.2f}%' if prop>=0.01 else '<0.01%' for prop in props])
-            if self._preprocessing[name] is None:
-                prep = [False] * len(self._fields[name])
-            else:
-                prep = [self._preprocessing[name].is_processed(field) for field in self._fields[name]]
+            w_sum = weights.sum(dim=0)
+            w_str = ', '.join([f'{ws:2f}' for ws in w_sum])
             s += f'\n{name:{names_len}s} : data ({list(data.shape)}), mask ({list(mask.shape)})'
             s += f'\n{" "*names_len}   Mask exist    : [{prop_str}]'
             s += f'\n{" "*names_len}   Mask corr     : {self.object_correlation_mask(name)}'
+            s += f'\n{" "*names_len}   Weights       : {w_str}'
             s += f'\n{" "*names_len}   Features      : {self._fields[name]}'
-            s += f'\n{" "*names_len}   Preprocessing : {prep}'
             s += f'\n{" "*names_len}   Selected for batches : {name in self.selection}'
+        s += str(self._preprocessing)
         return s
 
     ##### User accessible helper methods #####
@@ -495,25 +561,30 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
                 )
                 for name in self.selection
             ],
-
+            'weights': [
+                torch.index_select(
+                    input = self._objects[name][2],
+                    dim = 0,
+                    index = idx,
+                )
+                for name in self.selection
+            ],
         }
 
-    def plot(self,raw=False,selection=False,log=False):
+    def plot(self,raw=False,selection=False,weighted=False,log=False):
         names = self.selection if selection else self._objects.keys()
         for name in names:
             # Get objects for name #
-            data,mask = self._objects[name]
+            data,mask,weights = self._objects[name]
             fields = self._fields[name]
             # Some processing #
             if mask.dtype != torch.bool:
                 mask = mask > 0
             if raw:
-                if self._preprocessing[name] is not None:
-                    data = self._preprocessing[name].inverse(data,mask,fields)
+                data = self._preprocessing.inverse(name,data,mask,fields)
             # Generate figure #
             n_parts = data.shape[1]
             n_cols = data.shape[2]
-            print (name,n_parts)
             if n_parts > 1:
                 fig,axs = plt.subplots(1,n_cols+1,figsize=(4.5*(n_cols+1),4))
             else:
@@ -524,12 +595,13 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
                 bins = np.linspace(data[:,:,i].min(),data[:,:,i].max(),50)
                 # Loop over particles #
                 for j in range(n_parts):
-                    #print (name,f'particle {j}',f'mask {mask[:,j].sum()}',f'feature {fields[i]}',data[:,j,i][mask[:,j]].mean(),data[:,j,i][mask[:,j]].std())
-                    axs[i].hist(data[:,j,i][mask[:,j]],bins=bins,histtype='step',linewidth=2) #,label=f'Object {j}')
+                    if weighted:
+                        axs[i].hist(data[:,j,i][mask[:,j]],weights=weights[:,j][mask[:,j]],bins=bins,histtype='step',linewidth=2)
+                    else:
+                        axs[i].hist(data[:,j,i][mask[:,j]],bins=bins,histtype='step',linewidth=2)
                 axs[i].set_xlabel(fields[i])
                 if log:
                     axs[i].set_yscale('log')
-                #axs[i].legend()
             # Add legend in last subplot #
             if n_parts > 1:
                 axs[-1].axis('off')

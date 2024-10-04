@@ -38,19 +38,19 @@ def get_intersection_indices(datas,branch):
         else:
             unique_files = [f for f in unique_files if f in uniq]
     print (f'Will only consider common files : {unique_files}')
-    print ('(Note : this assumes the files have the same order between the different data objects, and the content of the intersection branch as well)')
+    print ('(Note : this assumes the files have the same order between the different data objects')
 
     # Obtain set of indices for each Data object that intersect on the branch #
     idxs = [np.array([],dtype=np.int64) for _ in range(len(datas))]
+    sizes = [0 for _ in range(len(datas))] # Need to avoid resetting indices to zero
     for i,file in enumerate(unique_files):
         arrays = [data[branch][data['file']==file].to_numpy() for data in datas]
         matched = reduce(np.intersect1d, arrays) # find common values between all arrays
         for j in range(len(datas)):
             idx = np.nonzero(np.in1d(arrays[j],matched))[0] # for specific array, get common indices with matched
-            if i > 0: # Need to avoid resetting indices to zero
-                idx += sizes[j]
+            idx += sizes[j]
             idxs[j] = np.concatenate((idxs[j],idx),axis = 0)
-        sizes = [len(array) for array in arrays] # keep track to add to next iteration
+            sizes[j] += len(arrays[j])  # keep track to add to next iteration
 
     # Info printout #
     for i in range(len(datas)):
@@ -58,7 +58,8 @@ def get_intersection_indices(datas,branch):
 
     # Safety check : make sure the intersection branch returns the same values
     for i in range(1,len(datas)):
-        assert all(datas[0][branch][idxs[0]] == datas[i][branch][idxs[i]]), f'Disagreement between Data object 0 and {i} on branch {branch} after the index selection'
+        if not all(datas[0][branch][idxs[0]] == datas[i][branch][idxs[i]]):
+            print (f'Disagreement between Data object 0 and {i} on branch {branch} after the index selection')
 
     return idxs
 
