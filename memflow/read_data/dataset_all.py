@@ -2,6 +2,7 @@ from .Dataset_Parton_Level import Dataset_PartonLevel
 from .Dataset_Reco_Level import Dataset_RecoLevel
 from .Dataset_PartonNoBoost_Level import Dataset_PartonLevel_NoBoost
 from .Dataset_RecoNoBoost_Level import Dataset_RecoLevel_NoBoost
+from .Dataset_PartonNoBoost_Level_newHiggs import Dataset_PartonLevel_NoBoost_newHiggs
 import torch
 from torch.utils.data import Dataset, DataLoader
 from itertools import chain
@@ -9,11 +10,10 @@ from operator import itemgetter
 
 class DatasetCombined(Dataset):
     def __init__(self, root, datasets=["partons_CM", "reco_CM"],
-                 dev=None, debug=False, dtype=None, build=False,
+                 dev=None, debug=False, dtype=None, build=False, new_higgs=True,
                  reco_list_lab=['mask_lepton', 'data_lepton', 'mask_jets', 'data_jets', 'mask_met', 'data_met',
                             'mask_boost', 'data_boost', 'recoParticlesCartesian'],
-                 parton_list_lab=['phasespace_intermediateParticles', 'phasespace_rambo_detjacobian',
-                               'mean_log_data_higgs_t_tbar_ISR_cartesian',
+                 parton_list_lab=['mean_log_data_higgs_t_tbar_ISR_cartesian',
                                   'std_log_data_higgs_t_tbar_ISR_cartesian', 'logScaled_data_higgs_t_tbar_ISR_cartesian'],
                  reco_list_cm=['mask_lepton', 'data_lepton', 'mask_jets', 'data_jets', 'mask_met', 'data_met',
                             'mask_boost', 'data_boost', 'recoParticlesCartesian'],
@@ -36,7 +36,10 @@ class DatasetCombined(Dataset):
 
             elif dataset == "partons_lab":
                 print("Loading partons in LAB")
-                self.partons_lab = Dataset_PartonLevel_NoBoost(root, dev=dev, debug=debug, dtype=dtype, build=build, parton_list=parton_list_lab)
+                if new_higgs:
+                    self.partons_lab = Dataset_PartonLevel_NoBoost_newHiggs(root, dev=dev, debug=debug, dtype=dtype, build=build, parton_list=parton_list_lab)
+                else:
+                    self.partons_lab = Dataset_PartonLevel_NoBoost(root, dev=dev, debug=debug, dtype=dtype, build=build, parton_list=parton_list_lab)
                 self.datasets.append(self.partons_lab)
 
             elif dataset == "reco_lab":

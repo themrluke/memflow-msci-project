@@ -1,9 +1,8 @@
 import torch.nn as nn
 import torch
 import numpy as np
-import utils
 import zuko
-from zuko.flows import TransformModule, SimpleAffineTransform
+#from zuko.flows import TransformModule, SimpleAffineTransform
 from zuko.distributions import BoxUniform
 from zuko.distributions import DiagNormal
 from memflow.unfolding_flow.utils import Compute_ParticlesTensor as particle_tools
@@ -25,6 +24,7 @@ class Classify_ExistJet(nn.Module):
                  DNN_nodes=64,
                  DNN_layers=8,
                  no_max_objects=10,
+                 dropout=False,
                  
                  device=torch.device('cpu'),
                  dtype=torch.float32,
@@ -56,8 +56,10 @@ class Classify_ExistJet(nn.Module):
 
         layers = [nn.Linear(transformer_input_features + 1, DNN_nodes), nn.GELU()] # + 1 because we have added the encoded position in the output_decoder
         for i in range(DNN_layers - 1):
-            layers.append(nn.Linear(DNN_nodes, DNN_nodes))
-            layers.append(nn.GELU())
+            if dropout:
+                layers.extend([nn.Linear(DNN_nodes, DNN_nodes), nn.GELU(), nn.Dropout(0.2)])
+            else:
+                layers.extend([nn.Linear(DNN_nodes, DNN_nodes), nn.GELU()])
         layers.append(nn.Linear(DNN_nodes, 1))
         layers.append(nn.Sigmoid())
     
@@ -110,7 +112,7 @@ class Classify_ExistJet(nn.Module):
         prob_each_jet = self.model(output_decoder).squeeze(dim=2)
         prob_each_jet = prob_each_jet[:,:self.no_max_objects]
         prob_each_event = torch.sum(prob_each_jet*mask_reco[:,:self.no_max_objects], dim=1) # take avg of masked objects
-        prob_each_event = torch.div(prob_each_event, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
+        #prob_each_event = torch.div(prob_each_event, no_objects_per_event) # divide the total loss in the event at the no_objects_per_event
         prob_avg = prob_each_event.mean()
                                 
         return prob_avg, prob_each_event, prob_each_jet

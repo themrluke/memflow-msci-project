@@ -601,7 +601,424 @@ def sample_next_token_classifier_AllPartons_btag(model, logScaled_reco_sortedByS
 
     return generated_jet
 
+def sample_next_token_classifier_AllPartons_btag_autoreg(model, logScaled_reco_sortedBySpanet, logScaled_partons, mask_reco, mask_partons, step, No_samples=1):
+   
+    null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 6), device=model.device, dtype=model.dtype) * -1
+    null_token[:,0,0] = 0 # exist flag = 0 not -1
+    # mask for the null token = True
+    null_token_mask = torch.ones((mask_reco.shape[0], 1), device=model.device, dtype=torch.bool)
 
+     # attach null token and update the mask for the scaling_reco_lab
+    scaling_reco_lab_withNullToken = torch.cat((null_token, logScaled_reco_sortedBySpanet), dim=1)
+    mask_reco_withNullToken = torch.cat((null_token_mask, mask_reco), dim=1)
+    
+    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab_withNullToken) * mask_reco_withNullToken[..., None])
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons) * mask_partons[...,None])  
+        
+    tgt_mask = model.classifier_exist.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=model.device)
+    
+    if model.dtype == torch.float32:
+        tgt_mask = tgt_mask.float()
+    elif model.dtype == torch.float64:
+        tgt_mask = tgt_mask.double()
+
+    # classifier part
+    output_decoder = model.classifier_exist.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+
+    if model.encode_position:
+        hot_encoded = model.classifier_exist.hot_encoded.expand(output_decoder.shape[0], -1, -1)
+        output_decoder = torch.cat((output_decoder, hot_encoded[:,:output_decoder.shape[1]]), dim=2)
+
+    # take the last jetExist_sampled[:,-1:] -> for the last jet
+    prob_each_jet = model.classifier_exist.model(output_decoder[:,-1:]).squeeze(dim=2)
+    jetExist_sampled = torch.where(prob_each_jet < 0.5, 0, 1).unsqueeze(dim=2) # match dimension with 'jetsPt_sampled'
+
+    # take the last conditioning (the one on jet_0 ... jet_-1) 
+    # FLOW PHI
+    conditioning_phi = output_decoder[:,-1:]
+    jetsPhi_sampled = model.flow_kinematics_phi(conditioning_phi).rsample((1,))
+    jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+
+    # FLOW ETA
+    conditioning_eta = torch.cat((output_decoder[:,-1:], jetsPhi_sampled), dim=2)
+    jetsEta_sampled = model.flow_kinematics_eta(conditioning_eta).rsample((1,))
+    jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled) 
+
+    # FLOW PT
+    conditioning_pt = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled), dim=2)
+    jetsPt_sampled = model.flow_kinematics_pt(conditioning_pt).rsample((1,))
+    jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled) 
+
+    # FLOW BTAG
+    conditioning_btag = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled, jetsPt_sampled), dim=2)
+    jetsBtag_sampled = model.flow_btag(conditioning_btag).rsample((1,))
+    jetsBtag_sampled = jetsBtag_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsBtag_sampled = torch.where(jetExist_sampled == 0, -1, jetsBtag_sampled)
+    
+    # get the first dimension of 'logScaled_reco_sortedBySpanet'
+    # [1:2] to save it as a tensor
+    position_jet = torch.tensor(list(logScaled_reco_sortedBySpanet.shape[1:2]), device=model.device)
+    position_jet = position_jet.expand(output_decoder.shape[0], 1, 1)
+    if position_jet[0,0,0] > 8:
+        position_jet[:,0,0] = 8
+
+    generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled, jetsBtag_sampled, position_jet), dim=2)
+
+    return generated_jet
+
+def sample_next_token_classifier_AllPartons_Nobtag_autoreg(model, logScaled_reco_sortedBySpanet, logScaled_partons, mask_reco, mask_partons, step, No_samples=1):
+   
+    null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 5), device=model.device, dtype=model.dtype) * -1
+    null_token[:,0,0] = 0 # exist flag = 0 not -1
+    # mask for the null token = True
+    null_token_mask = torch.ones((mask_reco.shape[0], 1), device=model.device, dtype=torch.bool)
+
+     # attach null token and update the mask for the scaling_reco_lab
+    scaling_reco_lab_withNullToken = torch.cat((null_token, logScaled_reco_sortedBySpanet), dim=1)
+    mask_reco_withNullToken = torch.cat((null_token_mask, mask_reco), dim=1)
+    
+    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab_withNullToken) * mask_reco_withNullToken[..., None])
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons) * mask_partons[...,None])  
+        
+    tgt_mask = model.classifier_exist.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=model.device)
+    
+    if model.dtype == torch.float32:
+        tgt_mask = tgt_mask.float()
+    elif model.dtype == torch.float64:
+        tgt_mask = tgt_mask.double()
+
+    # classifier part
+    output_decoder = model.classifier_exist.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+
+    if model.encode_position:
+        hot_encoded = model.classifier_exist.hot_encoded.expand(output_decoder.shape[0], -1, -1)
+        output_decoder = torch.cat((output_decoder, hot_encoded[:,:output_decoder.shape[1]]), dim=2)
+
+    # take the last jetExist_sampled[:,-1:] -> for the last jet
+    prob_each_jet = model.classifier_exist.model(output_decoder[:,-1:]).squeeze(dim=2)
+    jetExist_sampled = torch.where(prob_each_jet < 0.5, 0, 1).unsqueeze(dim=2) # match dimension with 'jetsPt_sampled'
+
+    # take the last conditioning (the one on jet_0 ... jet_-1) 
+    # FLOW PHI
+    conditioning_phi = output_decoder[:,-1:]
+    jetsPhi_sampled = model.flow_kinematics_phi(conditioning_phi).rsample((1,))
+    jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+
+    # FLOW ETA
+    conditioning_eta = torch.cat((output_decoder[:,-1:], jetsPhi_sampled), dim=2)
+    jetsEta_sampled = model.flow_kinematics_eta(conditioning_eta).rsample((1,))
+    jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled) 
+
+    # FLOW PT
+    conditioning_pt = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled), dim=2)
+    jetsPt_sampled = model.flow_kinematics_pt(conditioning_pt).rsample((1,))
+    jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled) 
+    
+    # get the first dimension of 'logScaled_reco_sortedBySpanet'
+    # [1:2] to save it as a tensor
+    position_jet = torch.tensor(list(logScaled_reco_sortedBySpanet.shape[1:2]), device=model.device)
+    position_jet = position_jet.expand(output_decoder.shape[0], 1, 1)
+    if position_jet[0,0,0] > 8:
+        position_jet[:,0,0] = 8
+
+    generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled, position_jet), dim=2)
+
+    return generated_jet
+
+def sample_next_token_classifier_AllPartons_Nobtag_autoreg_latentSpace(model, logScaled_reco_sortedBySpanet, logScaled_partons, mask_reco, mask_partons, step, No_samples=1):
+   
+    null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 5), device=model.device, dtype=model.dtype) * -1
+    null_token[:,0,0] = 0 # exist flag = 0 not -1
+    # mask for the null token = True
+    null_token_mask = torch.ones((mask_reco.shape[0], 1), device=model.device, dtype=torch.bool)
+
+     # attach null token and update the mask for the scaling_reco_lab
+    scaling_reco_lab_withNullToken = torch.cat((null_token, logScaled_reco_sortedBySpanet), dim=1)
+    mask_reco_withNullToken = torch.cat((null_token_mask, mask_reco), dim=1)
+    
+    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab_withNullToken) * mask_reco_withNullToken[..., None])
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons) * mask_partons[...,None])  
+        
+    tgt_mask = model.classifier_exist.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=model.device)
+    
+    if model.dtype == torch.float32:
+        tgt_mask = tgt_mask.float()
+    elif model.dtype == torch.float64:
+        tgt_mask = tgt_mask.double()
+
+    # classifier part
+    output_decoder = model.classifier_exist.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+
+    if model.encode_position:
+        hot_encoded = model.classifier_exist.hot_encoded.expand(output_decoder.shape[0], -1, -1)
+        output_decoder = torch.cat((output_decoder, hot_encoded[:,:output_decoder.shape[1]]), dim=2)
+
+    # take the last jetExist_sampled[:,-1:] -> for the last jet
+    prob_each_jet = model.classifier_exist.model(output_decoder[:,-1:]).squeeze(dim=2)
+    prob_each_jet[:,:4] = 1 # always 1
+    jetExist_sampled = torch.where(prob_each_jet < 0.5, 0, 1).unsqueeze(dim=2) # match dimension with 'jetsPt_sampled'
+
+    sample_base_phi = model.flow_kinematics_phi.base().sample((2048,1,)).squeeze(dim=0)
+    sample_base_eta = model.flow_kinematics_eta.base().sample((2048,1,)).squeeze(dim=0)
+    sample_base_pt = model.flow_kinematics_pt.base().sample((2048,1,)).squeeze(dim=0)
+
+    # take the last conditioning (the one on jet_0 ... jet_-1) 
+    # FLOW PHI
+    conditioning_phi = torch.cat((output_decoder[:,-1:], sample_base_pt, sample_base_eta), dim=2)
+    jetsPhi_sampled = model.flow_kinematics_phi(conditioning_phi).transform.inv(sample_base_phi)
+    jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => phi_sampled = -1
+    jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+
+    # FLOW ETA
+    conditioning_eta = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, sample_base_pt), dim=2)
+    jetsEta_sampled = model.flow_kinematics_eta(conditioning_eta).transform.inv(sample_base_eta)
+    jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => eta_sampled = -1
+    jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled) 
+
+    # FLOW PT
+    conditioning_pt = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled), dim=2)
+    jetsPt_sampled = model.flow_kinematics_pt(conditioning_pt).transform.inv(sample_base_pt)
+    jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+    # if sampled_exist == 0 => pt_sampled = -1
+    jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled) 
+    
+    # get the first dimension of 'logScaled_reco_sortedBySpanet'
+    # [1:2] to save it as a tensor
+    position_jet = torch.tensor(list(logScaled_reco_sortedBySpanet.shape[1:2]), device=model.device)
+    position_jet = position_jet.expand(output_decoder.shape[0], 1, 1)
+    if position_jet[0,0,0] > 8:
+        position_jet[:,0,0] = 8
+
+    generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled, position_jet), dim=2)
+
+    return generated_jet
+
+def sample_next_token_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian(model, logScaled_reco_sortedBySpanet, logScaled_partons, mask_reco, mask_partons, step, index_alwaysExist, No_samples=1):
+   
+    null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 5), device=model.device, dtype=model.dtype) * -1
+    null_token[:,0,0] = 0 # exist flag = 0 not -1
+    # mask for the null token = True
+    null_token_mask = torch.ones((mask_reco.shape[0], 1), device=model.device, dtype=torch.bool)
+
+     # attach null token and update the mask for the scaling_reco_lab
+    scaling_reco_lab_withNullToken = torch.cat((null_token, logScaled_reco_sortedBySpanet), dim=1)
+    mask_reco_withNullToken = torch.cat((null_token_mask, mask_reco), dim=1)
+    
+    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab_withNullToken) * mask_reco_withNullToken[..., None])
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons) * mask_partons[...,None])  
+        
+    tgt_mask = model.classifier_exist.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=model.device)
+    
+    if model.dtype == torch.float32:
+        tgt_mask = tgt_mask.float()
+    elif model.dtype == torch.float64:
+        tgt_mask = tgt_mask.double()
+
+    # classifier part
+    output_decoder = model.classifier_exist.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+
+    if model.encode_position:
+        hot_encoded = model.classifier_exist.hot_encoded.expand(output_decoder.shape[0], -1, -1)
+        output_decoder = torch.cat((output_decoder, hot_encoded[:,:output_decoder.shape[1]]), dim=2)
+
+    # take the last jetExist_sampled[:,-1:] -> for the last jet
+    prob_each_jet = model.classifier_exist.model(output_decoder[:,-1:]).squeeze(dim=2)
+    if step in index_alwaysExist:
+        print(step)
+        prob_each_jet[:,0] = 1 # always 1
+        
+    jetExist_sampled = torch.where(prob_each_jet < 0.5, 0, 1).unsqueeze(dim=2) # match dimension with 'jetsPt_sampled'
+
+    sample_base_phi = model.flow_kinematics_phi.base().sample((logScaled_reco_sortedBySpanet.shape[0],1,)).squeeze(dim=0)
+    sample_base_eta = model.flow_kinematics_eta.base().sample((logScaled_reco_sortedBySpanet.shape[0],1,)).squeeze(dim=0)
+    sample_base_pt = model.flow_kinematics_pt.base().sample((logScaled_reco_sortedBySpanet.shape[0],1,)).squeeze(dim=0)
+
+    if step < 2:
+
+        # take the last conditioning (the one on jet_0 ... jet_-1) 
+        # FLOW PHI
+        conditioning_phi = torch.cat((output_decoder[:,-1:], sample_base_pt, sample_base_eta), dim=2)
+        jetsPhi_sampled = model.flow_kinematics_lepton_phi(conditioning_phi).transform.inv(sample_base_phi)
+        jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => phi_sampled = -1
+        jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+    
+        # FLOW ETA
+        conditioning_eta = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, sample_base_pt), dim=2)
+        jetsEta_sampled = model.flow_kinematics_lepton_eta(conditioning_eta).transform.inv(sample_base_eta)
+        jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => eta_sampled = -1
+        jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled) 
+    
+        # FLOW PT
+        conditioning_pt = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled), dim=2)
+        jetsPt_sampled = model.flow_kinematics_lepton_pt(conditioning_pt).transform.inv(sample_base_pt)
+        jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => pt_sampled = -1
+        jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled) 
+
+    else:
+
+        # take the last conditioning (the one on jet_0 ... jet_-1) 
+        # FLOW PHI
+        conditioning_phi = torch.cat((output_decoder[:,-1:], sample_base_pt, sample_base_eta), dim=2)
+        jetsPhi_sampled = model.flow_kinematics_phi(conditioning_phi).transform.inv(sample_base_phi)
+        jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => phi_sampled = -1
+        jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+    
+        # FLOW ETA
+        conditioning_eta = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, sample_base_pt), dim=2)
+        jetsEta_sampled = model.flow_kinematics_eta(conditioning_eta).transform.inv(sample_base_eta)
+        jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => eta_sampled = -1
+        jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled) 
+    
+        # FLOW PT
+        conditioning_pt = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled), dim=2)
+        jetsPt_sampled = model.flow_kinematics_pt(conditioning_pt).transform.inv(sample_base_pt)
+        jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => pt_sampled = -1
+        jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled) 
+    
+    # get the first dimension of 'logScaled_reco_sortedBySpanet'
+    # [1:2] to save it as a tensor
+    position_jet = torch.tensor(list(logScaled_reco_sortedBySpanet.shape[1:2]), device=model.device)
+    position_jet = position_jet.expand(output_decoder.shape[0], 1, 1)
+    if position_jet[0,0,0] > 8:
+        position_jet[:,0,0] = 8
+
+    generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled, position_jet), dim=2)
+
+    return generated_jet
+
+def sample_next_token_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian_classifier(model, logScaled_reco_sortedBySpanet, logScaled_partons, mask_reco, mask_partons, step, No_samples=1):
+   
+    null_token = torch.ones((logScaled_reco_sortedBySpanet.shape[0], 1, 5), device=model.device, dtype=model.dtype) * -1
+    null_token[:,0,0] = 0 # exist flag = 0 not -1
+    # mask for the null token = True
+    null_token_mask = torch.ones((mask_reco.shape[0], 1), device=model.device, dtype=torch.bool)
+
+     # attach null token and update the mask for the scaling_reco_lab
+    scaling_reco_lab_withNullToken = torch.cat((null_token, logScaled_reco_sortedBySpanet), dim=1)
+    mask_reco_withNullToken = torch.cat((null_token_mask, mask_reco), dim=1)
+    
+    scaledLogReco_afterLin = model.gelu(model.linearDNN_reco(scaling_reco_lab_withNullToken) * mask_reco_withNullToken[..., None])
+    scaledLogParton_afterLin = model.gelu(model.linearDNN_parton(logScaled_partons) * mask_partons[...,None])  
+        
+    tgt_mask = model.classifier_exist.transformer_model.generate_square_subsequent_mask(scaledLogReco_afterLin.size(1), device=model.device)
+    
+    if model.dtype == torch.float32:
+        tgt_mask = tgt_mask.float()
+    elif model.dtype == torch.float64:
+        tgt_mask = tgt_mask.double()
+
+    # classifier part
+    output_decoder = model.classifier_exist.transformer_model(scaledLogParton_afterLin, scaledLogReco_afterLin, tgt_mask=tgt_mask)
+
+    if model.encode_position:
+        hot_encoded = model.classifier_exist.hot_encoded.expand(output_decoder.shape[0], -1, -1)
+        hot_encoded = hot_encoded[:,:step+1]
+
+        # first 9 partons (decay products) + rest of null tokens
+        if step > 8:
+            no_null_tokens = logScaled_reco_sortedBySpanet.shape[1] - 9 + 1
+            null_token_partons = torch.ones((logScaled_partons.shape[0], no_null_tokens, model.transformer_input_features), device=model.device, dtype=model.dtype) * -1
+    
+            # attach null tokens to scaledLogParton_afterLin
+            inputDNN_scaledLogParton = torch.cat((scaledLogParton_afterLin[:,:9], null_token_partons), dim=1)
+            # new input for the DNN exist
+            inputDNN_exist = torch.cat((output_decoder, inputDNN_scaledLogParton, hot_encoded), dim=2)
+
+        else:
+            # new input for the DNN exist
+            inputDNN_exist = torch.cat((output_decoder, scaledLogParton_afterLin[:,:step+1], hot_encoded), dim=2)
+            
+        output_decoder = torch.cat((output_decoder, hot_encoded), dim=2)
+
+    # take the last jetExist_sampled[:,-1:] -> for the last jet
+    prob_each_jet = model.classifier_exist.model(inputDNN_exist[:,-1:]).squeeze(dim=2)
+    if step < 4:
+        prob_each_jet[:,0] = 1 # always 1
+    jetExist_sampled = torch.where(prob_each_jet < 0.5, 0, 1).unsqueeze(dim=2) # match dimension with 'jetsPt_sampled'
+
+    sample_base_phi = model.flow_kinematics_phi.base().sample((logScaled_reco_sortedBySpanet.shape[0],1,)).squeeze(dim=0)
+    sample_base_eta = model.flow_kinematics_eta.base().sample((logScaled_reco_sortedBySpanet.shape[0],1,)).squeeze(dim=0)
+    sample_base_pt = model.flow_kinematics_pt.base().sample((logScaled_reco_sortedBySpanet.shape[0],1,)).squeeze(dim=0)
+
+    if step < 2:
+
+        # take the last conditioning (the one on jet_0 ... jet_-1) 
+        # FLOW PHI
+        conditioning_phi = torch.cat((output_decoder[:,-1:], sample_base_pt, sample_base_eta), dim=2)
+        jetsPhi_sampled = model.flow_kinematics_lepton_phi(conditioning_phi).transform.inv(sample_base_phi)
+        jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => phi_sampled = -1
+        jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+    
+        # FLOW ETA
+        conditioning_eta = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, sample_base_pt), dim=2)
+        jetsEta_sampled = model.flow_kinematics_lepton_eta(conditioning_eta).transform.inv(sample_base_eta)
+        jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => eta_sampled = -1
+        jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled) 
+    
+        # FLOW PT
+        conditioning_pt = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled), dim=2)
+        jetsPt_sampled = model.flow_kinematics_lepton_pt(conditioning_pt).transform.inv(sample_base_pt)
+        jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => pt_sampled = -1
+        jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled) 
+
+    else:
+
+        # take the last conditioning (the one on jet_0 ... jet_-1) 
+        # FLOW PHI
+        conditioning_phi = torch.cat((output_decoder[:,-1:], sample_base_pt, sample_base_eta), dim=2)
+        jetsPhi_sampled = model.flow_kinematics_phi(conditioning_phi).transform.inv(sample_base_phi)
+        jetsPhi_sampled = jetsPhi_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => phi_sampled = -1
+        jetsPhi_sampled = torch.where(jetExist_sampled == 0, -1, jetsPhi_sampled)
+    
+        # FLOW ETA
+        conditioning_eta = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, sample_base_pt), dim=2)
+        jetsEta_sampled = model.flow_kinematics_eta(conditioning_eta).transform.inv(sample_base_eta)
+        jetsEta_sampled = jetsEta_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => eta_sampled = -1
+        jetsEta_sampled = torch.where(jetExist_sampled == 0, -1, jetsEta_sampled) 
+    
+        # FLOW PT
+        conditioning_pt = torch.cat((output_decoder[:,-1:], jetsPhi_sampled, jetsEta_sampled), dim=2)
+        jetsPt_sampled = model.flow_kinematics_pt(conditioning_pt).transform.inv(sample_base_pt)
+        jetsPt_sampled = jetsPt_sampled.squeeze(dim=0)
+        # if sampled_exist == 0 => pt_sampled = -1
+        jetsPt_sampled = torch.where(jetExist_sampled == 0, -1, jetsPt_sampled) 
+    
+    # get the first dimension of 'logScaled_reco_sortedBySpanet'
+    # [1:2] to save it as a tensor
+    position_jet = torch.tensor(list(logScaled_reco_sortedBySpanet.shape[1:2]), device=model.device)
+    position_jet = position_jet.expand(output_decoder.shape[0], 1, 1)
+    if position_jet[0,0,0] > 8:
+        position_jet[:,0,0] = 8
+
+    generated_jet = torch.cat((jetExist_sampled, jetsPt_sampled, jetsEta_sampled, jetsPhi_sampled, position_jet), dim=2)
+
+    return generated_jet
 
 def sample_fullRecoEvent_classifier(model, logScaled_partons, no_events, device, dtype, No_samples=1):
     
@@ -770,6 +1187,116 @@ def sample_fullRecoEvent_classifier_AllPartons_btag(model, logScaled_partons, ma
 
     return fullGeneratedEvent, mask_reco
 
+def sample_fullRecoEvent_classifier_AllPartons_btag_autoreg(model, logScaled_partons, mask_partons, no_events, device, dtype, No_samples=1):
+    
+    fullGeneratedEvent = torch.empty((no_events*No_samples, 0, 6), device=device, dtype=dtype)
+    mask_reco = torch.empty((no_events*No_samples, 0), device=device, dtype=dtype)
+    mask_one = torch.ones((no_events*No_samples, 1), device=device, dtype=dtype)
+    logScaled_partons = logScaled_partons.repeat(No_samples, 1, 1)
+    mask_partons = mask_partons.repeat(No_samples,1)
+    
+    for j in range(model.no_max_objects):
+
+        next_jet = sample_next_token_classifier_AllPartons_btag_autoreg(model, fullGeneratedEvent, logScaled_partons, mask_reco, mask_partons, j, No_samples)
+    
+        fullGeneratedEvent = torch.cat((fullGeneratedEvent, next_jet), dim=1)
+
+        # update the mask
+        mask_reco = torch.cat((mask_reco, mask_one), dim=1)
+        # if I pass the MET position and the existance == False => the next jets are padding jets
+        if j > 7:
+            mask_reco[:,j] = torch.where(fullGeneratedEvent[:,j,0] == 1, 1, 0)        
+
+    return fullGeneratedEvent, mask_reco
+
+def sample_fullRecoEvent_classifier_AllPartons_Nobtag_autoreg(model, logScaled_partons, mask_partons, no_events, device, dtype, No_samples=1):
+    
+    fullGeneratedEvent = torch.empty((no_events*No_samples, 0, 5), device=device, dtype=dtype)
+    mask_reco = torch.empty((no_events*No_samples, 0), device=device, dtype=dtype)
+    mask_one = torch.ones((no_events*No_samples, 1), device=device, dtype=dtype)
+    logScaled_partons = logScaled_partons.repeat(No_samples, 1, 1)
+    mask_partons = mask_partons.repeat(No_samples,1)
+    
+    for j in range(model.no_max_objects):
+
+        next_jet = sample_next_token_classifier_AllPartons_Nobtag_autoreg(model, fullGeneratedEvent, logScaled_partons, mask_reco, mask_partons, j, No_samples)
+    
+        fullGeneratedEvent = torch.cat((fullGeneratedEvent, next_jet), dim=1)
+
+        # update the mask
+        mask_reco = torch.cat((mask_reco, mask_one), dim=1)
+        # if I pass the MET position and the existance == False => the next jets are padding jets
+        if j > 7:
+            mask_reco[:,j] = torch.where(fullGeneratedEvent[:,j,0] == 1, 1, 0)        
+
+    return fullGeneratedEvent, mask_reco
+
+def sample_fullRecoEvent_classifier_AllPartons_Nobtag_autoreg_latentSpace(model, logScaled_partons, mask_partons, no_events, device, dtype, No_samples=1):
+    
+    fullGeneratedEvent = torch.empty((no_events*No_samples, 0, 5), device=device, dtype=dtype)
+    mask_reco = torch.empty((no_events*No_samples, 0), device=device, dtype=dtype)
+    mask_one = torch.ones((no_events*No_samples, 1), device=device, dtype=dtype)
+    logScaled_partons = logScaled_partons.repeat(No_samples, 1, 1)
+    mask_partons = mask_partons.repeat(No_samples,1)
+    
+    for j in range(model.no_max_objects):
+
+        next_jet = sample_next_token_classifier_AllPartons_Nobtag_autoreg_latentSpace(model, fullGeneratedEvent, logScaled_partons, mask_reco, mask_partons, j, No_samples)
+    
+        fullGeneratedEvent = torch.cat((fullGeneratedEvent, next_jet), dim=1)
+
+        # update the mask
+        mask_reco = torch.cat((mask_reco, mask_one), dim=1)
+        # if I pass the MET position and the existance == False => the next jets are padding jets
+        if j > 7:
+            mask_reco[:,j] = torch.where(fullGeneratedEvent[:,j,0] == 1, 1, 0)        
+
+    return fullGeneratedEvent, mask_reco
+
+def sample_fullRecoEvent_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian(model, logScaled_partons, mask_partons, no_events, device, dtype, index_alwaysExist, No_samples=1):
+    
+    fullGeneratedEvent = torch.empty((no_events*No_samples, 0, 5), device=device, dtype=dtype)
+    mask_reco = torch.empty((no_events*No_samples, 0), device=device, dtype=dtype)
+    mask_one = torch.ones((no_events*No_samples, 1), device=device, dtype=dtype)
+    logScaled_partons = logScaled_partons.repeat(No_samples, 1, 1)
+    mask_partons = mask_partons.repeat(No_samples,1)
+    
+    for j in range(model.no_max_objects):
+
+        next_jet = sample_next_token_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian(model, fullGeneratedEvent, logScaled_partons, mask_reco, mask_partons, j, index_alwaysExist, No_samples)
+    
+        fullGeneratedEvent = torch.cat((fullGeneratedEvent, next_jet), dim=1)
+
+        # update the mask
+        mask_reco = torch.cat((mask_reco, mask_one), dim=1)
+        # if I pass the MET position and the existance == False => the next jets are padding jets
+        if j > 7:
+            mask_reco[:,j] = torch.where(fullGeneratedEvent[:,j,0] == 1, 1, 0)        
+
+    return fullGeneratedEvent, mask_reco
+
+def sample_fullRecoEvent_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian_classifier(model, logScaled_partons, mask_partons, no_events, device, dtype, No_samples=1):
+    
+    fullGeneratedEvent = torch.empty((no_events*No_samples, 0, 5), device=device, dtype=dtype)
+    mask_reco = torch.empty((no_events*No_samples, 0), device=device, dtype=dtype)
+    mask_one = torch.ones((no_events*No_samples, 1), device=device, dtype=dtype)
+    logScaled_partons = logScaled_partons.repeat(No_samples, 1, 1)
+    mask_partons = mask_partons.repeat(No_samples,1)
+    
+    for j in range(model.no_max_objects):
+
+        next_jet = sample_next_token_classifier_AllPartons_Nobtag_autoreg_latentSpace_gaussian_classifier(model, fullGeneratedEvent, logScaled_partons, mask_reco, mask_partons, j, No_samples)
+    
+        fullGeneratedEvent = torch.cat((fullGeneratedEvent, next_jet), dim=1)
+
+        # update the mask
+        mask_reco = torch.cat((mask_reco, mask_one), dim=1)
+        # if I pass the MET position and the existance == False => the next jets are padding jets
+        if j > 7:
+            mask_reco[:,j] = torch.where(fullGeneratedEvent[:,j,0] == 1, 1, 0)        
+
+    return fullGeneratedEvent, mask_reco
+
 def sample_next_token_unfoldingFlow(model, generated_partons, logScaled_jets, mask_jets, step, No_samples=1):
    
     # create null token and its mask
@@ -921,14 +1448,14 @@ def sampling_print_btag(experiment, sampledEvent, logScaled_reco_target, mask_re
 
         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
         diff_generatedAndTarget = (maskedGeneratedEvent[:,plot_var] - maskedTargetEvent[:,plot_var])
-        ax.hist(diff_generatedAndTarget.detach().cpu().numpy(), range=(-5,5), bins=20, histtype='step', color='b', stacked=False, fill=False)
+        ax.hist(diff_generatedAndTarget.detach().cpu().numpy(), range=(-10,10), bins=20, histtype='step', color='b', stacked=False, fill=False)
         ax.set_xlabel(f'{var_name[plot_var]}_generated - {var_name[plot_var]}_target')
         experiment.log_figure(f"Diff_generated_{var_name[plot_var]}_exist={onlyExistElem} for jets:{plotJets}", fig, step=epoch)
 
         fig, ax = plt.subplots(figsize=(7,6), dpi=100)
         h = ax.hist2d(maskedGeneratedEvent[:,plot_var].detach().cpu().numpy(),
                       maskedTargetEvent[:,plot_var].detach().cpu().numpy(),
-                      bins=30, range=[(-5,5),(-5,5)], cmin=1)
+                      bins=30, range=[(-6.5,6.5),(-6.5,6.5)], cmin=1)
         fig.colorbar(h[3], ax=ax)
         ax.set_xlabel(f'sampled {var_name[plot_var]}')
         ax.set_ylabel(f'target {var_name[plot_var]}')
@@ -1006,10 +1533,19 @@ def validation_print(experiment, flow_pr, wrong_pt_batch_flow_pr, wrong_ptAndEta
     ax.bar(["correct", "wrong"], [no_correct_2, no_wrong_2], color ='maroon', width = 0.4)
     experiment.log_figure(f"Correct_wrong_2 {particles}", fig, step=epoch)
 
-def unscale_pt(logScaled_reco, mask_recoParticles, log_mean_reco, log_std_reco, no_max_objects):
+def unscale_pt(pt_reco, mask_recoParticles, log_mean_reco, log_std_reco):
     # pt is on the 2nd position, exist flag is on the first position (only for logScaled_reco)
-    unscaled_pt = torch.exp(logScaled_reco[:,:no_max_objects,1]*log_std_reco[0] + log_mean_reco[0]) - 1
-    unscaled_pt = unscaled_pt*mask_recoParticles[:,:no_max_objects] # set masked objects to 0
+    unscaled_pt = torch.exp(pt_reco*log_std_reco[0] + log_mean_reco[0]) - 1
+    unscaled_pt = unscaled_pt*mask_recoParticles # set masked objects to 0
+    return unscaled_pt
+
+def unscale_pt_cut(pt_reco, mask_recoParticles, log_mean_reco, log_std_reco, minPt_cut):
+    # pt is on the 2nd position, exist flag is on the first position (only for logScaled_reco)
+    unscaled_pt = torch.exp(pt_reco*log_std_reco[0] + log_mean_reco[0]) - 1
+    mask_pt = minPt_cut > 0
+    unscaled_pt = torch.where(mask_pt, unscaled_pt + minPt_cut, unscaled_pt)
+    
+    unscaled_pt = unscaled_pt*mask_recoParticles # set masked objects to 0
     return unscaled_pt
 
 def unscale_pt_boxcox(pt_reco, mask_recoParticles, log_mean_reco, log_std_reco, param_lambda):
@@ -1037,7 +1573,25 @@ def compute_loss_per_pt_boxcox(loss_per_pt, flow_pr, scaledLogReco, maskedReco, 
     
 def compute_loss_per_pt(loss_per_pt, flow_pr, scaledLogReco, maskedReco, log_mean_reco, log_std_reco, no_max_objects,
                         pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500, 3000]):
-    unscaled_pt = unscale_pt(scaledLogReco, maskedReco, log_mean_reco, log_std_reco, no_max_objects)
+    
+    unscaled_pt = unscale_pt(scaledLogReco[:,:no_max_objects,1], maskedReco[:,:no_max_objects], log_mean_reco, log_std_reco)
+
+    for i in range(len(pt_bins) - 1):
+        mask_pt_greater = unscaled_pt > pt_bins[i]
+        mask_pt_lower = unscaled_pt < pt_bins[i+1]
+        mask_pt = torch.logical_and(mask_pt_greater, mask_pt_lower)
+        #print(torch.count_nonzero(mask_pt))
+        if torch.count_nonzero(mask_pt) == 0:
+            loss_per_pt[i] =  0
+        else:
+            loss_per_pt[i] =  -1*flow_pr[mask_pt].mean()
+
+    return loss_per_pt
+
+def compute_loss_per_pt_cut(loss_per_pt, flow_pr, scaledLogReco, maskedReco, log_mean_reco, log_std_reco, no_max_objects, minPt_cut,
+                        pt_bins=[5, 50, 75, 100, 150, 200, 300, 1500, 3000]):
+    
+    unscaled_pt = unscale_pt_boxcox(scaledLogReco[:,:no_max_objects,1], maskedReco[:,:no_max_objects], log_mean_reco, log_std_reco, minPt_cut)
 
     for i in range(len(pt_bins) - 1):
         mask_pt_greater = unscaled_pt > pt_bins[i]
