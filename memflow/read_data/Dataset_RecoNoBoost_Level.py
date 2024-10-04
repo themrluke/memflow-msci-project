@@ -17,7 +17,7 @@ class Dataset_RecoLevel_NoBoost(Dataset):
                  dtype=None, build=False, reco_list=[]):
 
         self.fields = {
-            "jets": ["pt", "eta", "phi", "btag","prov_Thad", "prov_Tlep", "prov_H", "prov"],
+            "jets": ["pt", "eta", "phi", "btag", "prov_Thad", "prov_Tlep", "prov_H", "prov"],
             "lepton_reco": ["pt", "eta", "phi"],
             "met": ["pt", "eta", "phi"],
             "boost": ["E", "px", "py", "pz"],
@@ -65,9 +65,16 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             self.scaleObjects()
             self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
                                             torch.load(self.processed_file_names('scaledLogRecoParticles'))
+
+            self.scaledLogRecoParticles_fullCartesian, self.meanRecoParticles, self.stdRecoParticles, \
+            self.meanRecoParticles_cartesian, self.stdRecoParticles_cartesian = \
+                                            torch.load(self.processed_file_names('scaledLogRecoParticles_fullCartesian'))
             
             print("Create new file for sortJets_bySpanet")
             self.sortJets_bySpanet()
+
+            print("Create new file for sortJets_bySpanet_ptcut")
+            self.sortJets_bySpanet_ptcut()
 
             print("Create new file for sortJets_bySpanet_boxcox")
             self.sortJets_bySpanet_boxcox()
@@ -123,6 +130,12 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             self.scaledLogRecoParticles, self.LogRecoParticles, self.meanRecoParticles, self.stdRecoParticles = \
                                             torch.load(self.processed_file_names('scaledLogRecoParticles'))
 
+        if 'scaledLogRecoParticles_fullCartesian' in self.reco_list:
+            print("Load scaledLogRecoParticles_fullCartesian")            
+            self.scaledLogRecoParticles_fullCartesian, self.meanRecoParticles, self.stdRecoParticles, \
+                self.meanRecoParticles_cartesian, self.stdRecoParticles_cartesian = \
+                                            torch.load(self.processed_file_names('scaledLogRecoParticles_fullCartesian'))
+
         if 'scaledLogRecoParticles_withEnergy' in self.reco_list:
             print("Load scaledLogRecoParticles_withEnergy")
             self.scaledLogRecoParticles_withEnergy, self.meanRecoParticles_withEnergy, self.stdRecoParticles_withEnergy = \
@@ -130,9 +143,24 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             
         if 'scaledLogReco_sortedBySpanet' in self.reco_list:
             print("Load scaledLogReco_sortedBySpanet")
+            self.scaledLogRecoParticles_fullCartesian, self.meanRecoParticles, self.stdRecoParticles, \
+                self.meanRecoParticles_cartesian, self.stdRecoParticles_cartesian = \
+                                            torch.load(self.processed_file_names('scaledLogRecoParticles_fullCartesian'))
+            
             self.scaledLogReco_sortedBySpanet, self.mask_scaledLogReco_sortedBySpanet, self.meanRecoParticles, self.stdRecoParticles = \
                                     torch.load(self.processed_file_names('scaledLogReco_sortedBySpanet'))
             self.mean_btagLogit, self.std_btagLogit = torch.load(self.processed_file_names('mean_btag_logit'))
+
+        if 'scaledLogReco_sortedBySpanet_phiScaled' in self.reco_list:
+            print("Load scaledLogReco_sortedBySpanet")
+            self.scaledLogReco_sortedBySpanet_phiScaled, self.mask_scaledLogReco_sortedBySpanet, self.meanRecoParticles, self.stdRecoParticles = \
+                                    torch.load(self.processed_file_names('scaledLogReco_sortedBySpanet_phiScaled'))
+            self.mean_btagLogit, self.std_btagLogit = torch.load(self.processed_file_names('mean_btag_logit'))
+
+        if 'scaledLogReco_sortedBySpanet_ptcut' in self.reco_list:
+            print("Load scaledLogReco_sortedBySpanet_ptcut")
+            self.scaledLogReco_sortedBySpanet_ptcut, self.mask_scaledLogReco_sortedBySpanet_ptcut, self.meanRecoParticles_ptcut, self.stdRecoParticles_ptcut, self.min_pt_eachReco = \
+                                    torch.load(self.processed_file_names('scaledLogReco_sortedBySpanet_ptcut'))
 
         if 'scaledLogReco_sortedBySpanet_boxcox' in self.reco_list:
             print("Load scaledLogReco_sortedBySpanet_boxcox")
@@ -177,7 +205,7 @@ class Dataset_RecoLevel_NoBoost(Dataset):
             jets = ak.with_name(jets, name="Momentum4D")
 
             leptons = df["lepton_reco"]
-            leptons = ak.with_name(leptons, name="Momentum4D")[:,0] # takingthe leading lepton
+            leptons = ak.with_name(leptons, name="Momentum4D")[:,0] # taking the leading lepton
 
             met = df["met"]
             met = ak.with_name(met, name="Momentum4D")
@@ -291,6 +319,7 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         log_objectTensor[:,:,0] = torch.sign(log_objectTensor[:,:,0])*torch.log(1+torch.abs(log_objectTensor[:,:,0]))
         if isCartesian:
             # case [E,px,py,pz]
+            log_objectTensor[:,:,1:4] = torch.sign(log_objectTensor[:,:,1:4])*torch.log(1+torch.abs(log_objectTensor[:,:,1:4]))
             no_elements = 4             
         else:
             # case ["pt", "eta", "phi", "btag", + prov]
@@ -343,10 +372,16 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         recoParticles = torch.cat((self.data_jets, self.data_lepton, self.data_met), dim=1)
         meanRecoParticles, stdRecoParticles, scaledLogRecoParticles, LogRecoParticles = self.scaleTensor(recoParticles,
                                                                                   recoMask, isCartesian=False)
+
+        # attach btag and prov to cartesian full tensor
+        scaledLogRecoParticles_fullCartesian = torch.cat((scaledLogRecoParticles[:,:,:3],
+                                                          scaledLogRecoParticlesCartesian,
+                                                          recoParticles[:,:,3:]), dim=2)
         
         # attach btag and prov to cartesian full tensor
         scaledLogRecoParticlesCartesian = torch.cat((scaledLogRecoParticlesCartesian, recoParticles[:,:,3:]), dim=2)
         LogRecoParticlesCartesian = torch.cat((LogRecoParticlesCartesian, recoParticles[:,:,3:]), dim=2)
+        
         
         torch.save((recoParticles), self.processed_file_names('recoParticles'))
         
@@ -358,6 +393,8 @@ class Dataset_RecoLevel_NoBoost(Dataset):
                        self.processed_file_names('scaledLogRecoParticlesCartesian'))
         torch.save((scaledLogRecoParticles, LogRecoParticles, meanRecoParticles, stdRecoParticles),
                        self.processed_file_names('scaledLogRecoParticles'))
+        torch.save((scaledLogRecoParticles_fullCartesian, meanRecoParticles, stdRecoParticles, meanRecoCartesian, stdRecoCartesian),
+                       self.processed_file_names('scaledLogRecoParticles_fullCartesian'))
 
         energy = scaledLogRecoParticlesCartesian[:,:,0]
         energy_mean = meanRecoCartesian[0]
@@ -375,7 +412,7 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         spanet_assignment = higgsAssignment_SPANET(spanet_values=spanet_tensor)
         
         # order H1, H2, thad1, thad2, thad3, tlep1, lepton, MET
-        scaledLogReco_sortedBySpanet = sortObjects_bySpanet(spanet_assignment=spanet_assignment, scaledLogReco=self.scaledLogRecoParticles,
+        scaledLogReco_sortedBySpanet = sortObjects_bySpanet(spanet_assignment=spanet_assignment, scaledLogReco=self.scaledLogRecoParticles_fullCartesian,
                                                maskJets=self.mask_jets, order=[0, 1, 2])
 
         # at this point the missing Spanet jets and the padding have -100 values
@@ -405,9 +442,24 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         btag_logit = torch.logit(scaledLogReco_sortedBySpanet[...,4], eps=0.002)
         mean_btag = torch.mean(btag_logit[maskExist], dim=0)
         std_btag = torch.std(btag_logit[maskExist], dim=0)
-        #btag_logit = (btag_logit - mean_btag)/std_btag
+        btag_logit = (btag_logit - mean_btag)/std_btag
         btag_logit = btag_logit.unsqueeze(dim=2)
         scaledLogReco_sortedBySpanet = torch.cat((scaledLogReco_sortedBySpanet, btag_logit), dim=2)
+
+        # unscale phi for periodic flows
+        scaledLogReco_sortedBySpanet[...,3] = scaledLogReco_sortedBySpanet[...,3]*self.stdRecoParticles[...,2] + self.meanRecoParticles[...,2]
+
+        # missing jets -> phi & btag = -1
+        scaledLogReco_sortedBySpanet[:,:6,-1] = torch.where(~maskExist[:,:6], -1, scaledLogReco_sortedBySpanet[:,:6,-1])
+        scaledLogReco_sortedBySpanet[:,:6,3] = torch.where(~maskExist[:,:6], -1, scaledLogReco_sortedBySpanet[:,:6,3])
+
+        # padding jets as -100
+        scaledLogReco_sortedBySpanet[:,6:,-1] = torch.where(~maskExist[:,6:], -100, scaledLogReco_sortedBySpanet[:,6:,-1])
+        scaledLogReco_sortedBySpanet[:,6:,3] = torch.where(~maskExist[:,6:], -100, scaledLogReco_sortedBySpanet[:,6:,3])
+
+        # scale phi back
+        scaledLogReco_sortedBySpanet_phiScaled = torch.clone(scaledLogReco_sortedBySpanet)
+        scaledLogReco_sortedBySpanet_phiScaled[...,3] = (scaledLogReco_sortedBySpanet_phiScaled[...,3] - self.meanRecoParticles[...,2])/self.stdRecoParticles[...,2]
 
         # check pt != -100
         mask_scaledLogReco_sortedBySpanet = (scaledLogReco_sortedBySpanet[:,:,1] != -100).bool()
@@ -416,12 +468,98 @@ class Dataset_RecoLevel_NoBoost(Dataset):
 
         torch.save((mean_btag, std_btag), self.processed_file_names('mean_btag_logit'))
 
+        torch.save((scaledLogReco_sortedBySpanet_phiScaled, mask_scaledLogReco_sortedBySpanet, self.meanRecoParticles, self.stdRecoParticles),
+                    self.processed_file_names('scaledLogReco_sortedBySpanet_phiScaled'))
+
+    def sortJets_bySpanet_ptcut(self):
+        spanet_tensor = self.scaledLogRecoParticles[:,:16,4:7] # only jets
+        spanet_assignment = higgsAssignment_SPANET(spanet_values=spanet_tensor)
+        
+        # order H1, H2, thad1, thad2, thad3, tlep1, lepton, MET
+        scaledLogReco_sortedBySpanet = sortObjects_bySpanet(spanet_assignment=spanet_assignment, scaledLogReco=self.scaledLogRecoParticles_fullCartesian,
+                                               maskJets=self.mask_jets, order=[0, 1, 2])
+
+        # at this point the missing Spanet jets and the padding have -100 values
+        # 'scaledLogReco_sortedBySpanet' doesn't contain the 'exist' flag for each jet
+        exist = torch.where((scaledLogReco_sortedBySpanet[:,:,0] != -100), 1, 0).unsqueeze(dim=2)
+        # attach exist flag to each jet
+        scaledLogReco_sortedBySpanet = torch.cat((exist, scaledLogReco_sortedBySpanet), dim=2)
+
+        # check exist flag is ok
+        if torch.count_nonzero((scaledLogReco_sortedBySpanet[...,0]*scaledLogReco_sortedBySpanet[...,1]) == -100) > 0:
+            raise Exception("Check mask... this product must be 0")
+
+        # last part: modify the missing SPANET jets to be [-1...]
+        # keep padding jets as [-100...]
+        # take the first 6 spanet jets
+        scaledLogReco_sortedBySpanet[:,:6,:] = torch.where((scaledLogReco_sortedBySpanet[:,:6,:] == -100), -1, scaledLogReco_sortedBySpanet[:,:6,:])
+
+        # check if the change works (8 because lepton and MET are not -100)
+        if torch.count_nonzero(scaledLogReco_sortedBySpanet[:,:8,:] == -100) > 0:
+            raise Exception("Missing jets are still -100")
+
+        maskExist = scaledLogReco_sortedBySpanet[...,0] == 1
+
+        # add a column with (torch.logit(btag) - mean)/std
+        # save also mean and std
+        # I don't care about nans values -> these will be masked during training
+        btag_logit = torch.logit(scaledLogReco_sortedBySpanet[...,4], eps=0.002)
+        mean_btag = torch.mean(btag_logit[maskExist], dim=0)
+        std_btag = torch.std(btag_logit[maskExist], dim=0)
+        btag_logit = (btag_logit - mean_btag)/std_btag
+        btag_logit = btag_logit.unsqueeze(dim=2)
+        scaledLogReco_sortedBySpanet = torch.cat((scaledLogReco_sortedBySpanet, btag_logit), dim=2)
+
+        # unscale phi for periodic flows + unscale pt for cut
+        scaledLogReco_sortedBySpanet[...,[1,3]] = scaledLogReco_sortedBySpanet[...,[1,3]]*self.stdRecoParticles[...,[0,2]] + self.meanRecoParticles[...,[0,2]]
+        # unscale pt
+        scaledLogReco_sortedBySpanet[...,1] = torch.exp(scaledLogReco_sortedBySpanet[...,1]) - 1
+
+        min_pt_eachReco = torch.empty(0)
+
+        # substract minimum pt for every reco object (only exist object)
+        for i in range(scaledLogReco_sortedBySpanet.shape[1]):
+            maskReco = scaledLogReco_sortedBySpanet[:,i,0] == 1
+            
+            if torch.count_nonzero(maskReco) > 0:
+                print(torch.min(scaledLogReco_sortedBySpanet[:,i,1][maskReco]))
+                min_pt_eachReco = torch.cat((min_pt_eachReco, torch.Tensor([torch.min(scaledLogReco_sortedBySpanet[:,i,1][maskReco])])))
+                scaledLogReco_sortedBySpanet[:,i,1][maskReco] = scaledLogReco_sortedBySpanet[:,i,1][maskReco] - torch.min(scaledLogReco_sortedBySpanet[:,i,1][maskReco])
+
+            else:
+                min_pt_eachReco = torch.cat((min_pt_eachReco, torch.Tensor([-1])))
+                
+        scaledLogReco_sortedBySpanet[...,1] = torch.log(1 + scaledLogReco_sortedBySpanet[...,1])
+        mean_pt_cut = torch.mean(scaledLogReco_sortedBySpanet[...,1][maskExist])
+        std_pt_cut = torch.std(scaledLogReco_sortedBySpanet[...,1][maskExist])
+        meanReco_ptcut = torch.clone(self.meanRecoParticles)
+        stdReco_ptcut = torch.clone(self.stdRecoParticles)
+        meanReco_ptcut[0] = mean_pt_cut
+        stdReco_ptcut[0] = std_pt_cut
+
+        scaledLogReco_sortedBySpanet[...,1] = (scaledLogReco_sortedBySpanet[...,1] - meanReco_ptcut[0])/stdReco_ptcut[0]
+
+        # missing jets -> phi & btag = -1
+        scaledLogReco_sortedBySpanet[:,:6,-1] = torch.where(~maskExist[:,:6], -1, scaledLogReco_sortedBySpanet[:,:6,-1])
+        scaledLogReco_sortedBySpanet[:,:6,1] = torch.where(~maskExist[:,:6], -1, scaledLogReco_sortedBySpanet[:,:6,1])
+        scaledLogReco_sortedBySpanet[:,:6,3] = torch.where(~maskExist[:,:6], -1, scaledLogReco_sortedBySpanet[:,:6,3])
+
+        # padding jets as -100
+        scaledLogReco_sortedBySpanet[:,6:,-1] = torch.where(~maskExist[:,6:], -100, scaledLogReco_sortedBySpanet[:,6:,-1])
+        scaledLogReco_sortedBySpanet[:,6:,1] = torch.where(~maskExist[:,6:], -100, scaledLogReco_sortedBySpanet[:,6:,1])
+        scaledLogReco_sortedBySpanet[:,6:,3] = torch.where(~maskExist[:,6:], -100, scaledLogReco_sortedBySpanet[:,6:,3])
+
+        # check pt != -100
+        mask_scaledLogReco_sortedBySpanet = (scaledLogReco_sortedBySpanet[:,:,1] != -100).bool()
+        torch.save((scaledLogReco_sortedBySpanet, mask_scaledLogReco_sortedBySpanet, meanReco_ptcut, stdReco_ptcut, min_pt_eachReco),
+                    self.processed_file_names('scaledLogReco_sortedBySpanet_ptcut'))
+
     def sortJets_bySpanet_boxcox(self):
         spanet_tensor = self.scaledLogRecoParticles[:,:16,4:7] # only jets
         spanet_assignment = higgsAssignment_SPANET(spanet_values=spanet_tensor)
         
         # order H1, H2, thad1, thad2, thad3, tlep1, lepton, MET
-        scaledLogReco_sortedBySpanet = sortObjects_bySpanet(spanet_assignment=spanet_assignment, scaledLogReco=self.scaledLogRecoParticles,
+        scaledLogReco_sortedBySpanet = sortObjects_bySpanet(spanet_assignment=spanet_assignment, scaledLogReco=self.scaledLogRecoParticles_fullCartesian,
                                                maskJets=self.mask_jets, order=[0, 1, 2])
 
         # at this point the missing Spanet jets and the padding have -100 values
@@ -493,7 +631,7 @@ class Dataset_RecoLevel_NoBoost(Dataset):
         prov_tensor = self.scaledLogRecoParticles[:,:16,-1] # only jets
         
         # order H1, H2, thad1, thad2, thad3, tlep1, lepton, MET
-        scaledLogReco_sortedByProv = sortObjects_byProv(scaledLogReco=self.scaledLogRecoParticles,
+        scaledLogReco_sortedByProv = sortObjects_byProv(scaledLogReco=self.scaledLogRecoParticles_fullCartesian,
                                                maskJets=self.mask_jets, order=[0, 1, 2])
 
         # at this point the missing prov jets and the padding have -100 values

@@ -630,7 +630,8 @@ class FlatInvertiblePhasespace(VirtualPhaseSpaceGenerator):
         if ensure_CM:
             # Check if we are in the CM
             ref_lab = torch.sum(P, axis=1)
-            if not ((rho2_t(ref_lab) < 1e-3).any()):
+            print(rho2_t(ref_lab)[0:2])
+            if not ((rho2_t(ref_lab) < 1e-3).all()):
                 raise Exception("Momenta batch not in the CM, failing to convert back to PS point")
         
         # We start getting M and then K

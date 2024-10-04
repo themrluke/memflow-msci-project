@@ -29,6 +29,8 @@ class Dataset_PartonLevel(Dataset):
             "incoming_particles_boost": ["t", "x", "y", "z"],
             "lepton_partons": ["pt", "eta", "phi", "mass", "pdgId"],
             "H_thad_tlep_ISR": ["pt", "eta", "phi", "mass"],
+            "scaled_partons": ["pt", "eta", "phi", "prov"],
+            "scaled_leptons": ["pt", "eta", "phi", "pdgId"],
             "H_thad_tlep_ISR_cartesian": ["E", "px", "py", "pz"]
         }
 
@@ -57,18 +59,24 @@ class Dataset_PartonLevel(Dataset):
         # if build flag set or number of files in processed partons directory is 0
         if (build or len(os.listdir(self.rootDir + '/processed_partons/')) == 0):
 
-            (self.partons_boosted, self.leptons_boosted,
-            self.higgs_boosted, self.generator,
+            (self.partons_boosted, self.leptons_boosted, self.generator,
             self.gluon_ISR, self.boost) = self.get_PartonsAndLeptonsAndBoost()
 
-            for object_type in self.object_types:
-                print("Create new file for " + object_type)
-                if object_type == "H_thad_tlep_ISR":
-                    self.process_intermediateParticles()
-                elif object_type == "H_thad_tlep_ISR_cartesian":
-                    self.process_intermediateParticles_cartesian()
-                else:
-                    self.process(object_type)
+            self.process('partons')
+            self.process('boost')
+            self.process('lepton_partons')
+
+            self.process_intermediateParticles()
+            self.process_intermediateParticles_cartesian()
+
+            #for object_type in self.object_types:
+            #    print("Create new file for " + object_type)
+            #    if object_type == "H_thad_tlep_ISR":
+            #        self.process_intermediateParticles()
+            #    elif object_type == "H_thad_tlep_ISR_cartesian":
+            #        self.process_intermediateParticles_cartesian()
+            #    else:
+            #        self.process(object_type)
             
             # need these files for the next operations
             self.mask_boost, self.data_boost = torch.load(
@@ -104,6 +112,11 @@ class Dataset_PartonLevel(Dataset):
             print("Create new file for Log_H_thad_tlep_ISR")
             self.ProcessScaled()
 
+            print("Create new file for ScaledDecayProducts")
+            self.ProcessScaledDecayProducts()
+
+            
+
         print("Reading parton_level Files")
 
         self.mask_partons, self.data_partons = torch.load(
@@ -137,7 +150,7 @@ class Dataset_PartonLevel(Dataset):
             self.phasespace_rambo_detjacobian_onShell = torch.load(
                 self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
 
-        if 'phasespace_intermediateParticles_onShell_logit' in self.parton_list:
+        if 'phasespace_intermediateParticles_onShell_logit' or 'phasespace_intermediateParticles_onShell_logit_scaled' in self.parton_list:
             print("Load phasespace_intermediateParticles_onShell_logit")
             self.phasespace_intermediateParticles_onShell_logit = torch.load(
                 self.processed_file_names("phasespace_intermediateParticles_onShell_logit"))
@@ -175,6 +188,15 @@ class Dataset_PartonLevel(Dataset):
                 self.processed_file_names("Log_mean_std_H_thad_tlep_ISR_withEnergy"))
             self.logScaled_data_higgs_t_tbar_ISR_withEnergy = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR_withEnergy"))
+
+        if 'LogScaled_partonsLeptons' in self.parton_list or 'Log_mean_std_partonsLeptons' in self.parton_list:
+            print("Load LogScaled_partonsLeptons")
+            self.mean_log_partonsLeptons, self.std_log_partonsLeptons = torch.load(
+                self.processed_file_names("Log_mean_std_partonsLeptons"))
+            self.LogScaled_partonsLeptons = torch.load(
+                self.processed_file_names("LogScaled_partonsLeptons"))
+            self.mask_partonsLeptons = torch.load(
+                self.processed_file_names("mask_partonsLeptons"))
 
         if dtype != None:            
            for field in self.parton_list:
@@ -215,15 +237,12 @@ class Dataset_PartonLevel(Dataset):
             leptons = df["lepton_partons"]
             leptons = ak.with_name(leptons, name="Momentum4D")
 
-            higgs = df["higgs"]
-            higgs = ak.with_name(higgs, name="Momentum4D")[:,0] # for the new dataset format
-
             partons_boosted = self.boost_CM(partons, boost)
             leptons_boosted = self.boost_CM(leptons, boost)
-            higgs_boosted = self.boost_CM(higgs, boost)
+            #higgs_boosted = self.boost_CM(higgs, boost) REMOVE the higgs --> use the sum of the partons
             gluon_ISR_boosted = self.boost_CM(gluon, boost)
 
-        return partons_boosted, leptons_boosted, higgs_boosted, generator, gluon_ISR_boosted, boost
+        return partons_boosted, leptons_boosted, generator, gluon_ISR_boosted, boost
 
     def get_incoming_particles_boost(self, generator):
 
@@ -255,6 +274,7 @@ class Dataset_PartonLevel(Dataset):
 
         # Overwriting old pt by calling the function on the boosted object
         # overwrite objects_array because i dont like "objects_CM.type"
+        # objects_array["rho"] = objects_CM.pt
         objects_array["pt"] = objects_CM.pt
         objects_array["eta"] = objects_CM.eta
         objects_array["phi"] = objects_CM.phi
@@ -309,7 +329,7 @@ class Dataset_PartonLevel(Dataset):
                        self.processed_file_names(object_type))
 
     def process_intermediateParticles(self):
-        higgs = self.higgs_boosted
+        higgs = self.get_Higgs()
         top_hadronic = self.get_top_hadronic()
         top_leptonic = self.get_top_leptonic()
         gluon_ISR = self.gluon_ISR
@@ -342,7 +362,7 @@ class Dataset_PartonLevel(Dataset):
         torch.save(tensor_data, self.processed_file_names("H_thad_tlep_ISR"))
 
     def process_intermediateParticles_cartesian(self):
-        higgs = self.higgs_boosted
+        higgs = self.get_Higgs()
         top_hadronic = self.get_top_hadronic()
         top_leptonic = self.get_top_leptonic()
         gluon_ISR = self.gluon_ISR
@@ -523,6 +543,136 @@ class Dataset_PartonLevel(Dataset):
             "Log_mean_std_H_thad_tlep_ISR_withEnergy"))
         torch.save(scaledIntermediateParticles_withEnergy, self.processed_file_names(
             "LogScaled_H_thad_tlep_ISR_withEnergy"))
+
+    def ProcessScaledDecayProducts(self):
+        
+        # add here b jets from Higgs, thad, tlep
+        # order: # H, H1, H2, thad, thad1, tlep, tlep1, ISR
+        partons = self.partons_boosted
+
+        # first position always massive leptons, 2nd position = neutrino
+        leptons = self.leptons_boosted
+
+        # find partons with provenance 1 (b from Higgs decay)
+        prov1_partons = partons[partons.prov == 1]
+        # find partons with provenance 2 (b from top hadronic decay)
+        prov2_partons = partons[partons.prov == 2]
+        # find partons with provenance 3 (b from top leptonic decay)
+        prov3_partons = partons[partons.prov == 3]
+        # find partons with provenance 4 (ISR)
+        # sometimes there are events without ISR -> paddinng = partons with prov=-1 which are null
+        prov4_partons = partons[partons.prov == 4]
+        # find partons with provenance 5 (light q)
+        prov5_partons = partons[partons.prov == 5]
+        # find partons with provenance -1 (not matched) -> I don't need to add this in data
+        # because I will mask the missing partons (which are the ones with ISR)
+
+        partons = [prov1_partons, prov2_partons, prov3_partons, prov5_partons, prov4_partons, leptons]
+
+        for i, objects in enumerate(partons):
+
+            if i == 5:
+                # lepton case -> we don't have prov so we attach the pdgID
+                d_list = utils.to_flat_numpy(
+                    objects, self.fields["scaled_leptons"], axis=1, allow_missing=False)
+            else:
+                # case prov = 4 => ISR (sometimes missing)
+                if (i == 4):
+                    objects = self.Reshape(objects, utils.struct_gluon, 1)
+
+                d_list = utils.to_flat_numpy(
+                    objects, self.fields["scaled_partons"], axis=1, allow_missing=False)
+    
+            d_list = np.transpose(d_list, (0, 2, 1))
+
+            if i == 0:
+                intermediate_np = d_list
+            else:
+                intermediate_np = np.concatenate(
+                    (intermediate_np, d_list), axis=1)
+
+        tensor_partonsLeptons = torch.tensor(intermediate_np) # H1 H2 thad1 thad2
+        tensor_partonsLeptons_boxcox = torch.clone(tensor_partonsLeptons)
+        mask_partonsLeptons = (tensor_partonsLeptons[...,3] != -1).bool() # pt > 0
+        tensor_partonsLeptons[:,:,0] = torch.log(1 + tensor_partonsLeptons[:,:,0]) # take log of masked
+        # I don't care because I will mask these elems when I do any computations
+
+        mean_list = []
+        std_list = []
+        for i in range(3):
+            feature = tensor_partonsLeptons[...,i]
+            mean_feature = torch.mean(feature[mask_partonsLeptons]) # masked mean
+            std_feature = torch.std(feature[mask_partonsLeptons]) # masked std
+            mean_list.append(mean_feature)
+            std_list.append(std_feature)
+
+        mean_tensor_partonsLeptons = torch.Tensor(mean_list)
+        std_tensor_partonsLeptons = torch.Tensor(std_list)
+
+        parton_type = [1]* 7
+        parton_type = [*parton_type, 2, 2] # 1 for jets, 2 for leptons
+        parton_type = torch.Tensor(parton_type).unsqueeze(dim=1)
+        parton_type = parton_type.unsqueeze(dim=0).repeat(tensor_partonsLeptons.size(0),1,1)
+
+        tensor_partonsLeptons = torch.cat((tensor_partonsLeptons, parton_type), dim=2)
+        
+        tensor_partonsLeptons[:,:,:2] = \
+            (tensor_partonsLeptons[:,:,:2] - mean_tensor_partonsLeptons[None,None,:2])/std_tensor_partonsLeptons[None,None,:2]
+
+        # sort higgs and thad decay products (based on pt)
+        tensor_partonsLeptons = self.sort_pt(tensor_partonsLeptons)
+        # I don't need to modify the mask cuz ISR is in the same position
+        
+        torch.save((mean_tensor_partonsLeptons, std_tensor_partonsLeptons), self.processed_file_names(
+            "Log_mean_std_partonsLeptons"))
+        torch.save(tensor_partonsLeptons, self.processed_file_names(
+            "LogScaled_partonsLeptons"))
+        torch.save(mask_partonsLeptons, self.processed_file_names(
+            "mask_partonsLeptons"))
+
+
+    def sort_pt(self, tensor_AllPartons):
+        pt_0 = tensor_AllPartons[:,0,0]
+        pt_1 = tensor_AllPartons[:,1,0]
+
+        mask_higgs = pt_0 > pt_1
+
+        # sort higgs based on pt
+        tensor_AllPartons[:,[0,1]] = torch.where(mask_higgs[:,None,None],
+                                                    tensor_AllPartons[:,[0,1]],
+                                                    tensor_AllPartons[:,[1,0]])
+
+        #pt_2 = tensor_AllPartons[:,2,0]
+        #pt_4 = tensor_AllPartons[:,4,0]
+        
+        #mask_thad1 = pt_2 > pt_4        
+
+        # sort thad based on pt
+        #tensor_AllPartons[:,[2,4]] = torch.where(mask_thad1[:,None,None],
+        #                                            tensor_AllPartons[:,[2,4]],
+        #                                            tensor_AllPartons[:,[4,2]])
+
+        pt_4 = tensor_AllPartons[:,4,0]
+        pt_5 = tensor_AllPartons[:,5,0]
+        
+        mask_thad2 = pt_4 > pt_5 
+
+        # sort thad based on pt
+        tensor_AllPartons[:,[4,5]] = torch.where(mask_thad2[:,None,None],
+                                                    tensor_AllPartons[:,[4,5]],
+                                                    tensor_AllPartons[:,[5,4]])
+
+        #pt_2 = tensor_AllPartons[:,2,0]
+        #pt_4 = tensor_AllPartons[:,4,0]
+        
+        #mask_thad3 = pt_2 > pt_4        
+
+        # sort thad based on pt
+        #tensor_AllPartons[:,[2,4]] = torch.where(mask_thad3[:,None,None],
+        #                                            tensor_AllPartons[:,[2,4]],
+        #                                            tensor_AllPartons[:,[4,2]])
+
+        return tensor_AllPartons
         
         
     def get_Higgs(self):
@@ -631,7 +781,8 @@ class Dataset_PartonLevel(Dataset):
                               'mean_log_data_higgs_t_tbar_ISR',
                               'std_log_data_higgs_t_tbar_ISR',
                               'mean_phasespace_intermediateParticles_onShell_logit',
-                              'std_phasespace_intermediateParticles_onShell_logit']:
+                              'std_phasespace_intermediateParticles_onShell_logit',
+                              'Log_mean_std_partonsLeptons']:
                  out.append(getattr(self, field)[index])
         return out
 

@@ -95,12 +95,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             self.data_higgs_t_tbar_ISR_cartesian_onShell = torch.load(
                                     self.processed_file_names("H_thad_tlep_ISR_cartesian_onShell"))
 
-            print("Create new file for PhaseSpace + rambo detJacobian")
-            self.get_PS_intermediateParticles()
-
-            print("Create new file for PhaseSpace_onShell (no negative values)")
-            self.get_PS_intermediateParticles_onShell()
-
             print("Create new file for Log_H_thad_tlep_ISR_cartesian")
             self.ProcessCartesianScaled()
 
@@ -110,6 +104,8 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             print("Add log_scaled_Energy in the Log_H_thad_tlep_ISR")
             self.logScaled_data_higgs_t_tbar_ISR = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
+            self.logScaled_data_higgs_t_tbar_ISR_phiScaled = torch.load(
+                self.processed_file_names("LogScaled_H_thad_tlep_ISR_phiScaled"))
             logScaled_data_higgs_t_tbar_ISR_cartesian = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR_cartesian"))
             
@@ -123,6 +119,12 @@ class Dataset_PartonLevel_NoBoost(Dataset):
 
             print("Create new file for ScaledDecayProducts")
             self.ProcessScaledDecayProducts()
+
+            self.mean_log_data_higgs_t_tbar_ISR, self.std_log_data_higgs_t_tbar_ISR = torch.load(
+                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR"))
+
+            print("Create new file for ScaledDecayProducts_ptcut")
+            self.ProcessScaledDecayProducts_ptcut()
             
 
         print("Reading parton_level Files")
@@ -157,18 +159,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                 self.processed_file_names("H_thad_tlep_ISR_bPartons"))
             self.mean_log_data_higgs_t_tbar_ISR, self.std_log_data_higgs_t_tbar_ISR = torch.load(
                 self.processed_file_names("Log_mean_std_H_thad_tlep_ISR"))
-
-        if 'phasespace_intermediateParticles_onShell' in self.parton_list:
-            print("Load phasespace_intermediateParticles_onShell")
-            self.phasespace_intermediateParticles_onShell = torch.load(
-                self.processed_file_names("phasespace_intermediateParticles_onShell"))
-            self.phasespace_rambo_detjacobian_onShell = torch.load(
-                self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
-
-        if 'phasespace_rambo_detjacobian' in self.parton_list:
-            print("Load phasespace_rambo_detjacobian")
-            self.phasespace_rambo_detjacobian = torch.load(
-                self.processed_file_names("phasespace_rambo_detjacobian"))
     
         if 'logScaled_data_higgs_t_tbar_ISR_cartesian' in self.parton_list or 'mean_log_data_higgs_t_tbar_ISR_cartesian' in self.parton_list:
             print("Load logScaled_data_higgs_t_tbar_ISR_cartesian")
@@ -184,6 +174,13 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             self.logScaled_data_higgs_t_tbar_ISR = torch.load(
                 self.processed_file_names("LogScaled_H_thad_tlep_ISR"))
 
+        if 'logScaled_data_higgs_t_tbar_ISR_phiScaled' in self.parton_list:
+            print("Load logScaled_data_higgs_t_tbar_ISR_phiScaled")
+            self.mean_log_data_higgs_t_tbar_ISR, self.std_log_data_higgs_t_tbar_ISR = torch.load(
+                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR"))
+            self.logScaled_data_higgs_t_tbar_ISR_phiScaled = torch.load(
+                self.processed_file_names("LogScaled_H_thad_tlep_ISR_phiScaled"))
+
         if 'LogScaled_bPartons' in self.parton_list or 'Log_mean_std_bPartons' in self.parton_list:
             print("Load bPartons")
             self.mean_log_bPartons, self.std_log_bPartons = torch.load(
@@ -197,6 +194,15 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                 self.processed_file_names("Log_mean_std_partonsLeptons"))
             self.LogScaled_partonsLeptons = torch.load(
                 self.processed_file_names("LogScaled_partonsLeptons"))
+            self.mask_partonsLeptons = torch.load(
+                self.processed_file_names("mask_partonsLeptons"))
+
+        if 'LogScaled_partonsLeptons_phiScaled' in self.parton_list:
+            print("Load LogScaled_partonsLeptons_phiScaled")
+            self.mean_log_partonsLeptons, self.std_log_partonsLeptons = torch.load(
+                self.processed_file_names("Log_mean_std_partonsLeptons"))
+            self.LogScaled_partonsLeptons_phiScaled = torch.load(
+                self.processed_file_names("LogScaled_partonsLeptons_phiScaled"))
             self.mask_partonsLeptons = torch.load(
                 self.processed_file_names("mask_partonsLeptons"))
 
@@ -221,6 +227,37 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                 self.processed_file_names("tensor_AllPartons"))
             self.mask_AllPartons = torch.load(
                 self.processed_file_names("mask_AllPartons"))
+
+        if 'tensor_AllPartons_phiScaled' in self.parton_list:
+            print("Load tensor_AllPartons_phiScaled")
+            self.mean_log_data_higgs_t_tbar_ISR, self.std_log_data_higgs_t_tbar_ISR = torch.load(
+                self.processed_file_names("Log_mean_std_H_thad_tlep_ISR"))
+            self.mean_log_partonsLeptons, self.std_log_partonsLeptons = torch.load(
+                self.processed_file_names("Log_mean_std_partonsLeptons"))
+            self.tensor_AllPartons_phiScaled = torch.load(
+                self.processed_file_names("tensor_AllPartons_phiScaled"))
+            self.mask_AllPartons = torch.load(
+                self.processed_file_names("mask_AllPartons"))
+
+        if 'LogScaled_partonsLeptons_ptcut' in self.parton_list or 'Log_mean_std_partonsLeptons_ptcut' in self.parton_list:
+            print("Load LogScaled_partonsLeptons")
+            self.mean_log_partonsLeptons_ptcut, self.std_log_partonsLeptons_ptcut = torch.load(
+                self.processed_file_names("Log_mean_std_partonsLeptons_ptcut"))
+            self.LogScaled_partonsLeptons_ptcut = torch.load(
+                self.processed_file_names("LogScaled_partonsLeptons_ptcut"))
+            self.mask_partonsLeptons_ptcut = torch.load(
+                self.processed_file_names("mask_partonsLeptons_ptcut"))
+
+        if 'tensor_AllPartons_ptcut' in self.parton_list:
+            print("Load tensor_AllPartons")
+            self.mean_log_data_higgs_t_tbar_ISR_ptcut, self.std_log_data_higgs_t_tbar_ISR_ptcut = torch.load(
+                self.processed_file_names("mean_std_AllPartons_ptcut"))
+            self.mean_log_partonsLeptons_ptcut, self.std_log_partonsLeptons_ptcut = torch.load(
+                self.processed_file_names("Log_mean_std_partonsLeptons_ptcut"))
+            self.tensor_AllPartons_ptcut = torch.load(
+                self.processed_file_names("tensor_AllPartons_ptcut"))
+            self.mask_AllPartons_ptcut = torch.load(
+                self.processed_file_names("mask_AllPartons_ptcut"))
                           
         if 'logScaled_data_higgs_t_tbar_ISR_withEnergy' in self.parton_list or 'mean_logScaled_data_higgs_t_tbar_ISR_withEnergy' in self.parton_list:
             print("Load logScaled_data_higgs_t_tbar_ISR_withEnergy")
@@ -463,38 +500,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
 
         torch.save(tensor_cartesian_onShell, self.processed_file_names(
             "H_thad_tlep_ISR_cartesian_onShell"))
-
-
-    def get_PS_intermediateParticles_onShell(self):
-        E_CM = 13000
-        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
-        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], mass, dev="cpu")
-
-        incoming_p_boost = self.data_boost
-        x1 = (incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM
-        x2 = (incoming_p_boost[:, 0, 0] - incoming_p_boost[:, 0, 3]) / E_CM
-        ps, detjinv = phasespace.get_ps_from_momenta(
-            self.data_higgs_t_tbar_ISR_cartesian_onShell, x1, x2)
-    
-        torch.save(ps, self.processed_file_names(
-            "phasespace_intermediateParticles_onShell"))
-        torch.save(detjinv, self.processed_file_names("phasespace_rambo_detjacobian_onShell"))
-
-    def get_PS_intermediateParticles(self):
-
-        E_CM = 13000
-        mass = torch.Tensor([M_HIGGS, M_TOP, M_TOP, M_GLUON])
-        phasespace = PhaseSpace(E_CM, [21, 21], [25, 6, -6, 21], mass, dev="cpu")
-
-        incoming_p_boost = self.data_boost
-        x1 = (incoming_p_boost[:, 0, 0] + incoming_p_boost[:, 0, 3]) / E_CM
-        x2 = (incoming_p_boost[:, 0, 0] - incoming_p_boost[:, 0, 3]) / E_CM
-        ps, detjinv = phasespace.get_ps_from_momenta(
-            self.data_higgs_t_tbar_ISR_cartesian, x1, x2)
-    
-        torch.save(ps, self.processed_file_names(
-            "phasespace_intermediateParticles"))
-        torch.save(detjinv, self.processed_file_names("phasespace_rambo_detjacobian"))
         
         
     def change_to_cartesianCoordinates(self, objects):
@@ -544,9 +549,15 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         
         mean_LogIntermediateParticles = torch.mean(log_intermediateParticles, dim=(0,1))
         std_LogIntermediateParticles = torch.std(log_intermediateParticles, dim=(0,1))
+
+        scaledIntermediateParticles = torch.clone(log_intermediateParticles)
+
+        scaledIntermediateParticles_phiScaled = torch.clone(log_intermediateParticles)
+        scaledIntermediateParticles_phiScaled[...,:3] = \
+            (log_intermediateParticles[...,:3] - mean_LogIntermediateParticles[None,None,:])/std_LogIntermediateParticles[None,None,:]
         
-        scaledIntermediateParticles = \
-            (log_intermediateParticles - mean_LogIntermediateParticles[None,None,:])/std_LogIntermediateParticles[None,None,:]
+        scaledIntermediateParticles[...,:2] = \
+            (log_intermediateParticles[...,:2] - mean_LogIntermediateParticles[None,None,:2])/std_LogIntermediateParticles[None,None,:2]
         
         #torch.save(log_intermediateParticles, self.processed_file_names(
         #    "Log_H_thad_tlep_ISR"))
@@ -554,6 +565,7 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             "Log_mean_std_H_thad_tlep_ISR"))
         torch.save(scaledIntermediateParticles, self.processed_file_names(
             "LogScaled_H_thad_tlep_ISR"))
+        torch.save(scaledIntermediateParticles_phiScaled, self.processed_file_names("LogScaled_H_thad_tlep_ISR_phiScaled"))
 
         # Scaling also the boost
         boost_output = torch.cat((torch.from_numpy(self.boost.E.to_numpy()).unsqueeze(1),
@@ -676,12 +688,21 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         parton_type = parton_type.unsqueeze(dim=0).repeat(tensor_partonsLeptons.size(0),1,1)
 
         tensor_partonsLeptons = torch.cat((tensor_partonsLeptons, parton_type), dim=2)
+
+        tensor_partonsLeptons_phiScaled = torch.clone(tensor_partonsLeptons)
+        tensor_partonsLeptons_phiScaled[:,:,:3] = \
+            (tensor_partonsLeptons[:,:,:3] - mean_tensor_partonsLeptons[None,None,:])/std_tensor_partonsLeptons[None,None,:]
         
-        tensor_partonsLeptons[:,:,:3] = \
-            (tensor_partonsLeptons[:,:,:3] - mean_tensor_partonsLeptons[None,None,:3])/std_tensor_partonsLeptons[None,None,:3]
+        tensor_partonsLeptons[:,:,:2] = \
+            (tensor_partonsLeptons[:,:,:2] - mean_tensor_partonsLeptons[None,None,:2])/std_tensor_partonsLeptons[None,None,:2]
+
+        # sort higgs and thad decay products (based on pt)
+        tensor_partonsLeptons = self.sort_pt(tensor_partonsLeptons)
+        # I don't need to modify the mask cuz ISR is in the same position
         
         torch.save((mean_tensor_partonsLeptons, std_tensor_partonsLeptons), self.processed_file_names(
             "Log_mean_std_partonsLeptons"))
+        torch.save(tensor_partonsLeptons_phiScaled, self.processed_file_names("LogScaled_partonsLeptons_phiScaled"))
         torch.save(tensor_partonsLeptons, self.processed_file_names(
             "LogScaled_partonsLeptons"))
         torch.save(mask_partonsLeptons, self.processed_file_names(
@@ -691,17 +712,24 @@ class Dataset_PartonLevel_NoBoost(Dataset):
         # structure: [b_jet_index (like in decay_products), type]
         # type = 1 for jets, 2 for lepton/MET, 3 for high level parton (Higgs, t, tbar)
         parton_type = torch.Tensor([[[1,3], [2,3], [3,3], [4,3]]]).repeat(self.logScaled_data_higgs_t_tbar_ISR.size(0), 1, 1)
+        
         # attach parton type to our common higgs/tops tensor
         self.logScaled_data_higgs_t_tbar_ISR = torch.cat((self.logScaled_data_higgs_t_tbar_ISR, parton_type), dim=2)
+        self.logScaled_data_higgs_t_tbar_ISR_phiScaled = torch.cat((self.logScaled_data_higgs_t_tbar_ISR_phiScaled, parton_type), dim=2)
 
         # merge decay products and partons
-        tensor_AllPartons = torch.cat((tensor_partonsLeptons, self.logScaled_data_higgs_t_tbar_ISR), dim=1)
+        tensor_AllPartons = torch.cat((tensor_partonsLeptons, self.logScaled_data_higgs_t_tbar_ISR[:,:-1]), dim=1)
+        tensor_AllPartons_phiScaled = torch.cat((tensor_partonsLeptons_phiScaled, self.logScaled_data_higgs_t_tbar_ISR_phiScaled[:,:-1]), dim=1)
 
         # mask because sometimes the ISR is missing
-        mask_HttbarISR = torch.ones((self.logScaled_data_higgs_t_tbar_ISR.shape[:2]))
+        mask_HttbarISR = torch.ones((self.logScaled_data_higgs_t_tbar_ISR[:,:-1].shape[:2]))
         mask_AllPartons = torch.cat((mask_partonsLeptons, mask_HttbarISR), dim=1)
 
+        # sort higgs and thad decay products (based on pt)
+        tensor_AllPartons = self.sort_pt(tensor_AllPartons)
+
         torch.save(tensor_AllPartons, self.processed_file_names("tensor_AllPartons"))
+        torch.save(tensor_AllPartons_phiScaled, self.processed_file_names("tensor_AllPartons_phiScaled"))
         torch.save(mask_AllPartons, self.processed_file_names("mask_AllPartons"))
         
         # version with pt box cox
@@ -736,6 +764,189 @@ class Dataset_PartonLevel_NoBoost(Dataset):
             "tensor_partonsLeptons_boxcox"))
         torch.save(torch.Tensor([lambda_boxcox]), self.processed_file_names(
             "lambda_boxcox"))
+
+    def ProcessScaledDecayProducts_ptcut(self):
+        
+        # add here b jets from Higgs, thad, tlep
+        # order: # H, H1, H2, thad, thad1, tlep, tlep1, ISR
+        partons = self.partons
+
+        # first position always massive leptons, 2nd position = neutrino
+        leptons = self.leptons
+
+        # find partons with provenance 1 (b from Higgs decay)
+        prov1_partons = partons[partons.prov == 1]
+        # find partons with provenance 2 (b from top hadronic decay)
+        prov2_partons = partons[partons.prov == 2]
+        # find partons with provenance 3 (b from top leptonic decay)
+        prov3_partons = partons[partons.prov == 3]
+        # find partons with provenance 4 (ISR)
+        # sometimes there are events without ISR -> paddinng = partons with prov=-1 which are null
+        prov4_partons = partons[partons.prov == 4]
+        # find partons with provenance 5 (light q)
+        prov5_partons = partons[partons.prov == 5]
+        # find partons with provenance -1 (not matched) -> I don't need to add this in data
+        # because I will mask the missing partons (which are the ones with ISR)
+
+        partons = [prov1_partons, prov2_partons, prov3_partons, prov5_partons, prov4_partons, leptons]
+
+        for i, objects in enumerate(partons):
+
+            if i == 5:
+                # lepton case -> we don't have prov so we attach the pdgID
+                d_list = utils.to_flat_numpy(
+                    objects, self.fields["scaled_leptons"], axis=1, allow_missing=False)
+            else:
+                # case prov = 4 => ISR (sometimes missing)
+                if (i == 4):
+                    objects = self.Reshape(objects, utils.struct_gluon, 1)
+
+                d_list = utils.to_flat_numpy(
+                    objects, self.fields["scaled_partons"], axis=1, allow_missing=False)
+    
+            d_list = np.transpose(d_list, (0, 2, 1))
+
+            if i == 0:
+                intermediate_np = d_list
+            else:
+                intermediate_np = np.concatenate(
+                    (intermediate_np, d_list), axis=1)
+
+        tensor_partonsLeptons = torch.tensor(intermediate_np) # H1 H2 thad1 thad2
+        mask_partonsLeptons = (tensor_partonsLeptons[...,3] != -1).bool() # pt > 0
+        for i in range(tensor_partonsLeptons.shape[1]):
+            tensor_partonsLeptons[:,i,0][mask_partonsLeptons[:,i]] = tensor_partonsLeptons[:,i,0][mask_partonsLeptons[:,i]] - torch.min(tensor_partonsLeptons[:,i,0][mask_partonsLeptons[:,i]])
+        
+        tensor_partonsLeptons[:,:,0] = torch.log(1 + tensor_partonsLeptons[:,:,0]) # take log of masked
+        # I don't care because I will mask these elems when I do any computations
+
+        mean_list = []
+        std_list = []
+        for i in range(3):
+            feature = tensor_partonsLeptons[...,i]
+            mean_feature = torch.mean(feature[mask_partonsLeptons]) # masked mean
+            std_feature = torch.std(feature[mask_partonsLeptons]) # masked std
+            mean_list.append(mean_feature)
+            std_list.append(std_feature)
+
+        mean_tensor_partonsLeptons = torch.Tensor(mean_list)
+        std_tensor_partonsLeptons = torch.Tensor(std_list)
+
+        parton_type = [1]* 7
+        parton_type = [*parton_type, 2, 2] # 1 for jets, 2 for leptons
+        parton_type = torch.Tensor(parton_type).unsqueeze(dim=1)
+        parton_type = parton_type.unsqueeze(dim=0).repeat(tensor_partonsLeptons.size(0),1,1)
+
+        tensor_partonsLeptons = torch.cat((tensor_partonsLeptons, parton_type), dim=2)
+        
+        tensor_partonsLeptons[:,:,:2] = \
+            (tensor_partonsLeptons[:,:,:2] - mean_tensor_partonsLeptons[None,None,:2])/std_tensor_partonsLeptons[None,None,:2]
+
+        # sort higgs and thad decay products (based on pt)
+        tensor_partonsLeptons = self.sort_pt(tensor_partonsLeptons)
+        
+        torch.save((mean_tensor_partonsLeptons, std_tensor_partonsLeptons), self.processed_file_names(
+            "Log_mean_std_partonsLeptons_ptcut"))
+        torch.save(tensor_partonsLeptons, self.processed_file_names(
+            "LogScaled_partonsLeptons_ptcut"))
+        torch.save(mask_partonsLeptons, self.processed_file_names(
+            "mask_partonsLeptons_ptcut"))
+
+        # THIS PART BELOW IS REDUNDANT BECAUSE self.logScaled_data_higgs_t_tbar_ISR was already updated in the 
+        # method 'ProcessScaledDecayProducts' -> don't need to concatenate type anymore
+        
+        # version with AllPartons
+        # structure: [b_jet_index (like in decay_products), type]
+        # type = 1 for jets, 2 for lepton/MET, 3 for high level parton (Higgs, t, tbar)
+        #parton_type = torch.Tensor([[[1,3], [2,3], [3,3], [4,3]]]).repeat(self.logScaled_data_higgs_t_tbar_ISR.size(0), 1, 1)
+        # attach parton type to our common higgs/tops tensor
+        #self.logScaled_data_higgs_t_tbar_ISR = torch.cat((self.logScaled_data_higgs_t_tbar_ISR, parton_type), dim=2)
+
+        # merge decay products and partons
+        tensor_AllPartons = torch.cat((tensor_partonsLeptons, self.logScaled_data_higgs_t_tbar_ISR[:,:-1]), dim=1)
+
+        # take intermediate partons -> unscale pt -> substract min pt -> scale back
+        tensor_AllPartons[:, -3:, 0] =  tensor_AllPartons[:, -3:, 0]*self.std_log_data_higgs_t_tbar_ISR[0] + self.mean_log_data_higgs_t_tbar_ISR[0]
+        tensor_AllPartons[:, -3:, 0] = torch.exp(tensor_AllPartons[:, -3:, 0]) - 1
+
+        # substract min from intermediate partons pt
+        for i in range(3):
+            tensor_AllPartons[:, -3+i:, 0] = tensor_AllPartons[:, -3+i:, 0] - torch.min(tensor_AllPartons[:, -3+i:, 0])
+
+        # log pt
+        tensor_AllPartons[:,-3:,0] = torch.log(1 + tensor_AllPartons[:,-3:,0]) # take log of masked
+        # I don't care because I will mask these elems when I do any computations
+
+        # new mean and std of pt/eta/phi
+        mean_list = []
+        std_list = []
+        for i in range(3):
+            feature = tensor_AllPartons[...,-3:,i]
+            mean_feature = torch.mean(feature) # masked mean
+            std_feature = torch.std(feature) # masked std
+            mean_list.append(mean_feature)
+            std_list.append(std_feature)
+
+        mean_tensor_allPartons = torch.Tensor(mean_list)
+        std_tensor_AllPartons = torch.Tensor(std_list)
+
+        # scale results
+        tensor_AllPartons[:,-3:,:2] = \
+            (tensor_AllPartons[:,-3:,:2] - mean_tensor_allPartons[None,None,:2])/mean_tensor_allPartons[None,None,:2]
+
+        # mask because sometimes the ISR is missing
+        mask_HttbarISR = torch.ones((self.logScaled_data_higgs_t_tbar_ISR[:,:-1].shape[:2]))
+        mask_AllPartons = torch.cat((mask_partonsLeptons, mask_HttbarISR), dim=1)
+
+        # sort higgs and thad decay products (based on pt)
+        tensor_AllPartons = self.sort_pt(tensor_AllPartons)
+
+        torch.save(tensor_AllPartons, self.processed_file_names("tensor_AllPartons_ptcut"))
+        torch.save(mask_AllPartons, self.processed_file_names("mask_AllPartons_ptcut"))
+        torch.save((mean_tensor_allPartons, std_tensor_AllPartons), self.processed_file_names("mean_std_AllPartons_ptcut"))
+
+    def sort_pt(self, tensor_AllPartons):
+        pt_0 = tensor_AllPartons[:,0,0]
+        pt_1 = tensor_AllPartons[:,1,0]
+
+        mask_higgs = pt_0 > pt_1
+
+        # sort higgs based on pt
+        tensor_AllPartons[:,[0,1]] = torch.where(mask_higgs[:,None,None],
+                                                    tensor_AllPartons[:,[0,1]],
+                                                    tensor_AllPartons[:,[1,0]])
+
+        pt_2 = tensor_AllPartons[:,2,0]
+        pt_4 = tensor_AllPartons[:,4,0]
+        
+        mask_thad1 = pt_2 > pt_4        
+
+        # sort thad based on pt
+        tensor_AllPartons[:,[2,4]] = torch.where(mask_thad1[:,None,None],
+                                                    tensor_AllPartons[:,[2,4]],
+                                                    tensor_AllPartons[:,[4,2]])
+
+        pt_4 = tensor_AllPartons[:,4,0]
+        pt_5 = tensor_AllPartons[:,5,0]
+        
+        mask_thad2 = pt_4 > pt_5 
+
+        # sort thad based on pt
+        tensor_AllPartons[:,[4,5]] = torch.where(mask_thad2[:,None,None],
+                                                    tensor_AllPartons[:,[4,5]],
+                                                    tensor_AllPartons[:,[5,4]])
+
+        pt_2 = tensor_AllPartons[:,2,0]
+        pt_4 = tensor_AllPartons[:,4,0]
+        
+        mask_thad3 = pt_2 > pt_4        
+
+        # sort thad based on pt
+        tensor_AllPartons[:,[2,4]] = torch.where(mask_thad3[:,None,None],
+                                                    tensor_AllPartons[:,[2,4]],
+                                                    tensor_AllPartons[:,[4,2]])
+
+        return tensor_AllPartons
 
         
         
@@ -831,7 +1042,6 @@ class Dataset_PartonLevel_NoBoost(Dataset):
                     self.mask_boost[index], self.data_boost[index],
                     self.data_higgs_t_tbar_ISR[index], self.data_higgs_t_tbar_ISR_cartesian[index],
                     self.phasespace_intermediateParticles[index],
-                    self.phasespace_rambo_detjacobian[index],
                     self.log_data_higgs_t_tbar_ISR_cartesian[index],
                     # no index for mean/std because size is [4]
                     self.mean_log_data_higgs_t_tbar_ISR_cartesian, self.std_log_data_higgs_t_tbar_ISR_cartesian,

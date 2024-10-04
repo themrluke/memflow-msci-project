@@ -58,12 +58,13 @@ def sum_vectors_all(arrays):
 
 def get_vector_sum(vectors):
     out = sum_vectors_all(vectors)
-    return vector.awk({
-        "px": out[:, 0],
-        "py": out[:, 1],
-        "pz": out[:, 2],
-        "E": out[:, 3],
-    })
+    
+    return vector.awk([{
+        "px": out[i, 0],
+        "py": out[i, 1],
+        "pz": out[i, 2],
+        "E": out[i, 3],
+    } for i in range(len(out))])
 
 
 def to_flat_numpy(X, fields, axis=1, allow_missing=False):
