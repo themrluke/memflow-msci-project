@@ -205,6 +205,7 @@ class RecoDoubleLepton(Base,RecoDataset):
                     names = ['jets','electrons','muons','met'],
                     scaler_dict = {
                         'pt' : logmodulus(),
+                        'mass' : logmodulus(),
                     },
                 )
             )
@@ -213,14 +214,14 @@ class RecoDoubleLepton(Base,RecoDataset):
                     names = ['jets','electrons','muons','met'],
                     scaler_dict = {
                         'pt'   : SklearnScaler(preprocessing.StandardScaler()),
-                        'eta'  : SklearnScaler(preprocessing.StandardScaler()),
-                        'phi'  : SklearnScaler(preprocessing.StandardScaler()),
-                        'm'    : SklearnScaler(preprocessing.StandardScaler()),
+                        'eta'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                        'phi'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                        'mass' : SklearnScaler(preprocessing.StandardScaler()),
                     },
                     fields_select = [
-                        ('pt','eta','phi','m'),
-                        ('pt','eta','phi','m'),
-                        ('pt','eta','phi','m'),
+                        ('pt','eta','phi','mass'),
+                        ('pt','eta','phi','mass'),
+                        ('pt','eta','phi','mass'),
                         ('pt','phi'),
                     ]
                 )

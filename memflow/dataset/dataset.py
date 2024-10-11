@@ -17,9 +17,152 @@ from particle import Particle
 from torch.utils.data import Dataset
 
 from memflow.read_data import utils
-from memflow.dataset.data import get_intersection_indices
+from memflow.dataset.data import AbsData, get_intersection_indices
 from memflow.dataset.preprocessing import PreprocessingPipeline, PreprocessingStep
 from memflow.phasespace.phasespace import PhaseSpace
+
+
+class AcceptanceDataset(Dataset):
+    """
+        Dataset to train the efficiency on gen events, knowing whether they have been selected in the reco dataset
+    """
+    def __init__(self,gen_dataset,reco_data,intersection_branch=None):
+        self.gen_dataset = gen_dataset
+        self.reco_data = reco_data
+        self.intersection_branch = intersection_branch
+
+        #assert isinstance(self.gen_dataset,GenDataset)
+        #assert isinstance(self.reco_data,AbsData)
+
+        # Obtain the gen indices that are mathed to reco #
+        if self.intersection_branch is None:
+            pass
+            ## Assume the trees are the same for both reco and gen,
+            ## will just check their length
+            #if self.gen_dataset.data is not self.reco_dataset.data:
+            #    raise RuntimeError('Not the same `data` for reco and gen datasets, you should use `intersection_branch` to help resolve ambiguities')
+            #assert len(self.gen_dataset) == len(self.reco_dataset), f'Different number of entries between gen ({len(self.gen_dataset)}) compared to reco ({len(self.reco_dataset)})'
+            #self.N = len(self.gen_dataset)
+        else:
+            self.selected_idx, _ = get_intersection_indices(
+                datas = [self.gen_dataset.data,self.reco_data],
+                branch = self.intersection_branch,
+            )
+            # selected_idx are the gen events that are reconstructed in the reco dataset -> they passed the selections
+
+        # Get input #
+        self.inputs = [
+                self.gen_dataset._objects[name][0]
+                for name in self.gen_dataset.selection
+        ]
+        shapes = [inp[:,0,:].shape for inp in self.inputs] # check the #events and #features between inputs
+        if len(set(shapes)) > 1:
+            raise RuntimeError('Mismatch in shapes : '+', '.join([f'{name} = {shape}' for name,shape in zip(self.gen_dataset.selection,shapes)]))
+        self.inputs = torch.cat(self.inputs,dim=1)
+
+        # Make target #
+        self.targets = torch.zeros((len(self),1))
+        self.targets[self.selected_idx] = 1
+        #self.targets = self.targets.to(torch.long)
+
+    def __len__(self):
+        return len(self.gen_dataset)
+
+    def __getitem__(self, index):
+        """ Returns the gen-level variables and targets """
+        return self.inputs[index],self.targets[index]
+
+    @property
+    def number_objects(self):
+        return self.inputs.shape[1]
+
+    @property
+    def dim_features(self):
+        return self.inputs.shape[2]
+
+class MultiplicityDataset(Dataset):
+    """
+        Dataset to train the reco jet multiplicity on gen events
+    """
+    def __init__(self,gen_dataset,reco_data,intersection_branch,use_weights=False):
+        self.gen_dataset = gen_dataset
+        self.reco_data = reco_data
+        self.intersection_branch = intersection_branch
+        self.use_weights = use_weights
+
+        #assert isinstance(self.gen_dataset,GenDataset)
+        #assert isinstance(self.reco_data,AbsData)
+
+        # Get indices for gen and reco #
+        self.selected_idx, self.reco_idx = get_intersection_indices(
+            datas = [self.gen_dataset.data,self.reco_data],
+            branch = self.intersection_branch,
+        )
+        # selected_idx are the gen events that are reconstructed in the reco dataset -> they passed the selections
+
+        # Get number of jets #
+        jet_mask = torch.cat(
+            [
+                torch.tensor((self.reco_data[f'j{i}_E'] > 0).to_numpy()).unsqueeze(1)
+                for i in range(1,10)
+            ]
+            ,
+            dim = 1,
+        )[self.reco_idx,...]
+        N_jets = jet_mask.sum(dim=1)
+
+        # Make inputs #
+        # Get input #
+        self.inputs = [
+                self.gen_dataset._objects[name][0][self.selected_idx]
+                for name in self.gen_dataset.selection
+        ]
+        shapes = [inp[:,0,:].shape for inp in self.inputs] # check the #events and #features between inputs
+        if len(set(shapes)) > 1:
+            raise RuntimeError('Mismatch in shapes : '+', '.join([f'{name} = {shape}' for name,shape in zip(self.gen_dataset.selection,shapes)]))
+        self.inputs = torch.cat(self.inputs,dim=1)
+
+        # Make target #
+        self.targets = torch.nn.functional.one_hot(N_jets).to(torch.float32)
+
+        # Make weights #
+        if self.use_weights:
+            # Generate weight per multiplicity #
+            w = torch.nan_to_num(
+                input = 1/torch.sum(self.targets,dim=0),
+                nan = 0.,
+                posinf = 0.,
+                neginf = 0.,
+            )
+            w = torch.arange(0,self.targets.shape[1],1).to(torch.float32)**5
+            print (w)
+            # Repeat for each mult then select the corresponding one #
+            w = w.unsqueeze(0).repeat_interleave(len(self),dim=0)
+            self.weights = w[self.targets>0]
+            # Rescale to sum of events #
+            self.weights *= len(self) / self.weights.sum()
+        else:
+            self.weights = torch.ones_like(self.targets)
+
+    def __len__(self):
+        return self.inputs.shape[0]
+
+    def __getitem__(self, index):
+        """ Returns the gen-level variables and targets """
+        return self.inputs[index],self.targets[index], self.weights[index]
+
+    @property
+    def max_length(self):
+        return self.targets.shape[1]
+
+    @property
+    def number_objects(self):
+        return self.inputs.shape[1]
+
+    @property
+    def dim_features(self):
+        return self.inputs.shape[2]
+
 
 
 class CombinedDataset(Dataset):
@@ -81,6 +224,9 @@ class CombinedDataset(Dataset):
             }
 
     def find_indices(self,reco_masks=[],gen_masks=[]):
+        """
+            Find the indices in the combined dataset that correspond to masks in both reco and gen masks
+        """
         # safety checks #
         for i,gen_mask in enumerate(gen_masks):
             assert len(gen_mask) == self.gen_dataset.data.events, f'Gen mass entry {i} has length {len(gen_mask)} but gen data object has {self.gen_dataset.data.events} events'
@@ -528,7 +674,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             props = mask.sum(axis=0) / mask.shape[0] * 100
             prop_str = ', '.join([f'{prop:3.2f}%' if prop>=0.01 else '<0.01%' for prop in props])
             w_sum = weights.sum(dim=0)
-            w_str = ', '.join([f'{ws:2f}' for ws in w_sum])
+            w_str = ', '.join([f'{ws:.2f}' for ws in w_sum])
             s += f'\n{name:{names_len}s} : data ({list(data.shape)}), mask ({list(mask.shape)})'
             s += f'\n{" "*names_len}   Mask exist    : [{prop_str}]'
             s += f'\n{" "*names_len}   Mask corr     : {self.object_correlation_mask(name)}'
