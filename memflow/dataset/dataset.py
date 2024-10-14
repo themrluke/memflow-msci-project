@@ -142,7 +142,7 @@ class MultiplicityDataset(Dataset):
             # Rescale to sum of events #
             self.weights *= len(self) / self.weights.sum()
         else:
-            self.weights = torch.ones_like(self.targets)
+            self.weights = torch.ones((len(self)))
 
     def __len__(self):
         return self.inputs.shape[0]

@@ -13,9 +13,7 @@ import zuko
 from zuko.distributions import BoxUniform
 from zuko.distributions import DiagNormal
 
-from memflow.transfer_flow.periodicNSF_gaussian import NCSF_gaussian
-from memflow.transfer_flow.NCSF_custom import UniformNCSF, UniformNSF
-from memflow.transfer_flow.utils import lowercase_recursive
+from memflow.models.utils import lowercase_recursive
 
 class TransferFlow(L.LightningModule):
     def __init__(
@@ -29,11 +27,13 @@ class TransferFlow(L.LightningModule):
         reco_particle_type_names,
         reco_input_features_per_type,
         flow_input_features,
-        autoregressive_mode,
         reco_mask_corr,
         gen_mask_corr,
+        flow_mode,
         transformer_args = {},
-        flow_args = {},
+        flow_common_args = {},
+        flow_classes = {},
+        flow_specific_args = {},
         onehot_encoding = False,
         optimizer = None,
         scheduler_config = None,
@@ -53,8 +53,11 @@ class TransferFlow(L.LightningModule):
         self.reco_input_features_per_type = lowercase_recursive(reco_input_features_per_type)
 
         self.flow_input_features = lowercase_recursive(flow_input_features)
-        self.autoregressive_mode = lowercase_recursive(autoregressive_mode)
-        assert self.autoregressive_mode in ['type','particle','global']
+        self.flow_mode = lowercase_recursive(flow_mode)
+        self.flow_common_args = flow_common_args
+        self.flow_classes = flow_classes
+        self.flow_specific_args = flow_specific_args
+        assert self.flow_mode in ['type','particle','global']
 
         self.reco_mask_corr = torch.cat((torch.tensor([True]),reco_mask_corr),dim=0) # Adding True at index=0 for null token
         self.gen_mask_corr  = gen_mask_corr
@@ -92,11 +95,12 @@ class TransferFlow(L.LightningModule):
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(sum(self.n_reco_particles_per_type)+1)
 
         # Define flows #
-        if 'context' in flow_args:
+        if 'context' in self.flow_common_args:
             print (f'Flow args: will override `context` depending on the flow features for each object')
-        if 'features' in flow_args:
+            del self.flow_common_args['context']
+        if 'features' in self.flow_common_args:
             print (f'Flow args: will override `features` to 1, as our model has 1D flows')
-        flow_args['features'] = 1
+        self.flow_common_args['features'] = 1
 
         self.flows = nn.ModuleList()
         self.flow_indices = []
@@ -106,24 +110,24 @@ class TransferFlow(L.LightningModule):
             indices = [reco_features.index(feature) for feature in flow_features]
             self.flow_indices.append(indices)
             self.global_flow_features.extend([feat for feat in flow_features if feat not in self.global_flow_features])
-            if self.autoregressive_mode == 'global':
+            if self.flow_mode == 'global':
                 continue
-            if self.autoregressive_mode == 'type':
+            if self.flow_mode == 'type':
                 # we use a single flow for all the particles of that type
                 n_flows = 1
-            if self.autoregressive_mode == 'particle':
+            if self.flow_mode == 'particle':
                 # If mode is particles, we use a flow for each particles
                 n_flows = n
             self.flows.append(
                 nn.ModuleList(
                     [
-                        self.make_flows(flow_features,flow_args,self.embed_dim)
+                        self.make_flows(flow_features)
                         for _ in range(n_flows)
                     ]
                 )
             )
-        if self.autoregressive_mode == 'global':
-            self.flows.append(self.make_flows(self.global_flow_features,flow_args,self.embed_dim))
+        if self.flow_mode == 'global':
+            self.flows.append(self.make_flows(self.global_flow_features))
 
     def make_embeddings(self,input_features,onehot_dim=0):
         feature_embeddings = {}
@@ -148,34 +152,39 @@ class TransferFlow(L.LightningModule):
             embeddings.append(embedding)
         return embeddings
 
-    def make_flows(self,features,flow_args,embed_dim):
+    def make_flows(self,features):
         flows = nn.ModuleDict()
-        add_args = {}
         for feature in features:
+            # Find class #
+            if feature not in self.flow_classes.keys():
+                raise NotImplementedError(f'No class found for feature {feature}')
+            flow_cls = self.flow_classes[feature]
+            # Specific args #
+            if feature in self.flow_specific_args.keys():
+                add_args = self.flow_specific_args[feature]
+            else:
+                add_args = {}
+            # Modify context based on feature #
             if feature == 'pt':
-                flow_cls = zuko.flows.NSF
                 context_dim = sum([other_feat == feat for other_feat in ['eta','phi'] for feat in features])
                 # include reco phi + reco eta (if present)
             elif feature == 'eta':
-                flow_cls = UniformNSF
-                add_args['bound'] = 1.
-                #flow_cls = zuko.flows.NSF
                 context_dim = sum([other_feat == feat for other_feat in ['pt','phi'] for feat in features])
                 # include latent pt + reco phi (if present)
             elif feature == 'phi':
-                #flow_cls = NCSF_gaussian
-                flow_cls = UniformNCSF
-                add_args['bound'] = 1.
                 context_dim = sum([other_feat == feat for other_feat in ['pt','eta'] for feat in features])
                 # include latent pt + latent eta (if present)
             elif feature == 'mass' or feature == 'm':
-                flow_cls = zuko.flows.NSF
                 context_dim = sum([other_feat == feat for other_feat in ['pt','eta','phi'] for feat in features])
                 # include latent pt+eta+phi (if present)
             else:
                 raise NotImplementedError(f'This model does not include feature {feature}')
-            flow_args['context'] = embed_dim + context_dim
-            flows[feature] = flow_cls(**flow_args,**add_args)
+            # Initialise #
+            flows[feature] = flow_cls(
+                context = self.embed_dim + context_dim,
+                **self.flow_common_args,
+                **add_args,
+            )
         return flows
 
 
@@ -324,7 +333,7 @@ class TransferFlow(L.LightningModule):
         samples = []
 
         # Loop over global features #
-        if self.autoregressive_mode == 'global':
+        if self.flow_mode == 'global':
             condition_decoder = torch.cat(conditions,dim=1)
             samples_features = []
             global_feature_values = []
@@ -417,7 +426,7 @@ class TransferFlow(L.LightningModule):
                 if mode == 'sample':
                     particles = []
                 # For type mode, we use the condition of all particles in that type #
-                if self.autoregressive_mode == 'type':
+                if self.flow_mode == 'type':
                     condition_features = reco_data[i][:,:,flow_indices]
                     condition_decoder = conditions[i]
                     # Note : for the type mode, we apply it for all particles -> no need for particle loop
@@ -461,7 +470,7 @@ class TransferFlow(L.LightningModule):
                             particles.append(flow(condition).sample((N,)))
                         # Update the condition feature by the latent (transformed) feature
                         condition_features[...,k] = flow(condition).transform(condition_features[...,k].unsqueeze(-1)).squeeze(-1)
-                if self.autoregressive_mode == 'particle':
+                if self.flow_mode == 'particle':
                     # Loop over particles #
                     particles_type = []
                     for j in range(n):
