@@ -1,6 +1,6 @@
 import torch
 from zuko.flows.autoregressive import MAF
-from zuko.flows import Unconditional
+from zuko.flows import UnconditionalDistribution
 from zuko.distributions import BoxUniform
 from zuko.transforms import CircularShiftTransform, ComposedTransform, MonotonicRQSTransform
 from functools import partial
@@ -40,7 +40,7 @@ class UniformNCSF(MAF):
             **kwargs,
         )
 
-        self.base = Unconditional(
+        self.base = UnconditionalDistribution(
             BoxUniform,
             #torch.full((features,), -bound - 1e-5),
             #torch.full((features,), bound + 1e-5),
@@ -67,7 +67,7 @@ class UniformNSF(MAF):
             **kwargs,
         )
 
-        self.base = Unconditional(
+        self.base = UnconditionalDistribution(
             BoxUniform,
             torch.full((features,), -bound - 1e-5),
             torch.full((features,), bound + 1e-5),
