@@ -1,0 +1,282 @@
+import math
+import torch
+from tqdm import tqdm
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+import lightning as L
+from lightning.pytorch.callbacks import Callback
+
+class BaseCallback(Callback):
+    def __init__(self,dataset,frequency=1,raw=False,bins=None,log_scale=False,device=None,batch_size=1024):
+        super().__init__()
+
+        # Attributes #
+        self.dataset = dataset
+        self.loader = DataLoader(dataset,batch_size=batch_size,shuffle=False)
+        self.frequency = frequency
+        self.raw = raw
+        self.bins = bins
+        self.log_scale = log_scale
+        self.device = device
+
+    def on_validation_epoch_end(self,trainer,pl_module):
+        if trainer.sanity_checking:  # optional skip
+            return
+        if trainer.current_epoch % self.frequency != 0:
+           return
+
+        # Get figures #
+        figs = self.make_plots(pl_module,disable_tqdm=True,show=False)
+
+        # Log them #
+        for figure_name,figure in figs.items():
+            trainer.logger.experiment.log_figure(
+                figure_name = figure_name,
+                figure = figure,
+                overwrite = True,
+                step = trainer.current_epoch,
+            )
+            plt.close(figure)
+
+    def predict(self,model,disable_tqdm=False):
+        # Select device #
+        if self.device is None:
+            device = model.device
+        else:
+            device = self.device
+        model = model.to(device)
+
+        # Loop over batch #
+        inputs = []
+        targets = []
+        preds = []
+        for batch_idx, batch in tqdm(enumerate(self.loader,1),desc='Predict',disable=disable_tqdm,leave=True,total=len(self.loader),position=0):
+            # Predict #
+            x = batch[0]
+            t = batch[1]
+            x = x.to(device)
+            with torch.no_grad():
+                y = model(x)
+
+            # Record #
+            inputs.append(x.cpu())
+            targets.append(t.cpu())
+            preds.append(y.cpu())
+
+        # Concat #
+        inputs = torch.cat(inputs,dim=0)
+        targets = torch.cat(targets,dim=0)
+        preds = torch.cat(preds,dim=0)
+
+        return inputs, targets, preds
+
+    def make_plots(self,model,show=True,disable_tqdm=False):
+        inputs, targets, preds = self.predict(model,disable_tqdm)
+
+        figs = {}
+
+        # target vs preds plots #
+        if hasattr(self,'make_prediction_plots') and callable(self.make_prediction_plots):
+            figs.update(self.make_prediction_plots(targets,preds,bins=self.bins,log_scale=self.log_scale))
+
+        # make per particle plots #
+        figs.update(self.make_particle_plots(inputs,targets,preds))
+
+        if show:
+            plt.show()
+
+        return figs
+
+    def make_particle_plots(self,inputs,targets,preds):
+        if not hasattr(self,'plot_particle') or not callable(self.plot_particle):
+            return {}
+
+        # Make figure plots #
+        figs = {}
+        n_gens = self.dataset.gen_dataset.number_particles_per_type
+        features_per_type = self.dataset.gen_dataset.input_features
+        particle_names = self.dataset.gen_dataset.selection
+
+        # Loop over particle types #
+        idxs = np.r_[0,np.cumsum(n_gens)]
+        for j,(idx_i,idx_f) in enumerate(zip(idxs[:-1],idxs[1:])):
+            features = features_per_type[j]
+            name = particle_names[j]
+            inputs_type = inputs[:,idx_i:idx_f,:]
+
+            # Preprocessing #
+            if self.raw:
+                preprocessing = self.dataset.gen_dataset._preprocessing
+                name = self.dataset.gen_dataset.selection[j]
+                fields = self.dataset.gen_dataset._fields[name]
+                inputs_type = preprocessing.inverse(
+                    name = name,
+                    x = inputs_type,
+                    mask = torch.ones((inputs_type.shape[0],inputs_type.shape[1])),
+                    fields = fields,
+                )
+
+            # Loop over particles within type #
+            for i in range(idx_f-idx_i):
+                fig = self.plot_particle(
+                    inputs = inputs_type[:,i,:],
+                    targets = targets,
+                    preds = preds,
+                    features = features,
+                    bins = self.bins,
+                    log_scale = self.log_scale,
+                    title = f'{name} #{i}'
+                )
+                figure_name = f'{name}_{i}'
+                figs[figure_name] = fig
+
+        return figs
+
+
+
+
+
+class AcceptanceCallback(BaseCallback):
+    def __init__(self,**kwargs):
+        super().__init__(**kwargs)
+
+    @staticmethod
+    def plot_particle(inputs,targets,preds,features,bins,log_scale,title):
+        N = len(features)
+        fig,axs = plt.subplots(ncols=N,nrows=1,figsize=(5*N,4))
+        plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.3)
+        mask = (targets > 0).ravel()
+
+        plt.suptitle(title)
+        for i in range(N):
+            # Make histogram of selected events only #
+            content_selected, bins_feat = np.histogram(inputs[mask,i],bins=bins)
+            # Make histogram of all gen events #
+            content_feat, _ = np.histogram(inputs[:,i],bins=bins_feat)
+            # Make histogram of prediction #
+            content_pred_weighted, _ = np.histogram(inputs[:,i],bins=bins_feat,weights=preds.ravel())
+            content_pred_tot, _ = np.histogram(inputs[:,i],bins=bins_feat)
+            with np.errstate(divide='ignore'):
+                # Make histogram of acceptance (true) #
+                content_acc = np.nan_to_num(content_selected / content_feat, nan=0.)
+                #https://indico.cern.ch/event/66256/contributions/2071577/attachments/1017176/1447814/EfficiencyErrors.pdf
+                k = content_selected
+                n = content_feat
+                var_acc = (k+1)*(k+2)/(n+2)/(n+3) - (k+1)**2/(n+2)**2
+                # Make histogram of acceptance (pred) #
+                content_pred_avg = np.nan_to_num(content_pred_weighted / content_pred_tot)
+
+            # Plot #
+            axs[i].stairs(
+                values = content_acc,
+                edges = bins_feat,
+                color = 'b',
+                label = 'Truth',
+            )
+            axs[i].fill_between(
+                x = bins_feat[:-1],
+                y1 = content_acc-var_acc,
+                y2 = content_acc+var_acc,
+                where = content_selected > 0,
+                color = 'b',
+                alpha = 0.5,
+                step = 'post',
+            )
+            axs[i].stairs(
+                values = content_pred_avg,
+                edges = bins_feat,
+                color = 'orange',
+                label = 'Classifier',
+            )
+
+            # Esthetic #
+            axs[i].set_xlabel(features[i])
+            axs[i].set_ylabel('Acceptance')
+            axs[i].set_ylim(0,None)
+            axs[i].legend()
+
+        return fig
+
+
+
+class MultiplicityCallback(BaseCallback):
+    def __init__(self,**kwargs):
+        super().__init__(**kwargs)
+
+    @staticmethod
+    def plot_particle(inputs,targets,preds,features,bins,log_scale,title):
+        N = len(features)
+        fig,axs = plt.subplots(ncols=N,nrows=2,figsize=(5*N,8))
+        plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.3,hspace=0.3)
+
+        mult_true = torch.where(targets)[1]
+        mult_pred = torch.argmax(preds,dim=1)
+        N_max = targets.shape[1]
+        bins_mult = torch.arange(0,N_max+1,1)
+
+        plt.suptitle(title)
+        for i in range(N):
+            h1 = axs[0,i].hist2d(
+                inputs[:,i],
+                mult_true,
+                bins = (bins,bins_mult),
+                norm = matplotlib.colors.LogNorm() if log_scale else None,
+            )
+            plt.colorbar(h1[3],ax=axs[0,i])
+            h2 = axs[1,i].hist2d(
+                inputs[:,i],
+                mult_pred,
+                bins = (bins,bins_mult),
+                norm = matplotlib.colors.LogNorm() if log_scale else None,
+            )
+            plt.colorbar(h2[3],ax=axs[1,i])
+
+            axs[0,i].set_xlabel(features[i])
+            axs[1,i].set_xlabel(features[i])
+            axs[0,i].set_ylabel('Multiplicity')
+            axs[1,i].set_ylabel('Multiplicity')
+
+        return fig
+
+
+
+    @staticmethod
+    def make_prediction_plots(targets,preds,bins,log_scale):
+        fig,ax = plt.subplots(ncols=1,nrows=1,figsize=(5,4))
+        plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.3)
+
+        mult_true = torch.where(targets)[1]
+        mult_pred = torch.argmax(preds,dim=1)
+
+        N_max = targets.shape[1]
+        bins = torch.arange(0,N_max+1,1)
+
+        ax.hist(
+            mult_true,
+            bins = bins,
+            color = 'b',
+            label = 'Truth',
+            histtype= 'step',
+        )
+        ax.hist(
+            mult_pred,
+            bins = bins,
+            color = 'orange',
+            label = 'Classifier',
+            histtype= 'step',
+        )
+
+        # Esthetic #
+        if log_scale:
+            ax.set_yscale('log')
+            ax.set_ylim(1e-1,None)
+        else:
+            ax.set_ylim(0,None)
+        ax.set_xlabel('Multiplicity')
+        ax.legend()
+
+        return {'multiplicity':fig}
+
+
