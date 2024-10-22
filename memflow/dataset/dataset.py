@@ -24,40 +24,40 @@ from memflow.phasespace.phasespace import PhaseSpace
 
 class AcceptanceDataset(Dataset):
     """
-        Dataset to train the efficiency on gen events, knowing whether they have been selected in the reco dataset
+        Dataset to train the efficiency on hard events, knowing whether they have been selected in the reco dataset
     """
-    def __init__(self,gen_dataset,reco_data,intersection_branch=None):
-        self.gen_dataset = gen_dataset
+    def __init__(self,hard_dataset,reco_data,intersection_branch=None):
+        self.hard_dataset = hard_dataset
         self.reco_data = reco_data
         self.intersection_branch = intersection_branch
 
-        #assert isinstance(self.gen_dataset,GenDataset)
-        #assert isinstance(self.reco_data,AbsData)
+        assert isinstance(self.hard_dataset,HardDataset)
+        assert isinstance(self.reco_data,AbsData)
 
-        # Obtain the gen indices that are mathed to reco #
+        # Obtain the hard indices that are mathed to reco #
         if self.intersection_branch is None:
             pass
-            ## Assume the trees are the same for both reco and gen,
+            ## Assume the trees are the same for both reco and hard,
             ## will just check their length
-            #if self.gen_dataset.data is not self.reco_dataset.data:
-            #    raise RuntimeError('Not the same `data` for reco and gen datasets, you should use `intersection_branch` to help resolve ambiguities')
-            #assert len(self.gen_dataset) == len(self.reco_dataset), f'Different number of entries between gen ({len(self.gen_dataset)}) compared to reco ({len(self.reco_dataset)})'
-            #self.N = len(self.gen_dataset)
+            #if self.hard_dataset.data is not self.reco_dataset.data:
+            #    raise RuntimeError('Not the same `data` for reco and hard datasets, you should use `intersection_branch` to help resolve ambiguities')
+            #assert len(self.hard_dataset) == len(self.reco_dataset), f'Different number of entries between hard ({len(self.hard_dataset)}) compared to reco ({len(self.reco_dataset)})'
+            #self.N = len(self.hard_dataset)
         else:
             self.selected_idx, _ = get_intersection_indices(
-                datas = [self.gen_dataset.data,self.reco_data],
+                datas = [self.hard_dataset.data,self.reco_data],
                 branch = self.intersection_branch,
             )
-            # selected_idx are the gen events that are reconstructed in the reco dataset -> they passed the selections
+            # selected_idx are the hard events that are reconstructed in the reco dataset -> they passed the selections
 
         # Get input #
         self.inputs = [
-                self.gen_dataset._objects[name][0]
-                for name in self.gen_dataset.selection
+                self.hard_dataset._objects[name][0]
+                for name in self.hard_dataset.selection
         ]
         shapes = [inp[:,0,:].shape for inp in self.inputs] # check the #events and #features between inputs
         if len(set(shapes)) > 1:
-            raise RuntimeError('Mismatch in shapes : '+', '.join([f'{name} = {shape}' for name,shape in zip(self.gen_dataset.selection,shapes)]))
+            raise RuntimeError('Mismatch in shapes : '+', '.join([f'{name} = {shape}' for name,shape in zip(self.hard_dataset.selection,shapes)]))
         self.inputs = torch.cat(self.inputs,dim=1)
 
         # Make target #
@@ -66,10 +66,10 @@ class AcceptanceDataset(Dataset):
         #self.targets = self.targets.to(torch.long)
 
     def __len__(self):
-        return len(self.gen_dataset)
+        return len(self.hard_dataset)
 
     def __getitem__(self, index):
-        """ Returns the gen-level variables and targets """
+        """ Returns the hard-level variables and targets """
         return self.inputs[index],self.targets[index]
 
     @property
@@ -82,23 +82,23 @@ class AcceptanceDataset(Dataset):
 
 class MultiplicityDataset(Dataset):
     """
-        Dataset to train the reco jet multiplicity on gen events
+        Dataset to train the reco jet multiplicity on hard events
     """
-    def __init__(self,gen_dataset,reco_data,intersection_branch,use_weights=False):
-        self.gen_dataset = gen_dataset
+    def __init__(self,hard_dataset,reco_data,intersection_branch,use_weights=False):
+        self.hard_dataset = hard_dataset
         self.reco_data = reco_data
         self.intersection_branch = intersection_branch
         self.use_weights = use_weights
 
-        #assert isinstance(self.gen_dataset,GenDataset)
-        #assert isinstance(self.reco_data,AbsData)
+        assert isinstance(self.hard_dataset,HardDataset)
+        assert isinstance(self.reco_data,AbsData)
 
-        # Get indices for gen and reco #
+        # Get indices for hard and reco #
         self.selected_idx, self.reco_idx = get_intersection_indices(
-            datas = [self.gen_dataset.data,self.reco_data],
+            datas = [self.hard_dataset.data,self.reco_data],
             branch = self.intersection_branch,
         )
-        # selected_idx are the gen events that are reconstructed in the reco dataset -> they passed the selections
+        # selected_idx are the hard events that are reconstructed in the reco dataset -> they passed the selections
 
         # Get number of jets #
         jet_mask = torch.cat(
@@ -114,12 +114,12 @@ class MultiplicityDataset(Dataset):
         # Make inputs #
         # Get input #
         self.inputs = [
-                self.gen_dataset._objects[name][0][self.selected_idx]
-                for name in self.gen_dataset.selection
+                self.hard_dataset._objects[name][0][self.selected_idx]
+                for name in self.hard_dataset.selection
         ]
         shapes = [inp[:,0,:].shape for inp in self.inputs] # check the #events and #features between inputs
         if len(set(shapes)) > 1:
-            raise RuntimeError('Mismatch in shapes : '+', '.join([f'{name} = {shape}' for name,shape in zip(self.gen_dataset.selection,shapes)]))
+            raise RuntimeError('Mismatch in shapes : '+', '.join([f'{name} = {shape}' for name,shape in zip(self.hard_dataset.selection,shapes)]))
         self.inputs = torch.cat(self.inputs,dim=1)
 
         # Make target #
@@ -148,7 +148,7 @@ class MultiplicityDataset(Dataset):
         return self.inputs.shape[0]
 
     def __getitem__(self, index):
-        """ Returns the gen-level variables and targets """
+        """ Returns the hard-level variables and targets """
         return self.inputs[index],self.targets[index], self.weights[index]
 
     @property
@@ -167,95 +167,95 @@ class MultiplicityDataset(Dataset):
 
 class CombinedDataset(Dataset):
     """
-        Dataset to combine gen and reco and provide events with both information
+        Dataset to combine hard and reco and provide events with both information
     """
-    def __init__(self,gen_dataset,reco_dataset,intersection_branch=None):
+    def __init__(self,hard_dataset,reco_dataset,intersection_branch=None):
         """
             Args:
-             - gen_dataset [GenDataset] : generator level dataset
+             - hard_dataset [HardDataset] : hard scattering level dataset
              - reco_dataset [RecoDataset] : reconstructed level dataset
              - intersection_branch [str] : in case the data object are different, use this branch to resolve ambiguity (eg event number branch)
         """
-        self.gen_dataset = gen_dataset
+        self.hard_dataset = hard_dataset
         self.reco_dataset = reco_dataset
         self.intersection_branch = intersection_branch
 
-        assert isinstance(self.gen_dataset,GenDataset)
+        assert isinstance(self.hard_dataset,HardDataset)
         assert isinstance(self.reco_dataset,RecoDataset)
 
         if self.intersection_branch is None:
-            # Assume the trees are the same for both reco and gen,
+            # Assume the trees are the same for both reco and hard,
             # will just check their length
-            if self.gen_dataset.data is not self.reco_dataset.data:
-                raise RuntimeError('Not the same `data` for reco and gen datasets, you should use `intersection_branch` to help resolve ambiguities')
-            assert len(self.gen_dataset) == len(self.reco_dataset), f'Different number of entries between gen ({len(self.gen_dataset)}) compared to reco ({len(self.reco_dataset)})'
-            self.N = len(self.gen_dataset)
+            if self.hard_dataset.data is not self.reco_dataset.data:
+                raise RuntimeError('Not the same `data` for reco and hard datasets, you should use `intersection_branch` to help resolve ambiguities')
+            assert len(self.hard_dataset) == len(self.reco_dataset), f'Different number of entries between hard ({len(self.hard_dataset)}) compared to reco ({len(self.reco_dataset)})'
+            self.N = len(self.hard_dataset)
         else:
-            self.gen_idx, self.reco_idx = get_intersection_indices(
-                datas = [self.gen_dataset.data,self.reco_dataset.data],
+            self.hard_idx, self.reco_idx = get_intersection_indices(
+                datas = [self.hard_dataset.data,self.reco_dataset.data],
                 branch = self.intersection_branch,
             )
-            assert len(self.gen_idx) == len(self.reco_idx)
-            self.N = len(self.gen_idx)
+            assert len(self.hard_idx) == len(self.reco_idx)
+            self.N = len(self.hard_idx)
 
     def __getitem__(self, index):
-        """ Returns the event info of both gen and reco level variables """
+        """ Returns the event info of both hard and reco level variables """
         if self.intersection_branch is None:
             return {
-                'gen'  : self.gen_dataset[index],
+                'hard'  : self.hard_dataset[index],
                 'reco' : self.reco_dataset[index],
             }
         else:
             return {
-                'gen'  : self.gen_dataset[self.gen_idx[index]],
+                'hard'  : self.hard_dataset[self.hard_idx[index]],
                 'reco' : self.reco_dataset[self.reco_idx[index]],
             }
 
     def batch_by_index(self,index):
         if self.intersection_branch is None:
             return {
-                'gen'  : self.gen_dataset.batch_by_index(index),
+                'hard'  : self.hard_dataset.batch_by_index(index),
                 'reco' : self.reco_dataset.batch_by_index(index),
             }
         else:
             return {
-                'gen'  : self.gen_dataset.batch_by_index(self.gen_idx[index]),
+                'hard'  : self.hard_dataset.batch_by_index(self.hard_idx[index]),
                 'reco' : self.reco_dataset.batch_by_index(self.reco_idx[index]),
             }
 
-    def find_indices(self,reco_masks=[],gen_masks=[]):
+    def find_indices(self,reco_masks=[],hard_masks=[]):
         """
-            Find the indices in the combined dataset that correspond to masks in both reco and gen masks
+            Find the indices in the combined dataset that correspond to masks in both reco and hard masks
         """
         # safety checks #
-        for i,gen_mask in enumerate(gen_masks):
-            assert len(gen_mask) == self.gen_dataset.data.events, f'Gen mass entry {i} has length {len(gen_mask)} but gen data object has {self.gen_dataset.data.events} events'
+        for i,hard_mask in enumerate(hard_masks):
+            assert len(hard_mask) == self.hard_dataset.data.events, f'Hard mass entry {i} has length {len(hard_mask)} but hard data object has {self.hard_dataset.data.events} events'
         for i,reco_mask in enumerate(reco_masks):
             assert len(reco_mask) == self.reco_dataset.data.events, f'Reco mass entry {i} has length {len(reco_mask)} but reco data object has {self.reco_dataset.data.events} events'
 
         # Make total masks #
-        if len(gen_masks) > 0:
-            gen_mask = np.logical_and.reduce(gen_masks)
+        if len(hard_masks) > 0:
+            hard_mask = np.logical_and.reduce(hard_masks)
         else:
-            gen_mask = np.full((self.gen_dataset.data.events),fill_value=True)
+            hard_mask = np.full((self.hard_dataset.data.events),fill_value=True)
         if len(reco_masks) > 0:
             reco_mask = np.logical_and.reduce(reco_masks)
         else:
             reco_mask = np.full((self.reco_dataset.data.events),fill_value=True)
 
         if self.intersection_branch is None:
-            # gen and reco data are the same, just select the ones passing both masks #
-            mask = np.logical_and(gen_mask,reco_mask)
+            # hard and reco data are the same, just select the ones passing both masks #
+            mask = np.logical_and(hard_mask,reco_mask)
             indices = np.arange(self.reco_dataset.data.events)[mask]
             return indices
         else:
             # different data objects, find the intersection between mask and common events #
-            # Find in gen idx the events passing the gen cut
-            mask_gen_idx = gen_mask[self.gen_idx]
+            # Find in hard idx the events passing the hard cut
+            mask_hard_idx = hard_mask[self.hard_idx]
             # Find in reco idx the events passing the reco cut
             mask_reco_idx = reco_mask[self.reco_idx]
             # Combine masks #
-            mask = np.logical_and(mask_gen_idx,mask_reco_idx)
+            mask = np.logical_and(mask_hard_idx,mask_reco_idx)
             indices = np.arange(len(self))[mask]
             return indices
 
@@ -264,12 +264,12 @@ class CombinedDataset(Dataset):
         return self.N
 
     def __str__(self):
-        return f'Combined dataset (extracting {len(self)} events of the following) :\n{self.gen_dataset}\n{self.reco_dataset}'
+        return f'Combined dataset (extracting {len(self)} events of the following) :\n{self.hard_dataset}\n{self.reco_dataset}'
 
 
 class AbsDataset(Dataset,metaclass=ABCMeta):
     """
-        Abstract class for torch dataset, inherited by the Gen and Reco datasets
+        Abstract class for torch dataset, inherited by the Hard and Reco datasets
     """
     cartesian_fields = set(['px','py','pz','E'])
     cylindrical_fields = set(['pt','eta','phi','mass'])
@@ -599,18 +599,18 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
     def number_particles_total(self):
         return sum(self.number_particles_per_type)
 
-    def object_correlation_mask(self,name):
-        if self.correlation_idx is not None and name in self.correlation_idx.keys():
+    def object_attention_mask(self,name):
+        if self.attention_idx is not None and name in self.attention_idx.keys():
             return [
-                True if i in self.correlation_idx[name] else False
+                True if i in self.attention_idx[name] else False
                 for i in range(self.number_particles(name))
             ]
         else:
             return [True]*self.number_particles(name)
 
     @property
-    def correlation_mask(self):
-        return torch.tensor(list(chain.from_iterable([self.object_correlation_mask(name) for name in self.selection])))
+    def attention_mask(self):
+        return torch.tensor(list(chain.from_iterable([self.object_attention_mask(name) for name in self.selection])))
 
     ##### Type and device helpers #####
     def to_device(self,device=None):
@@ -677,7 +677,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             w_str = ', '.join([f'{ws:.2f}' for ws in w_sum])
             s += f'\n{name:{names_len}s} : data ({list(data.shape)}), mask ({list(mask.shape)})'
             s += f'\n{" "*names_len}   Mask exist    : [{prop_str}]'
-            s += f'\n{" "*names_len}   Mask corr     : {self.object_correlation_mask(name)}'
+            s += f'\n{" "*names_len}   Mask corr     : {self.object_attention_mask(name)}'
             s += f'\n{" "*names_len}   Weights       : {w_str}'
             s += f'\n{" "*names_len}   Features      : {self._fields[name]}'
             s += f'\n{" "*names_len}   Selected for batches : {name in self.selection}'
@@ -765,7 +765,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         pass
 
     @property
-    def correlation_idx(self):
+    def attention_idx(self):
         """ """
         pass
 
@@ -789,9 +789,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
 
 
 
-class GenDataset(AbsDataset):
+class HardDataset(AbsDataset):
     """
-        Specific dataset for gen/parton data
+        Specific dataset for gen/hard data
     """
     def __init__(self,**kwargs):
         super().__init__(**kwargs)
@@ -918,7 +918,7 @@ class GenDataset(AbsDataset):
         self._fields['detjinv'] = ['det']
 
     def __str__(self):
-        """ Specific gen representations + mother class one """
+        """ Specific hard representations + mother class one """
         s =  f'Parton dataset with {len(self)} events'
         s += f'\n Initial states pdgids : {self.initial_states_pdgid}'
         s += f'\n Final states pdgids   : {self.final_states_pdgid}'

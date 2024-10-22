@@ -2,8 +2,10 @@ import os
 import vector
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import awkward as ak
 import dask_awkward as dak
+import dask.dataframe as dd
 import uproot
 from collections.abc import Mapping
 from abc import abstractmethod
@@ -11,7 +13,7 @@ from functools import reduce, cached_property
 
 vector.register_awkward()
 
-def get_intersection_indices(datas,branch):
+def get_intersection_indices(datas,branch,different_files=False):
     """
         Return a list of indices for each data instance that intersect on the branch provided
         Args:
@@ -103,8 +105,18 @@ class AbsData(Mapping):
         arrays = []
         for entries,tree in zip(self.entries,self.trees):
             arrays.append(self.getitem(entries,tree,key))
-        self.data[key] = ak.concatenate(arrays,axis=0)
-        return self.data[key]
+        array = ak.concatenate(arrays,axis=0)
+        if isinstance(array.layout,ak.contents.listoffsetarray.ListOffsetArray):
+            pass # the typical type of awkward array we want
+        if isinstance(array.layout,ak.contents.numpyarray.NumpyArray):
+            pass # other typical layout we want
+        elif isinstance(array.layout,ak.contents.bytemaskedarray.ByteMaskedArray):
+            # arrays with a option[var* ...] type, nasty
+            # pass to list then proper array
+            array = ak.Array(array.tolist())
+        else:
+            raise NotImplementedError(f'Unexpected layout type {type(array.layout)}')
+        return array
 
     def __getitem__(self,key):
         """
@@ -113,7 +125,7 @@ class AbsData(Mapping):
             If a cut has been done before, only select the corresponding indices
         """
         if key not in self.keys():
-            self._getitem(key)
+            self.data[key] = self._getitem(key)
         if self.idx is not None:
             return self.data[key][self.idx]
         else:
@@ -192,7 +204,7 @@ class AbsData(Mapping):
         """ Keys already loaded """
         return self.data.keys()
 
-    def make_particles(self,name,link,lambda_mask=None):
+    def make_particles(self,name,link,lambda_mask=None,pad_value=None):
         """
             link links the different branches into the record fields for a Momentum4D vector
             eg:
@@ -217,26 +229,102 @@ class AbsData(Mapping):
             return self[name]
         # If dict, concatenate the particles into a vector awkward array #
         if isinstance(link,dict):
+            # make sure the values are list (needed later)
+            for key in link.keys():
+                if not isinstance(link[key],(list,tuple)):
+                    link[key] = [link[key]]
             # Safety checks #
-            for values in link.values():
+            for key,values in link.items():
                 for val in values:
-                    if val not in self.branches:
-                        raise RuntimeError(f'Branch {val} not found in file')
-            # Akward arrays -> numpy -> concatenate -> list -> full ak array -> vec
-            vec = ak.zip(
-                {
-                    key : ak.Array(
+                    if isinstance(val,str):
+                        if val not in self.branches:
+                            raise RuntimeError(f'Branch {val} not found in file')
+                    elif isinstance(val,(float,int)):
+                        pass
+                    else:
+                        raise NotImplementedError(f'Type {type(val)} of {key} not implemented')
+            # Do all the getitem #
+            arrays = {
+                key : [
+                    self._getitem(value)
+                    if isinstance(value,str) else value
+                    # not using self[key] because would call __getitem__
+                    # and therefore include the index selection
+                    # but we want the whole column, to do the index selection later
+                    for value in values
+                ]
+                for key,values in link.items()
+            }
+            # process into dict of awkward arrays #
+            # if numpy arrays, need to turn into awkward array
+            for key in arrays.keys():
+                # check uniformity of types #
+                types = set([type(arr) for arr in arrays[key]])
+                if len(types) != 1:
+                    raise RuntimeError(f'Found multiple types {types} for {key}')
+                types = list(types)[0]
+                # if number, will update afterwards #
+                if types == float or types == int:
+                    assert len(arrays[key]) == 1
+                    arrays[key] = arrays[key][0]
+                # check whether we can combine the awkward arrays #
+                elif types == ak.Array:
+                    # Pad the array if requested #
+                    if pad_value is not None:
+                        arr = arrays[key][0]
+                        arrays[key] = [
+                            ak.fill_none(
+                                ak.pad_none(
+                                    arr,
+                                    target = ak.max(ak.num(arr,axis=1)), # max number of entries
+                                    axis = 1,
+                                ),
+                                value = pad_value
+                            )
+                            for arr in arrays[key]
+                        ]
+                    # handle different scenarios
+                    if len(arrays[key]) == 1:
+                        arrays[key] = arrays[key][0]
+                    else:
+                        # Avoid 3D arrays #
+                        depths = [arr.layout.purelist_depth for arr in arrays[key]]
+                        if any([depth > 2 for depth in depths]):
+                            raise RuntimeError(f'Cannot deal with > 2 depth : {depths}')
+                        # make sure we can "numpify" the arrays, ie rectangular arrays, ie same dims on axis=1
+                        if not all([depth == 1 for depth in depths]):
+                            nums = [np.unique(ak.num(arr,axis=1)) for arr in arrays[key]]
+                            if any([len(num)>1 for num in nums]):
+                                raise RuntimeError(f'Some awkward arrays for {key} have not unique counts on axis=1 ({nums}), cannot turn them into rectangular arrays and concatenate them')
+                        # if all good : awkward arrays -> numpy arrays -> concat -> awkward array -> list
+                        arrays[key] = ak.Array(
+                            np.concatenate(
+                                [
+                                    arr.to_numpy().reshape(-1,1)
+                                    for arr in arrays[key]
+                                ],
+                                axis=1,
+                            )
+                        )
+
+                # if numpy arrays, concatenate and turn into awkward array
+                elif types == np.ndarray:
+                    arrays[key] = ak.Array(
                         np.concatenate(
                             [
-                                self._getitem(val).to_numpy().reshape(-1,1)
-                                # not using self[key] because would call __getitem__ and therefore include the index selection
-                                for val in values
+                                arr.reshape(-1,1)
+                                for arr in arrays[key]
                             ],
-                            axis = 1
+                            axis=1
                         )
-                    ).tolist()
-                    for key,values in link.items()
-                },
+                    )
+                else:
+                    raise TypeError(f'Type {types} not implemented')
+            # Turn the floats/ints into the awkward arrays #
+            # Turn into vector awkward array #
+            vec = ak.zip(
+                {key: array.tolist() if isinstance(array,ak.Array) else array for key,array in arrays.items()},
+                # need the list to get *var* number of entries on axis=1
                 with_name="Momentum4D",
             )
             if lambda_mask is not None:
@@ -349,7 +437,17 @@ class ParquetData(AbsData):
                 n_tree = len(df)
                 if self.N is not None:
                     n_tree = min(n_tree,self.N)
-                self.data.update({k:df[k][:n_tree] for k in df.fields})
+                for field in df.fields:
+                    if field in self.data.keys():
+                        self.data[field] = np.concatenate(
+                            (
+                                self.data[field],
+                                df[field][:n_tree],
+                            ),
+                            axis = 0,
+                        )
+                    else:
+                        self.data[field] = df[field][:n_tree]
                 self.trees.append(None)
 
             self.entries.append(n_tree)
@@ -358,21 +456,21 @@ class ParquetData(AbsData):
                     self.data['file'],
                     np.array([f]*n_tree),
                 ),
-                axis=0,
+                axis = 0,
             )
             self.data['tree'] = np.concatenate(
                 (
                     self.data['tree'],
                     np.array(['tree']*n_tree),
                 ),
-                axis=0,
+                axis = 0,
             )
             self.data['sample'] = np.concatenate(
                 (
                     self.data['sample'],
                     np.array([os.path.basename(f)]*n_tree),
                 ),
-                axis=0,
+                axis = 0,
             )
 
     @cached_property
@@ -392,5 +490,4 @@ class ParquetData(AbsData):
         else:
             assert self.lazy
             return tree[key][:entries].compute()
-
 

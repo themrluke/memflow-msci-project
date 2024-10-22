@@ -18,18 +18,19 @@ from memflow.models.utils import lowercase_recursive
 class TransferFlow(L.LightningModule):
     def __init__(
         self,
-        embed_dim,
+        embed_dims,
         embed_act,
-        n_gen_particles_per_type,
-        gen_particle_type_names,
-        gen_input_features_per_type,
+        n_hard_particles_per_type,
+        hard_particle_type_names,
+        hard_input_features_per_type,
         n_reco_particles_per_type,
         reco_particle_type_names,
         reco_input_features_per_type,
         flow_input_features,
-        reco_mask_corr,
-        gen_mask_corr,
+        reco_mask_attn,
+        hard_mask_attn,
         flow_mode,
+        dropout = 0.,
         transformer_args = {},
         flow_common_args = {},
         flow_classes = {},
@@ -41,12 +42,16 @@ class TransferFlow(L.LightningModule):
         super().__init__()
 
         # Public attributes #
-        self.embed_dim = embed_dim
+        self.dropout = dropout
+        self.embed_dims = embed_dims
+        if isinstance(self.embed_dims,int):
+            self.embed_dims = [self.embed_dims]
+        self.embed_dim = self.embed_dims[-1]
         self.embed_act = embed_act
 
-        self.n_gen_particles_per_type = n_gen_particles_per_type
-        self.gen_particle_type_names = lowercase_recursive(gen_particle_type_names)
-        self.gen_input_features_per_type = lowercase_recursive(gen_input_features_per_type)
+        self.n_hard_particles_per_type = n_hard_particles_per_type
+        self.hard_particle_type_names = lowercase_recursive(hard_particle_type_names)
+        self.hard_input_features_per_type = lowercase_recursive(hard_input_features_per_type)
 
         self.n_reco_particles_per_type = n_reco_particles_per_type
         self.reco_particle_type_names = lowercase_recursive(reco_particle_type_names)
@@ -59,13 +64,13 @@ class TransferFlow(L.LightningModule):
         self.flow_specific_args = flow_specific_args
         assert self.flow_mode in ['type','particle','global']
 
-        self.reco_mask_corr = torch.cat((torch.tensor([True]),reco_mask_corr),dim=0) # Adding True at index=0 for null token
-        self.gen_mask_corr  = gen_mask_corr
+        self.reco_mask_attn = torch.cat((torch.tensor([True]),reco_mask_attn),dim=0) # Adding True at index=0 for null token
+        self.hard_mask_attn  = hard_mask_attn
         self.onehot_encoding = onehot_encoding
 
         # Safety checks #
         assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features_per_type)} sets of input features'
-        assert len(n_gen_particles_per_type) == len(gen_input_features_per_type), f'{len(n_gen_particles_per_type)} sets of gen particles but got {len(gen_input_features_per_type)} sets of input features'
+        assert len(n_hard_particles_per_type) == len(hard_input_features_per_type), f'{len(n_hard_particles_per_type)} sets of hard particles but got {len(hard_input_features_per_type)} sets of input features'
         assert len(flow_input_features) == len(reco_input_features_per_type), f'Number of reco features ({len(reco_input_features_per_type)}) != number of flow features ({len(flow_input_features)})'
 
         # Private attributes #
@@ -84,13 +89,15 @@ class TransferFlow(L.LightningModule):
             onehot_dim = 0
 
         # Make embedding layers #
-        self.gen_embeddings  = self.make_embeddings(self.gen_input_features_per_type)
+        self.hard_embeddings  = self.make_embeddings(self.hard_input_features_per_type)
         self.reco_embeddings = self.make_embeddings(self.reco_input_features_per_type,onehot_dim)
 
         # Define transformer #
-        if 'd_model' in transformer_args:
+        if 'd_model' in transformer_args.keys():
             print (f'Transformer args: will override `d_model` to {self.embed_dim}')
         transformer_args['d_model'] = self.embed_dim
+        if 'dropout' not in transformer_args.keys():
+            transformer_args['dropout'] = self.dropout
         self.transformer = nn.Transformer(**transformer_args,batch_first=True)
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(sum(self.n_reco_particles_per_type)+1)
 
@@ -137,14 +144,18 @@ class TransferFlow(L.LightningModule):
             if not isinstance(features,tuple):
                 features = tuple(features)
             if features not in feature_embeddings.keys():
-                layers = [
-                    nn.Linear(
-                        in_features = len(features)+onehot_dim,
-                        out_features = self.embed_dim,
+                layers = []
+                for i in range(len(self.embed_dims)):
+                    layers.append(
+                        nn.Linear(
+                            in_features = len(features)+onehot_dim if i==0 else self.embed_dims[i-1],
+                            out_features = self.embed_dims[i],
+                        )
                     )
-                ]
-                if self.embed_act is not None:
-                    layers.append(self.embed_act())
+                    if self.embed_act is not None:
+                        layers.append(self.embed_act())
+                    if self.dropout != 0.:
+                        layers.append(nn.Dropout(self.dropout))
                 embedding = nn.Sequential(*layers)
                 feature_embeddings[features] = embedding
             else:
@@ -243,7 +254,7 @@ class TransferFlow(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self.shared_eval(batch, batch_idx, 'val')
 
-    def conditioning(self,gen_data,gen_mask_exist,reco_data,reco_mask_exist):
+    def conditioning(self,hard_data,hard_mask_exist,reco_data,reco_mask_exist):
         # Add null token to first reco object #
         null_token = torch.ones((reco_data[0].shape[0],1,reco_data[0].shape[2])) * -1
         reco_data_null = [
@@ -280,14 +291,14 @@ class TransferFlow(L.LightningModule):
             ]
 
         # Apply embeddings and concat along particle axis #
-        gen_mask_exist = torch.cat(gen_mask_exist,dim=1)
-        gen_data = torch.cat(
+        hard_mask_exist = torch.cat(hard_mask_exist,dim=1)
+        hard_data = torch.cat(
             [
-                self.gen_embeddings[i](gen_data[i])
-                for i in range(len(self.gen_embeddings))
+                self.hard_embeddings[i](hard_data[i])
+                for i in range(len(self.hard_embeddings))
             ],
             dim = 1
-        ) * gen_mask_exist[...,None]
+        ) * hard_mask_exist[...,None]
         reco_mask_exist_null = torch.cat(reco_mask_exist_null,dim=1)
         reco_data_null = torch.cat(
             [
@@ -299,12 +310,12 @@ class TransferFlow(L.LightningModule):
 
         # Expand correlation mask #
         # Need to turn 0->1 when particle exists #
-        gen_mask_corr  = torch.logical_or(
-            self.gen_mask_corr.to(gen_mask_exist.device),
-            gen_mask_exist,
+        hard_mask_attn  = torch.logical_or(
+            self.hard_mask_attn.to(hard_mask_exist.device),
+            hard_mask_exist,
         )
-        reco_mask_corr = torch.logical_or(
-            self.reco_mask_corr.to(reco_mask_exist_null.device),
+        reco_mask_attn = torch.logical_or(
+            self.reco_mask_attn.to(reco_mask_exist_null.device),
             reco_mask_exist_null,
         )
         # -> Make sure that particles we want in the attention are considered even if missing
@@ -312,11 +323,11 @@ class TransferFlow(L.LightningModule):
 
         # Transformer processing #
         condition = self.transformer(
-            src = gen_data,
+            src = hard_data,
             tgt = reco_data_null,
-            tgt_mask = self.tgt_mask.to(gen_data.device),
-            src_key_padding_mask = (~gen_mask_corr).to(self.tgt_mask.dtype),
-            tgt_key_padding_mask = (~reco_mask_corr).to(self.tgt_mask.dtype),
+            tgt_mask = self.tgt_mask.to(hard_data.device),
+            src_key_padding_mask = (~hard_mask_attn).to(self.tgt_mask.dtype),
+            tgt_key_padding_mask = (~reco_mask_attn).to(self.tgt_mask.dtype),
         )
 
         # Split condition per particle type to match reco_data segmentation #
@@ -542,21 +553,21 @@ class TransferFlow(L.LightningModule):
 
     def forward(self,batch):
         # Extract different components #
-        gen_data  = batch['gen']['data']
-        gen_mask_exist = batch['gen']['mask']
-        gen_weights = batch['gen']['weights']
+        hard_data  = batch['hard']['data']
+        hard_mask_exist = batch['hard']['mask']
+        hard_weights = batch['hard']['weights']
         reco_data = batch['reco']['data']
         reco_mask_exist = batch['reco']['mask']
         reco_weights = batch['reco']['weights']
 
         # Safety checks #
-        assert len(gen_data) == len(self.gen_embeddings), f'{len(gen_data)} gen objects but {len(self.gen_embeddings)} gen embeddings'
-        assert len(gen_mask_exist) == len(self.gen_embeddings), f'{len(gen_mask_exist)} gen objects but {len(self.gen_embeddings)} gen embeddings'
+        assert len(hard_data) == len(self.hard_embeddings), f'{len(hard_data)} hard objects but {len(self.hard_embeddings)} hard embeddings'
+        assert len(hard_mask_exist) == len(self.hard_embeddings), f'{len(hard_mask_exist)} hard objects but {len(self.hard_embeddings)} hard embeddings'
         assert len(reco_data) == len(self.reco_embeddings), f'{len(reco_data)} reco objects but {len(self.reco_embeddings)} reco embeddings'
         assert len(reco_mask_exist) == len(self.reco_embeddings), f'{len(reco_mask_exist)} reco objects but {len(self.reco_embeddings)} reco embeddings'
 
         # Obtain condition #
-        conditions = self.conditioning(gen_data,gen_mask_exist,reco_data,reco_mask_exist)
+        conditions = self.conditioning(hard_data,hard_mask_exist,reco_data,reco_mask_exist)
 
         # Obtain log probs #
         log_probs_particles = self.process_flow(reco_data,conditions,mode='log_prob')
@@ -564,9 +575,9 @@ class TransferFlow(L.LightningModule):
         # Return log_prob, mask and weights #
         return log_probs_particles, torch.cat(reco_mask_exist,dim=1), torch.cat(reco_weights,dim=1)
 
-    def sample(self,gen_data,gen_mask_exist,reco_data,reco_mask_exist,N):
+    def sample(self,hard_data,hard_mask_exist,reco_data,reco_mask_exist,N):
         # Obtain condition #
-        conditions = self.conditioning(gen_data,gen_mask_exist,reco_data,reco_mask_exist)
+        conditions = self.conditioning(hard_data,hard_mask_exist,reco_data,reco_mask_exist)
 
         # Obtain flows #
         samples = self.process_flow(reco_data,conditions,mode='sample',N=N)

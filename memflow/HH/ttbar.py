@@ -5,7 +5,7 @@ import numpy as np
 from hepunits.units import MeV, GeV
 from sklearn import preprocessing
 
-from memflow.dataset.dataset import AbsDataset, GenDataset, RecoDataset
+from memflow.dataset.dataset import AbsDataset, HardDataset, RecoDataset
 from memflow.HH.base import Base, RecoDoubleLepton
 from memflow.dataset.preprocessing import (
     lowercutshift,
@@ -15,10 +15,10 @@ from memflow.dataset.preprocessing import (
     PreprocessingStep,
 )
 
-class TTDoubleLeptonGenDataset(Base,GenDataset):
+class TTDoubleLeptonHardDataset(Base,HardDataset):
     def __init__(self,**kwargs):
         Base.__init__(self,**kwargs)
-        GenDataset.__init__(self,**kwargs)
+        HardDataset.__init__(self,**kwargs)
 
     @property
     def initial_states_pdgid(self):
@@ -37,7 +37,7 @@ class TTDoubleLeptonGenDataset(Base,GenDataset):
     def processed_path(self):
         return os.path.join(
             os.getcwd(),
-            'tt_gen'
+            'tt_hard'
         )
 
     def process(self):

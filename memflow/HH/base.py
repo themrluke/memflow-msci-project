@@ -5,7 +5,7 @@ import numpy as np
 from hepunits.units import MeV, GeV
 from sklearn import preprocessing
 
-from memflow.dataset.dataset import AbsDataset, GenDataset, RecoDataset
+from memflow.dataset.dataset import AbsDataset, HardDataset, RecoDataset
 from memflow.dataset.preprocessing import (
     lowercutshift,
     logmodulus,
@@ -107,7 +107,7 @@ class RecoDoubleLepton(Base,RecoDataset):
                 'pz'      : ['met_Pz'],
                 'E'       : ['met_E'],
             },
-        )[:,0]
+        )
 
         # Cartesian to cylindrical #
         jets = self.change_coordinates(jets)
@@ -184,22 +184,22 @@ class RecoDoubleLepton(Base,RecoDataset):
             if self.coordinates != 'cylindrical':
                 raise NotImplementedError
 
-            #self.register_preprocessing_step(
-            #    PreprocessingStep(
-            #        names = ['electrons','muons','jets','met'],
-            #        scaler_dict = {
-            #            'pt' : lowercutshift(10),
-            #        },
-            #    )
-            #)
-            #self.register_preprocessing_step(
-            #    PreprocessingStep(
-            #        names = ['jets'],
-            #        scaler_dict = {
-            #            'pt' : lowercutshift(25),
-            #        },
-            #    )
-            #)
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['muons','electrons'],
+                    scaler_dict = {
+                        'pt' : lowercutshift(10),
+                    },
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['jets'],
+                    scaler_dict = {
+                        'pt' : lowercutshift(25),
+                    },
+                )
+            )
             self.register_preprocessing_step(
                 PreprocessingStep(
                     names = ['jets','electrons','muons','met'],
@@ -228,7 +228,7 @@ class RecoDoubleLepton(Base,RecoDataset):
             )
 
     @property
-    def correlation_idx(self):
+    def attention_idx(self):
         # leptons and met always there
         # jets only the first two (by SR selection always there)
         return {
