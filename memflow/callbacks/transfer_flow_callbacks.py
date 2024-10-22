@@ -91,19 +91,19 @@ class SamplingCallback(Callback):
             device = self.device
         model = model.to(device)
         # Sample #
-        gen_data = [data.to(device) for data in self.batch['gen']['data']]
-        gen_mask_exist = [mask.to(device) for mask in self.batch['gen']['mask']]
+        hard_data = [data.to(device) for data in self.batch['hard']['data']]
+        hard_mask_exist = [mask.to(device) for mask in self.batch['hard']['mask']]
         reco_data = [data.to(device) for data in self.batch['reco']['data']]
         reco_mask_exist = [mask.to(device) for mask in self.batch['reco']['mask']]
 
         # Sample #
         with torch.no_grad():
-            samples = model.sample(gen_data,gen_mask_exist,reco_data,reco_mask_exist,self.N_sample)
+            samples = model.sample(hard_data,hard_mask_exist,reco_data,reco_mask_exist,self.N_sample)
 
         # Put all on cpu #
         samples = [sample.to('cpu') for sample in samples]
-        gen_data = [data.to("cpu") for data in gen_data]
-        gen_mask_exist = [mask.to("cpu") for mask in gen_mask_exist]
+        hard_data = [data.to("cpu") for data in hard_data]
+        hard_mask_exist = [mask.to("cpu") for mask in hard_mask_exist]
         reco_data = [data.to("cpu") for data in reco_data]
         reco_mask_exist = [mask.to("cpu") for mask in reco_mask_exist]
 
@@ -439,14 +439,14 @@ class BiasCallback(Callback):
         mask    = [[] for _ in range(N_reco)]
         for batch_idx, batch in tqdm(enumerate(self.loader,1),desc='Predict',disable=disable_tqdm,leave=True,total=min(self.N_batch,len(self.loader)),position=0):
             # Get parts #
-            gen_data = [data.to(device) for data in batch['gen']['data']]
-            gen_mask_exist = [mask.to(device) for mask in batch['gen']['mask']]
+            hard_data = [data.to(device) for data in batch['hard']['data']]
+            hard_mask_exist = [mask.to(device) for mask in batch['hard']['mask']]
             reco_data = [data.to(device) for data in batch['reco']['data']]
             reco_mask_exist = [mask.to(device) for mask in batch['reco']['mask']]
 
             # Sample #
             with torch.no_grad():
-                batch_samples = model.sample(gen_data,gen_mask_exist,reco_data,reco_mask_exist,self.N_sample)
+                batch_samples = model.sample(hard_data,hard_mask_exist,reco_data,reco_mask_exist,self.N_sample)
 
             # Record #
             for i in range(N_reco):

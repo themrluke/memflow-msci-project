@@ -95,12 +95,12 @@ class BaseCallback(Callback):
 
         # Make figure plots #
         figs = {}
-        n_gens = self.dataset.gen_dataset.number_particles_per_type
-        features_per_type = self.dataset.gen_dataset.input_features
-        particle_names = self.dataset.gen_dataset.selection
+        n_hards = self.dataset.hard_dataset.number_particles_per_type
+        features_per_type = self.dataset.hard_dataset.input_features
+        particle_names = self.dataset.hard_dataset.selection
 
         # Loop over particle types #
-        idxs = np.r_[0,np.cumsum(n_gens)]
+        idxs = np.r_[0,np.cumsum(n_hards)]
         for j,(idx_i,idx_f) in enumerate(zip(idxs[:-1],idxs[1:])):
             features = features_per_type[j]
             name = particle_names[j]
@@ -108,9 +108,9 @@ class BaseCallback(Callback):
 
             # Preprocessing #
             if self.raw:
-                preprocessing = self.dataset.gen_dataset._preprocessing
-                name = self.dataset.gen_dataset.selection[j]
-                fields = self.dataset.gen_dataset._fields[name]
+                preprocessing = self.dataset.hard_dataset._preprocessing
+                name = self.dataset.hard_dataset.selection[j]
+                fields = self.dataset.hard_dataset._fields[name]
                 inputs_type = preprocessing.inverse(
                     name = name,
                     x = inputs_type,
@@ -153,7 +153,7 @@ class AcceptanceCallback(BaseCallback):
         for i in range(N):
             # Make histogram of selected events only #
             content_selected, bins_feat = np.histogram(inputs[mask,i],bins=bins)
-            # Make histogram of all gen events #
+            # Make histogram of all hard events #
             content_feat, _ = np.histogram(inputs[:,i],bins=bins_feat)
             # Make histogram of prediction #
             content_pred_weighted, _ = np.histogram(inputs[:,i],bins=bins_feat,weights=preds.ravel())
