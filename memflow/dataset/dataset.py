@@ -68,9 +68,9 @@ class AcceptanceDataset(Dataset):
     def __len__(self):
         return len(self.hard_dataset)
 
-    def __getitem__(self, index):
+    def __getitem__(self, idx):
         """ Returns the hard-level variables and targets """
-        return self.inputs[index],self.targets[index]
+        return self.inputs[idx],self.targets[idx]
 
     @property
     def number_objects(self):
@@ -147,9 +147,9 @@ class MultiplicityDataset(Dataset):
     def __len__(self):
         return self.inputs.shape[0]
 
-    def __getitem__(self, index):
+    def __getitem__(self, idx):
         """ Returns the hard-level variables and targets """
-        return self.inputs[index],self.targets[index], self.weights[index]
+        return self.inputs[idx],self.targets[idx], self.weights[idx]
 
     @property
     def max_length(self):
@@ -163,7 +163,146 @@ class MultiplicityDataset(Dataset):
     def dim_features(self):
         return self.inputs.shape[2]
 
+class MultiCombinedDataset(Dataset):
+    """
+        Dataset that combines several combined datasets, typically for different processes
+    """
+    def __init__(self,datasets):
+        # Check dataset #
+        for dataset in datasets:
+            assert isinstance(dataset,CombinedDataset)
+        assert len(dataset)>1, 'Need to provide at least two datasets'
+        self.datasets = datasets
 
+        self.hard_datasets = [dataset.hard_dataset for dataset in self.datasets]
+        self.reco_datasets = [dataset.reco_dataset for dataset in self.datasets]
+
+        # Various sanity checks #
+        self.check_features(self.hard_datasets)
+        self.check_features(self.reco_datasets)
+
+        # Equalize datasets #
+        self.equalize_datasets(self.hard_datasets)
+        self.equalize_datasets(self.reco_datasets)
+
+        # Check attention masks #
+        self.check_attention_masks(self.hard_datasets)
+        self.check_attention_masks(self.reco_datasets)
+
+        # Get attributes needed to find index per dataset #
+        self.Ns = torch.tensor([len(dataset) for dataset in self.datasets])
+        self.cumNs = torch.cumsum(self.Ns,dim=0)
+        self.idx_dataset_start = self.cumNs-self.Ns
+
+    @staticmethod
+    def check_features(datasets):
+        inputs_features = set([dataset.input_features for dataset in datasets])
+        if len(inputs_features) != 1:
+            raise RuntimeError(f'Different sets of inputs features : {inputs_features}')
+        n_types = set([len(dataset.number_particles_per_type) for dataset in datasets])
+        if len(n_types) != 1:
+            raise RuntimeError(f'Different number of types : {n_types}')
+
+    @staticmethod
+    def check_attention_masks(datasets):
+        mask_shapes = set([dataset.attention_mask.shape for dataset in datasets])
+        if len(mask_shapes) != 1:
+            raise RuntimeError(f'Attention masks have different shapes : {mask_shapes}')
+        attention_masks = set([dataset.attention_mask for dataset in datasets])
+        for i in range(1,len(datasets)):
+            if not (datasets[0].attention_mask == datasets[i].attention_mask).all():
+                raise RuntimeError(f'Different attention masks between entry 0 ({datasets[0].attention_mask}) and {i} ({datasets[i].attention_mask})')
+
+    @staticmethod
+    def check_datasets(datasets):
+        inputs_features = set([dataset.input_features for dataset in datasets])
+        if len(inputs_features) != 1:
+            raise RuntimeError(f'Different sets of inputs features : {inputs_features}')
+        n_types = set([len(dataset.number_particles_per_type) for dataset in datasets])
+        if len(n_types) != 1:
+            raise RuntimeError(f'Different number of types : {n_types}')
+
+
+    @staticmethod
+    def equalize_datasets(datasets):
+        # calculate the max number of particles per type #
+        n_types = len(datasets[0].number_particles_per_type)
+        max_number_particles_per_type = [
+            max(
+                [
+                    dataset.number_particles_per_type[i] for dataset in datasets
+                ]
+            )
+            for i in range(n_types)
+        ]
+        # For each type, pad the tensors #
+        for dataset in datasets:
+            for i in range(n_types):
+                if dataset.number_particles_per_type[i] < max_number_particles_per_type[i]:
+                    # Get number of additional particles to pad and data #
+                    n_diff = max_number_particles_per_type[i]-dataset.number_particles_per_type[i]
+                    name = dataset.selection[i]
+                    data, mask, weights = dataset._objects[name]
+                    # Zero-pad the inputs data #
+                    data = torch.cat(
+                        [
+                            data,
+                            torch.zeros(
+                                (
+                                    data.shape[0],    # N batch
+                                    n_diff,           # S sequence
+                                    data.shape[2],    # F features
+                                 )
+                            ),
+                        ],
+                        dim = 1,
+                    )
+                    # Pad the mask with Falses #
+                    mask = torch.cat(
+                        [
+                            mask,
+                            torch.full(
+                                (
+                                    mask.shape[0],    # N batch
+                                    n_diff,           # S sequence
+                                 ),
+                                fill_value = False,
+                            ),
+                        ],
+                        dim = 1,
+                    )
+                    # Pad the weights with ones #
+                    weights = torch.cat(
+                        [
+                            weights,
+                            torch.ones(
+                                (
+                                    weights.shape[0], # N batch
+                                    n_diff,           # S sequence
+                                 ),
+                            ),
+                        ],
+                        dim = 1,
+                    )
+                    # Replace the object #
+                    dataset._objects[name] = data, mask, weights
+                if dataset.number_particles_per_type[i] > max_number_particles_per_type[i]:
+                    raise RuntimeError
+
+
+    def __getitem__(self, idx):
+        # Find which dataset to take the index from #
+        idx_of_dataset = torch.searchsorted((self.cumNs-1),idx)
+        # Find the index within the dataset #
+        idx_in_dataset = int(idx - self.idx_dataset_start[idx_of_dataset])
+        # return the corresponding item #
+        return self.datasets[idx_of_dataset][idx_in_dataset]
+
+    def __len__(self):
+        return self.cumNs[-1]
+
+    def __str__(self):
+        return f'MultiCombined dataset :\n'+'\n'.join([str(dataset) for dataset in self.datasets])
 
 class CombinedDataset(Dataset):
     """
@@ -583,10 +722,10 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
     ##### Intrinsic properties #####
     @property
     def input_features(self):
-        return [
-            self._fields[name]
+        return tuple(
+            tuple(self._fields[name])
             for name in self.selection
-        ]
+        )
 
     def number_particles(self,name):
         return self._objects[name][0].shape[1]
@@ -651,15 +790,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             self._objects[name] = (data,mask,weights)
 
     ##### Magic methods #####
-    def __getitem__(self,index):
+    def __getitem__(self,idx):
         """
-            For each object specified in the selections, returns the element from index
+            For each object specified in the selections, returns the element from idx
             Joins the data and mask along new dimension (axis = 2)
         """
         return {
-            'data': [self._objects[name][0][index] for name in self.selection],
-            'mask': [self._objects[name][1][index] for name in self.selection],
-            'weights': [self._objects[name][2][index] for name in self.selection],
+            'data': [self._objects[name][0][idx] for name in self.selection],
+            'mask': [self._objects[name][1][idx] for name in self.selection],
+            'weights': [self._objects[name][2][idx] for name in self.selection],
         }
 
     def __len__(self):
@@ -748,6 +887,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
                 axs[i].set_xlabel(fields[i])
                 if log:
                     axs[i].set_yscale('log')
+                    axs[i].set_ylim((0.1,None))
+                else:
+                    axs[i].set_ylim((0,None))
             # Add legend in last subplot #
             if n_parts > 1:
                 axs[-1].axis('off')

@@ -284,15 +284,16 @@ class AbsData(Mapping):
                 elif types == ak.Array:
                     # Pad the array if requested #
                     if pad_value is not None:
-                        arr = arrays[key][0]
                         arrays[key] = [
                             ak.fill_none(
                                 ak.pad_none(
                                     arr,
-                                    target = ak.max(ak.num(arr,axis=1)), # max number of entries
-                                    axis = 1,
+                                    target = ak.max(ak.num(arr,axis=1)) if arr.layout.purelist_depth>1 else 1, # max number of entries
+                                    axis = 1 if arr.layout.purelist_depth>1 else 0,
+                                    #axis = -1,
                                 ),
-                                value = pad_value
+                                value = pad_value,
+                                axis = -1,
                             )
                             for arr in arrays[key]
                         ]
