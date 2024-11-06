@@ -75,6 +75,8 @@ class TemplateHardDataset(HardDataset):
             input = <awkward_array>,
             value = <padding_value>, # number used to pad the missing entries (0 typically)
             ax = 1, # should in principle always be that
+            max_no = <value/None> # maximum number of particles in the padded array
+            # if max_no is None, will use the maximum number of particles in all events
         )
         self.register_object(
             name = <name>,
