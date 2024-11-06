@@ -29,6 +29,10 @@ class BaseClassifier(L.LightningModule):
         self.batch_norm = batch_norm
         self.dropout = dropout
 
+        # Private attributes #
+        self._optimizer = None
+        self._scheduler_config = None
+
         # Make layers #
         self.layers = []
         for i in range(len(self.neurons)):
