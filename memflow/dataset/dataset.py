@@ -631,7 +631,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             raise NotImplementedError(f'Type {type(value)} not implemented')
         if max_no is None:
             max_no = ak.max(ak.num(input, axis=ax))
-        input_padded = ak.pad_none(input, max_no, axis=ax)
+        input_padded = ak.pad_none(input, max_no, axis=ax, clip=True)
         mask = ~ak.is_none(input_padded,axis=1)
         input_filled = ak.fill_none(input_padded, value, axis=ax)
         return input_filled,mask
