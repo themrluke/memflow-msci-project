@@ -8,8 +8,9 @@ from torch.utils.data import DataLoader
 import lightning as L
 from lightning.pytorch.callbacks import Callback
 
+
 class SamplingCallback(Callback):
-    def __init__(self,dataset,idx_to_monitor,N_sample,frequency=1,raw=False,bins=50,log_scale=False,device=None):
+    def __init__(self,dataset,idx_to_monitor,N_sample,frequency=1,raw=False,bins=50,log_scale=False,suffix='', device=None):
         super().__init__()
 
         # Attributes #
@@ -20,6 +21,7 @@ class SamplingCallback(Callback):
         self.bins = bins
         self.log_scale = log_scale
         self.device = device
+        self.suffix = suffix
 
         # Call batch getting #
         self.set_idx(idx_to_monitor)
@@ -36,8 +38,7 @@ class SamplingCallback(Callback):
         # Get batch of data #
         self.batch = self.dataset.batch_by_index(self.idx_to_monitor)
 
-    @staticmethod
-    def plot_particle(sample,reco,features,title,N_bins,log_scale=False):
+    def plot_particle(self,sample,reco,features,title):
         # sample (N,F)
         # reco (F)
         assert sample.shape[1] == reco.shape[0]
@@ -52,13 +53,13 @@ class SamplingCallback(Callback):
                 bins = np.linspace(
                     0.,
                     max(torch.quantile(sample,0.9999,interpolation='higher'),reco),
-                    N_bins,
+                    self.bins,
                 )
             else:
                 bins = np.linspace(
                     min(sample.min(),reco),
                     max(sample.max(),reco),
-                    N_bins,
+                    self.bins,
                 )
             return bins
 
@@ -73,10 +74,10 @@ class SamplingCallback(Callback):
                     axs[i,j].hist(sample[:,i],bins=bins_x)
                     axs[i,j].axvline(reco[i],color='r')
                     axs[i,j].set_xlabel(features[i])
-                    if log_scale:
+                    if self.log_scale:
                         axs[i,j].set_yscale('log')
                 else:
-                    h = axs[i,j].hist2d(sample[:,i],sample[:,j],bins=(bins_x,bins_y),norm=matplotlib.colors.LogNorm() if log_scale else None)
+                    h = axs[i,j].hist2d(sample[:,i],sample[:,j],bins=(bins_x,bins_y),norm=matplotlib.colors.LogNorm() if self.log_scale else None)
                     axs[i,j].scatter(reco[i],reco[j],marker='x',color='r',s=40)
                     axs[i,j].set_xlabel(features[i])
                     axs[i,j].set_ylabel(features[j])
@@ -144,12 +145,12 @@ class SamplingCallback(Callback):
                             reco = reco_data[i][event,j,flow_indices],
                             features = flow_features,
                             title = f'{self.dataset.reco_dataset.selection[i]} #{j} (event #{event})',
-                            N_bins = self.bins,
-                            log_scale = self.log_scale,
                         )
                         if show:
                             plt.show()
                         figure_name = f'event_{event}_obj_{self.dataset.reco_dataset.selection[i]}_{j}'
+                        if len(self.suffix) > 0:
+                            figure_name += f'_{self.suffix}'
                         figs[figure_name] = fig
         return figs
 
@@ -174,7 +175,7 @@ class SamplingCallback(Callback):
             plt.close(figure)
 
 class BiasCallback(Callback):
-    def __init__(self,dataset,N_sample=1,frequency=1,raw=False,bins=50,points=20,log_scale=False,device=None,N_batch=math.inf,batch_size=1024):
+    def __init__(self,dataset,N_sample=1,frequency=1,raw=False,bins=50,points=20,device=None,suffix='',N_batch=math.inf,batch_size=1024):
         super().__init__()
 
         # Attributes #
@@ -188,6 +189,7 @@ class BiasCallback(Callback):
         self.points = points
         self.log_scale = log_scale
         self.device = device
+        self.suffix = suffix
 
 
     def compute_coverage(self,truth,diff,bins,relative=False):
@@ -243,7 +245,7 @@ class BiasCallback(Callback):
 
 
 
-    def plot_particle(self,truth,mask,samples,features,title,bins,points,log_scale=False):
+    def plot_particle(self,truth,mask,samples,features,title):
         # truth shape [N,F]
         # mask shape [N]
         # samples shape [S,N,F]
@@ -266,7 +268,7 @@ class BiasCallback(Callback):
         for j in range(N):
             # 1D plot #
             diff_max = abs(diff[...,j]).max()
-            diff_bins = np.linspace(-diff_max,diff_max,bins)
+            diff_bins = np.linspace(-diff_max,diff_max,self.bins)
             axs[0,j].hist(
                 diff[...,j].ravel(),
                 bins = diff_bins,
@@ -274,7 +276,7 @@ class BiasCallback(Callback):
                 color = 'b',
             )
             axs[0,j].set_xlabel(f'${features[j]}_{{sampled}} - {features[j]}_{{true}}$')
-            if log_scale:
+            if self.log_scale:
                 axs[0,j].set_yscale('log')
 
             # 2D plot #
@@ -285,7 +287,7 @@ class BiasCallback(Callback):
                         torch.quantile(truth[0,:,j].ravel(),q=0.9999,interpolation='higher'),
                         torch.quantile(samples[...,j].ravel(),q=0.9999,interpolation='higher'),
                     ),
-                    bins,
+                    self.bins,
                 )
             else:
                 scale_bins = np.linspace(
@@ -297,13 +299,13 @@ class BiasCallback(Callback):
                         truth[0,:,j].max(),
                         samples[...,j].max(),
                     ),
-                    bins,
+                    self.bins,
                 )
             h = axs[1,j].hist2d(
                 truth[...,j].ravel(),
                 samples[...,j].ravel(),
                 bins = (scale_bins,scale_bins),
-                norm = matplotlib.colors.LogNorm() if log_scale else None,
+                norm = matplotlib.colors.LogNorm() if self.log_scale else None,
             )
             axs[1,j].set_xlabel(f'${features[j]}_{{true}}$')
             axs[1,j].set_ylabel(f'${features[j]}_{{sampled}}$')
@@ -311,7 +313,7 @@ class BiasCallback(Callback):
 
             # Bias plot #
             relative = features[j] in ['pt']
-            quant_bins = torch.quantile(truth[0,:,j],q=torch.linspace(0.,1.,points+1))
+            quant_bins = torch.quantile(truth[0,:,j],q=torch.linspace(0.,1.,self.points+1))
             centers,coverages = self.compute_coverage(
                 truth = truth[...,j].ravel(),
                 diff = diff[...,j].ravel(),
@@ -437,7 +439,10 @@ class BiasCallback(Callback):
         samples = [[] for _ in range(N_reco)]
         truth   = [[] for _ in range(N_reco)]
         mask    = [[] for _ in range(N_reco)]
-        for batch_idx, batch in tqdm(enumerate(self.loader,1),desc='Predict',disable=disable_tqdm,leave=True,total=min(self.N_batch,len(self.loader)),position=0):
+        for batch_idx, batch in tqdm(enumerate(self.loader),desc='Predict',disable=disable_tqdm,leave=True,total=min(self.N_batch,len(self.loader)),position=0):
+            if batch_idx >= self.N_batch:
+                break
+
             # Get parts #
             hard_data = [data.to(device) for data in batch['hard']['data']]
             hard_mask_exist = [mask.to(device) for mask in batch['hard']['mask']]
@@ -453,9 +458,6 @@ class BiasCallback(Callback):
                 samples[i].append(batch_samples[i])
                 truth[i].append(reco_data[i][...,model.flow_indices[i]])
                 mask[i].append(reco_mask_exist[i])
-
-            if batch_idx >= self.N_batch:
-                break
 
         # Concat the whole samples list #
         samples = [torch.cat(sample,dim=1).cpu() for sample in samples]
@@ -497,13 +499,12 @@ class BiasCallback(Callback):
                     samples = samples_type[:,:,j,:],
                     features = model.flow_input_features[i],
                     title = f'{self.dataset.reco_dataset.selection[i]} #{j}',
-                    bins = self.bins,
-                    points = self.points,
-                    log_scale = self.log_scale,
                 )
                 if show:
                     plt.show()
                 figure_name = f'{self.dataset.reco_dataset.selection[i]}_{j}_bias'
+                if len(self.suffix) > 0:
+                    figure_name += f'_{self.suffix}'
                 figs[figure_name] = fig
 
                 fig = self.plot_quantiles(
@@ -514,6 +515,9 @@ class BiasCallback(Callback):
                     title = f'{self.dataset.reco_dataset.selection[i]} #{j}',
                 )
                 figure_name = f'{self.dataset.reco_dataset.selection[i]}_{j}_quantile'
+                if len(self.suffix) > 0:
+                    figure_name += f'_{self.suffix}'
+                figs[figure_name] = fig
 
         return figs
 
