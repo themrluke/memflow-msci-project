@@ -149,9 +149,36 @@ class BaseCallback(Callback,metaclass=ABCMeta):
 
 
 class AcceptanceCallback(BaseCallback):
-    def __init__(self,outlier_min=None,**kwargs):
-        self.outlier_min = outlier_min
+    def __init__(self,min_selected_events_per_bin=None,**kwargs):
+        self.min_selected_events_per_bin = min_selected_events_per_bin
         super().__init__(**kwargs)
+
+    def make_binning(self,values):
+        bin_content,bin_edges = np.histogram(values,self.bins)
+        # No threshold, just use bins #
+        if self.min_selected_events_per_bin is None:
+            return bins_edges
+        assert isinstance(self.min_selected_events_per_bin,(float,int))
+        # Accumulate bins to have them always above threshold #
+        acc_content = 0.
+        final_bin_edges = []
+        idx_last = 0
+        for i in range(len(bin_content)):
+            if len(final_bin_edges) == 0:
+                # device where to put first bin
+                if bin_content[i] > 0:
+                    final_bin_edges.append(bin_edges[i])
+            # Check if total of accumaulated bin is above threshold
+            acc_content += bin_content[i]
+            if acc_content > self.min_selected_events_per_bin:
+                final_bin_edges.append(bin_edges[i+1])
+                acc_content = 0.
+            if bin_content[i] > 0:
+                idx_last = i+1
+        # If still some content in accumulation, add latest bin that had non-zero content
+        if acc_content > 0:
+            final_bin_edges.append(bin_edges[idx_last])
+        return np.array(final_bin_edges)
 
     def plot_particle(self,inputs,targets,preds,features,title):
         N = len(features)
@@ -161,67 +188,66 @@ class AcceptanceCallback(BaseCallback):
 
         plt.suptitle(title,fontsize=16)
         for i in range(N):
+            # Determine the binning from
+            binning = self.make_binning(inputs[mask,i])
             # Make histogram of selected events only #
-            # This will determine the binning #
-            content_selected, bins_feat = np.histogram(inputs[mask,i],bins=self.bins)
+            content_selected, binning = np.histogram(inputs[mask,i],bins=binning)
             # Make histogram of all hard events #
-            content_feat, _ = np.histogram(inputs[:,i],bins=bins_feat)
+            content_feat, _ = np.histogram(inputs[:,i],bins=binning)
             # Make histogram of prediction #
-            content_pred_weighted, _ = np.histogram(inputs[:,i],bins=bins_feat,weights=preds.ravel())
-            content_pred_tot, _ = np.histogram(inputs[:,i],bins=bins_feat)
+            content_pred_weighted, _ = np.histogram(inputs[:,i],bins=binning,weights=preds.ravel())
+            content_pred_tot, _ = np.histogram(inputs[:,i],bins=binning)
             # Make histogram of acceptance (true) #
             content_acc = content_selected / (content_feat + EPS)
+            # Make uncertainty bands #
             var_acc = np.sqrt(content_selected) / (content_feat + EPS)
+            content_acc_up = content_acc + var_acc
+            content_acc_down = content_acc - var_acc
             # Make histogram of acceptance (pred) #
             content_pred_avg = content_pred_weighted / (content_pred_tot + EPS)
             # Make ratio #
             ratio_nom = content_pred_avg / (content_acc + EPS)
             ratio_var = var_acc / (content_acc + EPS)
-            # Remove outliers #
-            if self.outlier_min is not None:
-                mask_outlier = content_feat < self.outlier_min
-                #content_selected = 0.
-                content_pred_avg[mask_outlier] = 0.
-                content_acc[mask_outlier] = 0.
+            ratio_up = 1+abs(ratio_var)
+            ratio_down = 1-abs(ratio_var)
             # Plot #
             axs[0,i].stairs(
                 values = content_acc,
-                edges = bins_feat,
+                edges = binning,
                 color = 'royalblue',
                 label = 'Truth',
                 linewidth = 2,
             )
             axs[0,i].fill_between(
-                x = bins_feat[:-1],
-                y1 = content_acc-var_acc,
-                y2 = content_acc+var_acc,
-                where = content_selected > 0,
+                x = binning,
+                y1 = np.r_[content_acc_down,content_acc_down[-1]],
+                y2 = np.r_[content_acc_up,content_acc_up[-1]],
                 color = 'royalblue',
                 alpha = 0.3,
                 step = 'post',
             )
             axs[0,i].stairs(
                 values = content_pred_avg,
-                edges = bins_feat,
+                edges = binning,
                 color = 'orange',
                 label = 'Classifier',
                 linewidth = 2,
             )
             # Ratio #
             axs[1,i].step(
-                x = bins_feat[:-1],
-                y = ratio_nom,
+                x = binning,
+                y = np.r_[ratio_nom,ratio_nom[-1]],
                 linewidth = 2,
                 color = 'orange',
+                where = 'post',
             )
             axs[1,i].fill_between(
-                x = bins_feat[:-1],
-                y1 = 1-abs(ratio_var),
-                y2 = 1+abs(ratio_var),
-                where = content_selected > 0,
+                x = binning,
+                y1 = np.r_[ratio_down,ratio_down[-1]],
+                y2 = np.r_[ratio_up,ratio_up[-1]],
                 color = 'royalblue',
                 alpha = 0.3,
-                step = 'post',
+                step = 'mid',
             )
             # Esthetic #
             axs[0,i].set_ylabel('Acceptance',fontsize=16,labelpad=12)
