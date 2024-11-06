@@ -40,7 +40,44 @@ class Base:
             obj = self.cylindrical_to_cartesian(obj)
         return obj
 
-    def select_objects(self,obj_names):
+    def check_quantities(self,quantities,verbose=False):
+        assert isinstance(quantities,dict), f'Quantities must be a dict, got {type(quants)}'
+        print ('Checking particle quantities')
+        for part,n_req in quantities.items():
+            # Required number of particles #
+            if isinstance(n_req,int):
+                n_req = set([n_req])
+            elif isinstance(n_req,(tuple,list)):
+                n_req = set(n_req)
+            elif isinstance(n_req,set):
+                pass
+            else:
+                raise NotImplementedError(f'Type {type(n_req)} not understood')
+            # Particle names #
+            if isinstance(part,str):
+                part = tuple([part])
+            elif isinstance(part,tuple):
+                pass
+            else:
+                raise NotImplementedError(f'Type {type(part)} not understood')
+            # Get number of particles from data #
+            n_data = set(
+                np.unique(
+                    sum(
+                        [
+                            self.data[f'n_{p}']
+                            for p in part
+                        ]
+                    )
+                )
+            )
+            if verbose:
+                print (f'\tParticle(s) {part} : required {n_req}, found {n_data}')
+            if n_data != n_req:
+                raise RuntimeError(f'Particle {part} should have {n_req} multiplicity, but found {n_data}')
+        print ('... done, no problem found')
+
+    def select_present_particles(self,obj_names):
         mask = np.logical_and.reduce(
             (
                 [self.data[f'{obj_name}_E']>=0 for obj_name in obj_names]
@@ -52,6 +89,129 @@ class Base:
     @property
     def energy(self):
         return 13000 * GeV
+
+
+class HardBase(Base,HardDataset):
+    def __init__(self,**kwargs):
+        Base.__init__(self,**kwargs)
+        HardDataset.__init__(self,**kwargs)
+
+    def make_radiation_particles(self):
+        var_dict = {
+            'px'  : [
+                f'ISR_{i+1}_Px'
+                for i in range(15)
+            ],
+            'py'  : [
+                f'ISR_{i+1}_Py'
+                for i in range(15)
+            ],
+            'pz'  : [
+                f'ISR_{i+1}_Pz'
+                for i in range(15)
+            ],
+            'E'  : [
+                f'ISR_{i+1}_E'
+                for i in range(15)
+            ],
+            'pdgId'  : [
+                f'ISR_{i+1}_pdgId'
+                for i in range(15)
+            ],
+            'parent'  : [
+                f'ISR_{i+1}_parent'
+                for i in range(15)
+            ],
+        }
+        self.data.make_particles(
+            'ISR',
+            var_dict,
+             lambda vec: np.logical_and(
+                vec.E > 0.,
+                vec.parent >= 0,
+            )
+        )
+        self.data.make_particles(
+            'FSR',
+            var_dict,
+             lambda vec: np.logical_and(
+                vec.E > 0.,
+                vec.parent == -1,
+            )
+        )
+
+    def register_particles(self,particles=[]):
+        for particle in particles:
+            if self.coordinates == 'cylindrical':
+                fields = ['pt','eta','phi','mass','pdgId']
+            if self.coordinates == 'cartesian':
+                fields = ['px','py','pz','E','pdgId']
+            obj = self.data[particle]
+            obj = self.change_coordinates(obj)
+            if self.apply_boost:
+                obj = self.boost(obj,boost)
+            obj_padded, obj_mask = self.reshape(
+                input = obj,
+                value = 0.,
+                ax = 1,
+            )
+            self.register_object(
+                name = particle,
+                obj = obj_padded,
+                mask = obj_mask,
+                fields = fields
+            )
+
+    def preprocess_particles(self,particles):
+        # Preprocessing #
+        if self.apply_preprocessing:
+            if self.coordinates == 'cylindrical':
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = particles,
+                        scaler_dict = {
+                            'pt'   : logmodulus(),
+                        },
+                    )
+                )
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = particles,
+                        scaler_dict = {
+                            'pt'   : SklearnScaler(preprocessing.StandardScaler()),
+                            'eta'  : SklearnScaler(preprocessing.StandardScaler()),
+                            'phi'  : SklearnScaler(preprocessing.StandardScaler()),
+                            'm'    : SklearnScaler(preprocessing.StandardScaler()),
+                        },
+                    )
+                )
+            elif self.coordinates == 'cartesian':
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = ['final_states'],
+                        scaler_dict = {
+                            'px' : logmodulus(),
+                            'py' : logmodulus(),
+                            'pz' : logmodulus(),
+                            'E'  : logmodulus(),
+                        },
+                    )
+                )
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names = particles,
+                        scaler_dict = {
+                            'px' : SklearnScaler(preprocessing.StandardScaler()),
+                            'px' : SklearnScaler(preprocessing.StandardScaler()),
+                            'px' : SklearnScaler(preprocessing.StandardScaler()),
+                            'E'  : SklearnScaler(preprocessing.StandardScaler()),
+                        },
+                    )
+                )
+            else:
+                raise RuntimeError
+
+
 
 class RecoDoubleLepton(Base,RecoDataset):
     def __init__(self,**kwargs):

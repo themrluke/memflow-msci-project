@@ -5,21 +5,9 @@ import numpy as np
 from hepunits.units import MeV, GeV
 from sklearn import preprocessing
 
-from memflow.dataset.dataset import AbsDataset, HardDataset, RecoDataset
-from memflow.HH.base import Base, RecoDoubleLepton
-from memflow.dataset.preprocessing import (
-    lowercutshift,
-    logmodulus,
-    SklearnScaler,
-    PreprocessingPipeline,
-    PreprocessingStep,
-)
+from memflow.HH.base import HardBase, RecoDoubleLepton
 
-class TTDoubleLeptonHardDataset(Base,HardDataset):
-    def __init__(self,**kwargs):
-        Base.__init__(self,**kwargs)
-        HardDataset.__init__(self,**kwargs)
-
+class TTDoubleLeptonHardDataset(HardBase):
     @property
     def initial_states_pdgid(self):
         return [21,21]
@@ -41,8 +29,34 @@ class TTDoubleLeptonHardDataset(Base,HardDataset):
         )
 
     def process(self):
+        # Safety checks #
+        # Need to chechk both, and before applying the selection
+        self.check_quantities(
+            {
+                'top' : 1,
+                'antitop' : 1,
+                'bottom' : 1,
+                'antibottom' : 1,
+                'W_plus_from_top' : 1,
+                'W_minus_from_antitop' : 1,
+                (
+                    'lep_plus',
+                    'lep_minus',
+                    'neutrino',
+                    'antineutrino',
+                ) : 4,
+                (
+                    'quark_up',
+                    'quark_down',
+                    'antiquark_up',
+                    'antiquark_down',
+                ) : 0,
+            },
+            verbose=True,
+        )
+
         # Apply the cuts to select ttbar fully leptonic #
-        self.select_objects(
+        self.select_present_particles(
             [
                 'top',
                 'antitop',
@@ -56,6 +70,16 @@ class TTDoubleLeptonHardDataset(Base,HardDataset):
                 'antineutrino',
             ]
         )
+
+        # For now exclude the tau decays of the Ws #
+        #mask_tau_veto = np.logical_and(
+        #    self.data['lep_plus_pdgId'] != -15,
+        #    self.data['lep_minus_pdgId'] != +15,
+        #)
+        #print (f'From {len(mask_tau_veto)}, removing {sum(~mask_tau_veto)} tau decay events')
+        #self.data.cut(mask_tau_veto)
+
+
         # Make generator info #
         #boost = self.make_boost(generator.x1,generator.x2)
         x1 = np.random.random((self.data.events,1))
@@ -64,33 +88,43 @@ class TTDoubleLeptonHardDataset(Base,HardDataset):
 
         # Make particles #
         self.data.make_particles(
-            'leptons',
+            'final_states',
             {
                 'px'  : [
+                    'bottom_Px',
+                    'antibottom_Px',
                     'lep_plus_Px',
                     'neutrino_Px',
                     'lep_minus_Px',
                     'antineutrino_Px',
                 ],
                 'py'  : [
+                    'bottom_Py',
+                    'antibottom_Py',
                     'lep_plus_Py',
                     'neutrino_Py',
                     'lep_minus_Py',
                     'antineutrino_Py',
                 ],
                 'pz'  : [
+                    'bottom_Pz',
+                    'antibottom_Pz',
                     'lep_plus_Pz',
                     'neutrino_Pz',
                     'lep_minus_Pz',
                     'antineutrino_Pz',
                 ],
                 'E'  : [
+                    'bottom_E',
+                    'antibottom_E',
                     'lep_plus_E',
                     'neutrino_E',
                     'lep_minus_E',
                     'antineutrino_E',
                 ],
                 'pdgId'  : [
+                    'bottom_pdgId',
+                    'antibottom_pdgId',
                     'lep_plus_pdgId',
                     'neutrino_pdgId',
                     'lep_minus_pdgId',
@@ -99,53 +133,11 @@ class TTDoubleLeptonHardDataset(Base,HardDataset):
             },
             lambda vec: vec.E > 0.,
         )
-        self.data.make_particles(
-            'bquarks',
-            {
-                'px'  : [
-                    'bottom_Px',
-                    'antibottom_Px',
-                ],
-                'py'  : [
-                    'bottom_Py',
-                    'antibottom_Py',
-                ],
-                'pz'  : [
-                    'bottom_Pz',
-                    'antibottom_Pz',
-                ],
-                'E'  : [
-                    'bottom_E',
-                    'antibottom_E',
-                ],
-                'pdgId'  : [
-                    'bottom_pdgId',
-                    'antibottom_pdgId',
-                ],
-            },
-            lambda vec: vec.E > 0.,
-        )
-        if self.coordinates == 'cylindrical':
-            fields = ['pt','eta','phi','mass']
-        if self.coordinates == 'cartesian':
-            fields = ['px','py','pz','E']
-        for name in ['leptons','bquarks']:
-            obj = self.data[name]
-            obj = self.change_coordinates(obj)
-            if self.apply_boost:
-                obj = self.boost(obj,boost)
-            obj_padded, obj_mask = self.reshape(
-                input = obj,
-                value = 0.,
-                ax = 1,
-            )
-            self.register_object(
-                name = name,
-                obj = obj_padded,
-                mask = obj_mask,
-                fields = fields
-            )
-        self.match_coordinates(boost,obj) # need to be done after the boost
+        self.make_radiation_particles()
+        self.match_coordinates(boost,self.data['final_states']) # need to be done after the boost
+
+        self.register_particles(['final_states','ISR','FSR'])
+        self.preprocess_particles(['final_states','ISR','FSR'])
 
         ## Register gen level particles #
         #self.register_object(
@@ -184,30 +176,6 @@ class TTDoubleLeptonHardDataset(Base,HardDataset):
         #    fields = ME_fields,
         #)
 
-        # Preprocessing #
-        if self.apply_preprocessing:
-            if self.coordinates == 'cylindrical':
-                self.register_preprocessing_step(
-                    PreprocessingStep(
-                        names = ['leptons','bquarks'],
-                        scaler_dict = {
-                            'pt'   : logmodulus(),
-                        },
-                    )
-                )
-                self.register_preprocessing_step(
-                    PreprocessingStep(
-                        names = ['leptons','bquarks'],
-                        scaler_dict = {
-                            'pt'   : SklearnScaler(preprocessing.StandardScaler()),
-                            'eta'  : SklearnScaler(preprocessing.StandardScaler()),
-                            'phi'  : SklearnScaler(preprocessing.StandardScaler()),
-                            'm'    : SklearnScaler(preprocessing.StandardScaler()),
-                        },
-                    )
-                )
-            if self.coordinates == 'cartesian':
-                raise NotImplementedError
 
 
 class TTDoubleLeptonRecoDataset(RecoDoubleLepton):
