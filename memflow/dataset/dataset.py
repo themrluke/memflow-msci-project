@@ -605,14 +605,13 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             self._objects[name] = (data,mask,weights)
 
     @staticmethod
-    def reshape(input,value,ax,max_no=None):
+    def reshape(input,value,max_no=None):
         """
             Function called by user to reshape a variable length object with padding
             Args:
              - input [ak.Array] : input array (N,P,H)
              - value [ak.Array/int/float] : default value to fill missing entry
                     can be an awkward array with different values per field, or a float/it used for all the input fields
-            - ax [int] : axis for padding (typically 1 for P)
             - max_no [int] : maximum number of particles for padding, if not given takes the max value
             Returns :
             - padded+filled array [ak.Array]
@@ -631,9 +630,19 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             raise NotImplementedError(f'Type {type(value)} not implemented')
         if max_no is None:
             max_no = ak.max(ak.num(input, axis=ax))
-        input_padded = ak.pad_none(input, max_no, axis=ax, clip=True)
+        input_padded = ak.pad_none(
+            array = input,
+            target = max_no,
+            axis = 1,
+        )[:,:max_no]
+        # Not using clip because it creates RegularType and not ListType
+        # (not sure why it causes a bug though)
         mask = ~ak.is_none(input_padded,axis=1)
-        input_filled = ak.fill_none(input_padded, value, axis=ax)
+        input_filled = ak.fill_none(
+            array = input_padded,
+            value = value,
+            axis = None,
+        )
         return input_filled,mask
 
     @staticmethod
