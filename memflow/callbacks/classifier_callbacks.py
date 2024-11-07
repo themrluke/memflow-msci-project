@@ -153,12 +153,12 @@ class AcceptanceCallback(BaseCallback):
         self.min_selected_events_per_bin = min_selected_events_per_bin
         super().__init__(**kwargs)
 
-    def make_binning(self,values):
+    def make_binning(self,values,thresh=None):
         bin_content,bin_edges = np.histogram(values,self.bins)
         # No threshold, just use bins #
-        if self.min_selected_events_per_bin is None:
-            return bins_edges
-        assert isinstance(self.min_selected_events_per_bin,(float,int))
+        if thresh is None:
+            return bin_edges
+        assert isinstance(thresh,(float,int))
         # Accumulate bins to have them always above threshold #
         acc_content = 0.
         final_bin_edges = []
@@ -170,7 +170,7 @@ class AcceptanceCallback(BaseCallback):
                     final_bin_edges.append(bin_edges[i])
             # Check if total of accumaulated bin is above threshold
             acc_content += bin_content[i]
-            if acc_content > self.min_selected_events_per_bin:
+            if acc_content > thresh:
                 final_bin_edges.append(bin_edges[i+1])
                 acc_content = 0.
             if bin_content[i] > 0:
@@ -188,8 +188,16 @@ class AcceptanceCallback(BaseCallback):
 
         plt.suptitle(title,fontsize=16)
         for i in range(N):
-            # Determine the binning from
-            binning = self.make_binning(inputs[mask,i])
+            # Determine the binning from selected events #
+            if isinstance(self.min_selected_events_per_bin,(float,int)):
+                thresh = self.min_selected_events_per_bin
+            elif isinstance(self.min_selected_events_per_bin,dict):
+                if not features[i] in self.min_selected_events_per_bin.keys():
+                    raise RuntimeError(f'Feature {features[i]} not in min_selected_events_per_bin choices {self.min_selected_events_per_bin.keys()}')
+                thresh = self.min_selected_events_per_bin[features[i]]
+            else:
+                raise RuntimeError(f'Type {type(self.min_selected_events_per_bin)} of min_selected_events_per_bin not understood')
+            binning = self.make_binning(inputs[mask,i],thresh)
             # Make histogram of selected events only #
             content_selected, binning = np.histogram(inputs[mask,i],bins=binning)
             # Make histogram of all hard events #
