@@ -337,12 +337,18 @@ class AbsData(Mapping):
             # Turn the floats/ints into the awkward arrays #
             # Turn into vector awkward array #
             vec = ak.zip(
-                {key: array.tolist() if isinstance(array,ak.Array) else array for key,array in arrays.items()},
+                {
+                    key: array.tolist() if isinstance(array,ak.Array) else array
+                    for key,array in arrays.items()
+                },
                 # need the list to get *var* number of entries on axis=1
                 with_name="Momentum4D",
             )
             if lambda_mask is not None:
-                vec = vec[lambda_mask(vec)]
+                vec = ak.mask(vec,lambda_mask(vec))
+                # Need to use ak.mask to keep empty entries that do not pass the test
+                # but ak.mask puts None in empty places, let's drop them
+                vec = vec[~ak.is_none(vec,axis=-1)]
             self[name] = vec
         # If string, just make sure it is treated as Momentum4D #
         elif isinstance(link,str):

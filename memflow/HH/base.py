@@ -83,7 +83,7 @@ class Base:
                 [self.data[f'{obj_name}_E']>=0 for obj_name in obj_names]
             )
         )
-        print (f'Selecting {mask.sum()} events out of {len(mask)}')
+        print (f'Selecting decay : {mask.sum()} events out of {len(mask)}')
         self.data.cut(mask)
 
     @property
@@ -92,53 +92,77 @@ class Base:
 
 
 class HardBase(Base,HardDataset):
-    def __init__(self,**kwargs):
+    def __init__(self,n_ISR=None,**kwargs):
+        self.n_ISR = n_ISR
+
         Base.__init__(self,**kwargs)
         HardDataset.__init__(self,**kwargs)
 
-    def make_radiation_particles(self):
-        var_dict = {
-            'px'  : [
-                f'ISR_{i+1}_Px'
-                for i in range(15)
-            ],
-            'py'  : [
-                f'ISR_{i+1}_Py'
-                for i in range(15)
-            ],
-            'pz'  : [
-                f'ISR_{i+1}_Pz'
-                for i in range(15)
-            ],
-            'E'  : [
-                f'ISR_{i+1}_E'
-                for i in range(15)
-            ],
-            'pdgId'  : [
-                f'ISR_{i+1}_pdgId'
-                for i in range(15)
-            ],
-            'parent'  : [
-                f'ISR_{i+1}_parent'
-                for i in range(15)
-            ],
-        }
-        self.data.make_particles(
+    def register_ISR(self):
+        # Make particles #
+        ISR = self.data.make_particles(
             'ISR',
-            var_dict,
-             lambda vec: np.logical_and(
-                vec.E > 0.,
-                vec.parent >= 0,
+            {
+                'px'  : [
+                    f'ISR_{i+1}_Px'
+                    for i in range(15)
+                ],
+                'py'  : [
+                    f'ISR_{i+1}_Py'
+                    for i in range(15)
+                ],
+                'pz'  : [
+                    f'ISR_{i+1}_Pz'
+                    for i in range(15)
+                ],
+                'E'  : [
+                    f'ISR_{i+1}_E'
+                    for i in range(15)
+                ],
+                'pdgId'  : [
+                    f'ISR_{i+1}_pdgId'
+                    for i in range(15)
+                ],
+                'parent'  : [
+                    f'ISR_{i+1}_parent'
+                    for i in range(15)
+                ],
+            },
+            lambda vec: np.logical_and.reduce(
+                (
+                    vec.parent >= 0,
+                    vec.E > 0.,
+                    abs(vec.eta) <= 8,
+                )
             )
         )
-        self.data.make_particles(
-            'FSR',
-            var_dict,
-             lambda vec: np.logical_and(
-                vec.E > 0.,
-                vec.parent == -1,
-            )
+        # order ISR by pt
+        idx = ak.argsort(ISR.pt,ascending=False)
+        ISR = ISR[idx]
+        # Reshape based on request n_ISR #
+        if self.n_ISR is not None:
+            assert isinstance(self.n_ISR,int)
+            mask_ISR = ak.num(ISR,axis=1) >= self.n_ISR
+            print (f'Requested {self.n_ISR} ISR: {sum(mask_ISR)} events (out of {len(mask_ISR)}) have >= {self.n_ISR} ISR')
+            self.data.cut(mask_ISR)
+        # Reshape #
+        ISR_padded, ISR_mask = self.reshape(
+            input = self.data['ISR'], # recalling from data to take the cut into consideration
+            value = 0.,
+            max_no = self.n_ISR,
         )
+        # Register #
+        if self.coordinates == 'cylindrical':
+            fields = ['pt','eta','phi','mass','pdgId']
+        if self.coordinates == 'cartesian':
+            fields = ['px','py','pz','E','pdgId']
+        self.register_object(
+            name = 'ISR',
+            obj = ISR_padded,
+            mask = ISR_mask,
+            fields = fields,
+        )
+
 
     def register_particles(self,particles=[]):
         for particle in particles:
@@ -153,7 +177,6 @@ class HardBase(Base,HardDataset):
             obj_padded, obj_mask = self.reshape(
                 input = obj,
                 value = 0.,
-                ax = 1,
             )
             self.register_object(
                 name = particle,
@@ -165,6 +188,14 @@ class HardBase(Base,HardDataset):
     def preprocess_particles(self,particles):
         # Preprocessing #
         if self.apply_preprocessing:
+            #self.register_preprocessing_step(
+            #    PreprocessingStep(
+            #        names = particles,
+            #        scaler_dict = {
+            #            'pdgId'   : SklearnScaler(preprocessing.OneHotEncoder(sparse_output=False)),
+            #        },
+            #    )
+            #)
             if self.coordinates == 'cylindrical':
                 self.register_preprocessing_step(
                     PreprocessingStep(
@@ -188,7 +219,7 @@ class HardBase(Base,HardDataset):
             elif self.coordinates == 'cartesian':
                 self.register_preprocessing_step(
                     PreprocessingStep(
-                        names = ['final_states'],
+                        names = particles,
                         scaler_dict = {
                             'px' : logmodulus(),
                             'py' : logmodulus(),
@@ -290,17 +321,14 @@ class RecoDoubleLepton(Base,RecoDataset):
         jets_padded, jets_mask = self.reshape(
             input = jets,
             value = 0.,
-            ax = 1,
         )
         electrons_padded, electrons_mask = self.reshape(
             input = electrons,
             value = 0.,
-            ax = 1,
         )
         muons_padded, muons_mask = self.reshape(
             input = muons,
             value = 0.,
-            ax = 1,
         )
 
         self.match_coordinates(boost,jets) # need to be done after the boost

@@ -109,7 +109,11 @@ class HHbbWWDoubleLeptonHardDataset(HardBase):
         x2 = np.random.random((self.data.events,1))
         boost = self.make_boost(x1,x2)
 
-        # Make particles #
+        # Register ISR #
+        # Need to be done before final states if a cut on N(ISR) is done
+        self.register_ISR()
+
+        # Make final states #
         self.data.make_particles(
             'final_states',
             {
@@ -156,11 +160,11 @@ class HHbbWWDoubleLeptonHardDataset(HardBase):
             },
             lambda vec: vec.E > 0.,
         )
-        self.make_radiation_particles()
+        self.register_particles(['final_states'])
+
         self.match_coordinates(boost,self.data['final_states']) # need to be done after the boost
 
-        self.register_particles(['final_states','ISR','FSR'])
-        self.preprocess_particles(['final_states','ISR','FSR'])
+        self.preprocess_particles(['final_states','ISR'])
 
 #        # Register gen level particles #
 #        self.register_object(
