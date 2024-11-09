@@ -557,6 +557,8 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         # Get fields and then data tensore #
         fields = fields if fields is not None else obj.fields
         data = self.object_to_tensor(obj,fields)
+        if data.nelement() == 0:
+            raise RuntimeError(f'Trying to register an empty tensor {data.size()} for name {name}')
         # Compute and reshape mask #
         if mask is None:
             mask = torch.full(data.shape[:2],fill_value=True)
@@ -601,8 +603,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         # Finally apply the preprocessing transform #
         for name in self._objects.keys():
             data, mask, weights = self._objects[name]
-            data = self._preprocessing.transform(name,data,mask,self._fields[name])
+            data, fields = self._preprocessing.transform(name,data,mask,self._fields[name])
             self._objects[name] = (data,mask,weights)
+            self._fields[name] = fields
 
     @staticmethod
     def reshape(input,value,max_no=None):
@@ -781,9 +784,11 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         if self.processed_path is not None:
             if not os.path.exists(self.processed_path):
                 os.makedirs(self.processed_path)
-            for name,(data,mask,weights) in self._objects.items():
+            for name in self._objects.keys():
+                data,mask,weights = self._objects[name]
+                fields = self._fields[name]
                 torch.save(
-                    (data,mask,weights),
+                    (data,mask,weights,fields),
                     os.path.join(self.processed_path,f'{name}.pt')
                 )
         print (f'Saving objects to {self.processed_path}')
@@ -795,8 +800,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         print (f'Loading objects from {self.processed_path}')
         for f in glob.glob(os.path.join(self.processed_path,'*.pt')):
             name = os.path.basename(f).replace('.pt','')
-            data,mask,weights = torch.load(f)
+            data,mask,weights,fields = torch.load(f)
             self._objects[name] = (data,mask,weights)
+            self._fields[name] = fields
 
     ##### Magic methods #####
     def __getitem__(self,idx):
@@ -865,8 +871,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             ],
         }
 
-    def plot(self,raw=False,selection=False,weighted=False,log=False):
+    def plot(self,fields_to_plot=None,raw=False,selection=False,weighted=False,log=False):
         names = self.selection if selection else self._objects.keys()
+        if fields_to_plot is not None:
+            if isinstance(fields_to_plot,(list,tuple)):
+                pass
+            elif isinstance(fields_to_plot,str):
+                fields_to_plot = [fields_to_plot]
+            else:
+                raise RuntimeError(f'Type {type(fields_to_plot)} not understood')
         for name in names:
             # Get objects for name #
             data,mask,weights = self._objects[name]
@@ -875,30 +888,43 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             if mask.dtype != torch.bool:
                 mask = mask > 0
             if raw:
-                data = self._preprocessing.inverse(name,data,mask,fields)
+                data,fields = self._preprocessing.inverse(name,data,mask,fields)
             # Generate figure #
             n_parts = data.shape[1]
-            n_cols = data.shape[2]
+            if fields_to_plot is None:
+                fields_to_plot = fields
+                field_indices = torch.arange(len(fields))
+                n_cols = len(fields)
+            else:
+                fields_to_plot = [field for field in fields if field in fields_to_plot]
+                field_indices = [i for i,field in enumerate(fields) if field in fields_to_plot]
+                n_cols = len(fields_to_plot)
             if n_parts > 1:
                 fig,axs = plt.subplots(1,n_cols+1,figsize=(4.5*(n_cols+1),4))
             else:
                 fig,axs = plt.subplots(1,n_cols,figsize=(4.5*n_cols,4))
+            if not isinstance(axs,np.ndarray):
+                axs = np.array([axs])
             fig.suptitle(f'Objects : {name}')
             # Loop over features #
-            for i in range(n_cols):
+            for k,(i,field) in enumerate(zip(field_indices,fields_to_plot)):
+                # Find index from field name #
+                if field not in fields:
+                    raise RuntimeError(f'Field {field} not in {fields}')
+                # Make binning #
                 bins = np.linspace(data[:,:,i].min(),data[:,:,i].max(),50)
                 # Loop over particles #
                 for j in range(n_parts):
                     if weighted:
-                        axs[i].hist(data[:,j,i][mask[:,j]],weights=weights[:,j][mask[:,j]],bins=bins,histtype='step',linewidth=2)
+                        axs[k].hist(data[:,j,i][mask[:,j]],weights=weights[:,j][mask[:,j]],bins=bins,histtype='step',linewidth=2)
                     else:
-                        axs[i].hist(data[:,j,i][mask[:,j]],bins=bins,histtype='step',linewidth=2)
-                axs[i].set_xlabel(fields[i])
+                        axs[k].hist(data[:,j,i][mask[:,j]],bins=bins,histtype='step',linewidth=2)
+                axs[k].set_xlabel(field)
                 if log:
-                    axs[i].set_yscale('log')
-                    axs[i].set_ylim((0.1,None))
+                    axs[k].set_yscale('log')
+                    axs[k].set_ylim((0.1,None))
                 else:
-                    axs[i].set_ylim((0,None))
+                    axs[k].set_ylim((0,None))
             # Add legend in last subplot #
             if n_parts > 1:
                 axs[-1].axis('off')
