@@ -62,7 +62,9 @@ class SklearnScaler(AbsScaler):
             raise RuntimeError(f'Scaler {self.obj} has not been fitted yet')
         # Sklearn produces np arrays #
         if isinstance(y,np.ndarray):
-            y = torch.tensor(y)
+            if y.dtype == 'O': # typically when containing None
+                y = y.astype(np.float32)
+            y = torch.from_numpy(y)
         if x.dtype != y.dtype:
             y = y.to(x.dtype)
         return y
@@ -75,7 +77,9 @@ class SklearnScaler(AbsScaler):
             raise RuntimeError('Scaler has not been fitted yet')
         # Sklearn produces np arrays #
         if isinstance(y,np.ndarray):
-            y = torch.tensor(y)
+            if y.dtype == 'O': # typically when containing None
+                y = y.astype(np.float32)
+            y = torch.from_numpy(y)
         if x.dtype != y.dtype:
             y = y.to(x.dtype)
         return y
@@ -91,6 +95,7 @@ class PreprocessingPipeline:
         self.steps = []
 
     def add_step(self,step):
+        assert isinstance(step,PreprocessingStep)
         self.steps.append(step)
 
     def fit(self,names,xs,masks,fields):
@@ -112,21 +117,21 @@ class PreprocessingPipeline:
             )
             # Apply the transform that was just fitted to get the input of the next step #
             for i in indices:
-                xs[i] = step.transform(names[i],xs[i],masks[i],fields[i])
+                xs[i],fields[i] = step.transform(names[i],xs[i],masks[i],fields[i])
 
     def transform(self,name,x,mask,fields):
         assert x.shape[-1] == len(fields), f'Mismatch between shape {x.shape} and number of fields {len(fields)}'
         for step in self.steps:
             if step.applies(name):
-                x = step.transform(name,x,mask,fields)
-        return x
+                x,fields = step.transform(name,x,mask,fields)
+        return x,fields
 
     def inverse(self,name,x,mask,fields):
         assert x.shape[-1] == len(fields), f'Mismatch between shape {x.shape} and number of fields {len(fields)}'
         for step in reversed(self.steps):
             if step.applies(name):
-                x = step.inverse(name,x,mask,fields)
-        return x
+                x,fields = step.inverse(name,x,mask,fields)
+        return x,fields
 
     def is_processed(self,field):
         for names,step in self.steps:
@@ -142,11 +147,13 @@ class PreprocessingStep:
     """
     Class that applies a scaler to some variable as determined by the scaler_dict
     """
-    def __init__(self,names,scaler_dict,fields_select=None): # TODO : update docs
+    def __init__(self,names,scaler_dict,fields_select=None):
         """
         Args :
+              - names [str/list] : list of names for particle types to use
+                Need those to keeptrack of multiple objects during processing in the pipeline
               - scaler_dict [dict] : dict with variable name as keys, and scalers as values
-
+              - fields_select [list[list]/None] : list of features for each particle to restrict transform
             Example:
             ```
                 scaler_dict = {'pt': logmodulus}
@@ -170,20 +177,39 @@ class PreprocessingStep:
                     [...]
                 }
             ```
+            If provided, the fields_select must b a list with for each particle type in names,
+            tells which feature to actually include.
+            This is useful when some particles do not have the feature in question (eg eta in the MET)
+            Example:
+            ```
+                names = ['jets','met'],
+                scaler_dict = {'pt':<scaler>,'eta':<scaler>},
+                fields_select = [['pt','eta'],['pt']]
+            ```
+            In this example, the pt is scaler together for jets and met, but eta is only included for jets
+
         """
         # Attributes #
+        if isinstance(names,str):
+            self.names = [names]
+        elif isinstance(names,(list,tuple)):
+            self.names = names
+        else:
+            raise TypeError
         self.names = names
         self.scaler_dict = scaler_dict
+        assert isinstance(self.scaler_dict,dict)
         self.fields_select = fields_select
         # Safety checks #
         if self.fields_select is not None:
+            assert isinstance(self.fields_select,(list,tuple)), f'{type(self.fields_select)}'
             if len(self.fields_select) != len(self.names):
                 raise RuntimeError(f'Got {len(self.names)} objects but {len(self.fields_select)} set of fields')
             for fields in self.fields_select:
                 if not isinstance(fields,(list,tuple)):
                     fields = tuple(fields)
                 if len(set(fields)-set(self.keys())) > 0:
-                    raise RuntimeError(f'Selecting fields that are not in the scaler dict {[f for f in fields if f not in self.keys()]}')
+                    raise RuntimeError(f'Selecting fields ({fields}) that are not in the scaler dict ({self.keys()}): {[f for f in fields if f not in self.keys()]}')
         else:
             self.fields_select = [tuple(self.scaler_dict.keys()) for _ in range(len(self.names))]
         for key,val in self.scaler_dict.items():
@@ -223,20 +249,57 @@ class PreprocessingStep:
         x = x.clone() # avoid reference issues
         if mask.dtype != torch.bool:
             mask = mask > 0
-        fields_select = self.fields_select[self.names.index(name)]
 
+        fields_select = self.fields_select[self.names.index(name)]
+        unique_fields = list(dict.fromkeys(fields))
+        field_indices = {
+            field : [i for i in range(len(fields)) if fields[i]==field]
+            for field in unique_fields
+        }
         # Need to use inner loops here, because application of the mask linearizes the 2D tensor
-        # Loop over particles #
-        for j in range(x.shape[1]):
-            # Skip if none of the particles exist #
-            if mask[:,j].sum() == 0:
-                continue
-            # Loop over features #
-            for i,field in enumerate(fields):
-                if field in fields_select and field in self.scaler_dict.keys():
-                    scaling = getattr(self.scaler_dict[field],direction)
-                    x[:,j,i][mask[:,j]] = scaling(x[:,j,i][mask[:,j]].unsqueeze(-1)).squeeze(-1)
-        return x
+        # Will also split the input by feature and concat later
+        # This is because some preprocessing (eg onehot) will change the feature dimension
+        # Loop over features #
+        xfs = []
+        proc_fields = []
+        for field in unique_fields:
+            indices = field_indices[field]
+            xf = x[...,indices]
+            proc_field = [field for _ in range(len(indices))]
+            if field in fields_select:
+                # Get scaling
+                scaling = getattr(self.scaler_dict[field],direction)
+                # Loop over particles and mask
+                xps = []
+                for i in range(xf.shape[1]):
+                    xp = xf[:,i,:]
+                    mp = mask[:,i]
+                    xs = scaling(xp)
+                    # Treat cases where feature dimension changes #
+                    if xs.shape[-1] > xp.shape[-1]:
+                        # operation increases the number of features (eg onehot encoding)
+                        assert xp.shape[-1] == 1
+                        # First repeat then replace unmasked
+                        xp = xp.repeat_interleave(xs.shape[-1],dim=-1)
+                        # repeat the field to keep track
+                        proc_field = [field for _ in range(xs.shape[-1])]
+                    if xs.shape[-1] < xp.shape[-1]:
+                        assert xs.shape[-1] == 1
+                        # first restrict xp (we had repeated it so it's fine)
+                        xp = xp[:,:1]
+                        proc_field = [proc_field[0]]
+                    # Change the values but only unmasked particles #
+                    xp[mp] = xs[mp]
+                    # Record #
+                    xps.append(xp.unsqueeze(1))
+                # Combine all the particles
+                xf = torch.cat(xps,dim=1)
+            # Record feature array #
+            xfs.append(xf)
+            proc_fields.extend(proc_field)
+        # Combine all the features #
+        x = torch.cat(xfs,dim=-1)
+        return x,proc_fields
 
     def transform(self,name,x,mask,fields):
         """

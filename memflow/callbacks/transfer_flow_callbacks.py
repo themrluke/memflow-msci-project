@@ -158,6 +158,8 @@ class SamplingCallback(Callback):
     def on_validation_epoch_end(self,trainer,pl_module):
         if trainer.sanity_checking:  # optional skip
             return
+        if trainer.current_epoch == 0:
+            return
         if trainer.current_epoch % self.frequency != 0:
            return
 
@@ -175,7 +177,7 @@ class SamplingCallback(Callback):
             plt.close(figure)
 
 class BiasCallback(Callback):
-    def __init__(self,dataset,N_sample=1,frequency=1,raw=False,bins=50,points=20,device=None,suffix='',N_batch=math.inf,batch_size=1024):
+    def __init__(self,dataset,N_sample=1,frequency=1,raw=False,bins=50,points=20,log_scale=False,device=None,suffix='',N_batch=math.inf,batch_size=1024):
         super().__init__()
 
         # Attributes #
@@ -471,7 +473,7 @@ class BiasCallback(Callback):
                 name = self.dataset.reco_dataset.selection[i]
                 fields = self.dataset.reco_dataset._fields[name]
                 flow_fields = [fields[idx] for idx in model.flow_indices[i]]
-                truth[i] = preprocessing.inverse(
+                truth[i], _ = preprocessing.inverse(
                     name = name,
                     x = truth[i],
                     mask = mask[i],
@@ -487,7 +489,7 @@ class BiasCallback(Callback):
                     x = samples[i].reshape(self.N_sample*samples[i].shape[1],samples[i].shape[2],samples[i].shape[3]),
                     mask = mask[i].unsqueeze(0).repeat_interleave(self.N_sample,dim=0).reshape(self.N_sample*mask[i].shape[0],mask[i].shape[1]),
                     fields = flow_fields,
-                ).reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
+                )[0].reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
 
         # Make figure plots #
         figs = {}
@@ -524,6 +526,8 @@ class BiasCallback(Callback):
 
     def on_validation_epoch_end(self,trainer,pl_module):
         if trainer.sanity_checking:  # optional skip
+            return
+        if trainer.current_epoch == 0:
             return
         if trainer.current_epoch % self.frequency != 0:
            return

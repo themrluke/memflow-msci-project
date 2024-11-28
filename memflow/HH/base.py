@@ -1,7 +1,7 @@
 import os
+import numpy as np
 import torch
 import awkward as ak
-import numpy as np
 from hepunits.units import MeV, GeV
 from sklearn import preprocessing
 
@@ -17,7 +17,8 @@ from memflow.dataset.preprocessing import (
 from IPython import embed
 
 class Base:
-    def __init__(self,coordinates='cartesian',apply_preprocessing=False,apply_boost=False,**kwargs):
+    def __init__(self,build_dir,coordinates='cartesian',apply_preprocessing=False,apply_boost=False,**kwargs):
+        self.build_dir = build_dir
         self.coordinates = coordinates
         self.apply_preprocessing = apply_preprocessing
         self.apply_boost = apply_boost
@@ -90,6 +91,11 @@ class Base:
     def energy(self):
         return 13000 * GeV
 
+    @property
+    def intersection_branch(self):
+        return 'event'
+
+
 
 class HardBase(Base,HardDataset):
     def __init__(self,n_ISR=None,**kwargs):
@@ -139,12 +145,25 @@ class HardBase(Base,HardDataset):
         # order ISR by pt
         idx = ak.argsort(ISR.pt,ascending=False)
         ISR = ISR[idx]
+
+        # Printout #
+        max_ISR = ak.max(ak.num(ISR,axis=1))
+        n_events = ak.num(ISR,axis=0)
+        print (f'Out of {n_events} events :')
+        for i in range(max_ISR+1):
+            n_sel_ISR = ak.sum((ak.num(ISR,axis=1) == i))
+            print (f'  - {n_sel_ISR:8d} [{n_sel_ISR/n_events*100:3.2f}%] events with n(ISR) = {i}')
+
         # Reshape based on request n_ISR #
         if self.n_ISR is not None:
             assert isinstance(self.n_ISR,int)
-            mask_ISR = ak.num(ISR,axis=1) >= self.n_ISR
-            print (f'Requested {self.n_ISR} ISR: {sum(mask_ISR)} events (out of {len(mask_ISR)}) have >= {self.n_ISR} ISR')
+            assert self.n_ISR >= 0
+            mask_ISR = ak.num(ISR,axis=1) == self.n_ISR
+            print (f'Required {self.n_ISR} ISR : selecting {ak.sum(mask_ISR)} events')
             self.data.cut(mask_ISR)
+            if self.n_ISR == 0:
+                print ('Required ISR is 0, will not register it')
+                return
         # Reshape #
         ISR_padded, ISR_mask = self.reshape(
             input = self.data['ISR'], # recalling from data to take the cut into consideration
@@ -185,14 +204,34 @@ class HardBase(Base,HardDataset):
                 fields = fields
             )
 
-    def preprocess_particles(self,particles):
-        # Preprocessing #
+    def finalize(self):
+        particles = ['final_states']
+        if 'ISR' in self._objects.keys():
+            particles.append('ISR')
+
         if self.apply_preprocessing:
             #self.register_preprocessing_step(
             #    PreprocessingStep(
             #        names = particles,
             #        scaler_dict = {
-            #            'pdgId'   : SklearnScaler(preprocessing.OneHotEncoder(sparse_output=False)),
+            #            'pdgId'   : SklearnScaler(
+            #                preprocessing.OneHotEncoder(
+            #                    categories = [
+            #                        # category indices must be sorted
+            #                        np.array(
+            #                            [
+            #                                -16,-15,-14,-13,-12,-11,    # antileptons
+            #                                -5,-4,-3,-2,-1,             # antiquarks
+            #                                1,2,3,4,5,                  # quarks
+            #                                11,12,13,14,15,16,          # leptons
+            #                                21,                         # gluons
+            #                            ]
+            #                        )
+            #                    ],
+            #                    sparse_output = False,
+            #                    handle_unknown = 'ignore', # ignores zero-padded missing particles
+            #                ),
+            #            ),
             #        },
             #    )
             #)
@@ -245,11 +284,30 @@ class HardBase(Base,HardDataset):
 
 
 class RecoDoubleLepton(Base,RecoDataset):
-    def __init__(self,**kwargs):
+    def __init__(self,topology,**kwargs):
+        self.topology = topology
+        assert self.topology in ['resolved','boosted']
+
+        # Base classes #
         Base.__init__(self,**kwargs)
         RecoDataset.__init__(self,**kwargs)
 
+
     def process(self):
+        # Make selection #
+        print ('Initial reco events :',self.data.events)
+        if self.topology == 'resolved':
+            mask_resolved = np.logical_and.reduce(
+                (
+                    self.data['flag_SR']==1,
+                    self.data['n_AK4']>=2,
+                    self.data['n_AK4B']>=1,
+                )
+            )
+            self.data.cut(mask_resolved)
+            print ('Resolved reco events :',self.data.events)
+        if self.topology == 'boosted':
+            raise NotImplementedError
         # Make particles #
         n_jets = 15
         jets = self.data.make_particles(
@@ -300,6 +358,16 @@ class RecoDoubleLepton(Base,RecoDataset):
             },
         )
 
+        # Change jet order #
+        # Firs make sure they are btag-ordered #
+        idx_btag = ak.argsort(jets.btag,ascending=False)
+        jets = jets[idx_btag]
+        # Keep the two first jet btag-ordered
+        # Rest should be pt-ordered
+        idx_pt = ak.argsort(jets.pt[:,2:],ascending=False)
+        idx = ak.concatenate((idx_btag[:,:2],idx_pt+2),axis=1)
+        jets = jets[idx]
+
         # Cartesian to cylindrical #
         jets = self.change_coordinates(jets)
         electrons = self.change_coordinates(electrons)
@@ -321,6 +389,7 @@ class RecoDoubleLepton(Base,RecoDataset):
         jets_padded, jets_mask = self.reshape(
             input = jets,
             value = 0.,
+            max_no = 4,
         )
         electrons_padded, electrons_mask = self.reshape(
             input = electrons,
@@ -335,11 +404,12 @@ class RecoDoubleLepton(Base,RecoDataset):
 
 
         # Get jet weights #
-        N_events = ak.count(jets_padded,axis=0)[0]
-        N_jets = ak.max(ak.count(jets,axis=1))
+        N_events = ak.num(jets_padded,axis=0)
+        N_jets = ak.max(ak.num(jets_padded,axis=1))
         weight_jets = torch.ones((N_events,N_jets))
-        for i in range(N_jets):
-            weight_jets[:,i] *= N_events / ak.sum(jets_mask,axis=0)[i]
+        #for i in range(N_jets):
+        #    weight_jets[:,i] *= N_events / ak.sum(jets_mask,axis=0)[i]
+
 
         # Register objects #
         self.register_object(
@@ -367,6 +437,7 @@ class RecoDoubleLepton(Base,RecoDataset):
             obj = met,
         )
 
+    def finalize(self):
         # Preprocessing #
         if self.apply_preprocessing:
             if self.coordinates != 'cylindrical':
@@ -395,6 +466,13 @@ class RecoDoubleLepton(Base,RecoDataset):
                         'pt' : logmodulus(),
                         'mass' : logmodulus(),
                     },
+                    fields_select = [
+                        ('pt','mass'),
+                        ('pt',),
+                        ('pt',),
+                        ('pt',),
+                    ]
+
                 )
             )
             self.register_preprocessing_step(
@@ -414,6 +492,21 @@ class RecoDoubleLepton(Base,RecoDataset):
                     ]
                 )
             )
+            #self.register_preprocessing_step(
+            #    PreprocessingStep(
+            #        names = ['jets','electrons','muons','met'],
+            #        scaler_dict = {
+            #            'pdgId'   : SklearnScaler(
+            #                preprocessing.OneHotEncoder(
+            #                    categories = [np.array([-15,-13,-11,0,+11,+13,+15])],
+            #                    sparse_output = False,
+            #                    handle_unknown = 'ignore', # ignores zero-padded missing particles
+            #                ),
+            #            ),
+            #        },
+            #    )
+            #)
+
 
     @property
     def attention_idx(self):

@@ -25,15 +25,9 @@ class HHbbWWDoubleLeptonHardDataset(HardBase):
     @property
     def processed_path(self):
         return os.path.join(
-            os.getcwd(),
+            self.build_dir,
             'hh_hard'
         )
-
-    @property
-    def attention_idx(self):
-        return {
-            'ISR' : [0]
-        }
 
     def process(self):
         # Safety checks #
@@ -104,10 +98,10 @@ class HHbbWWDoubleLeptonHardDataset(HardBase):
         #self.data.cut(mask_tau_veto)
 
         # Make generator info #
-        #boost = self.make_boost(generator.x1,generator.x2)
-        x1 = np.random.random((self.data.events,1))
-        x2 = np.random.random((self.data.events,1))
-        boost = self.make_boost(x1,x2)
+        boost = self.make_boost(
+            self.data['Generator_x1'],
+            self.data['Generator_x2'],
+        )
 
         # Register ISR #
         # Need to be done before final states if a cut on N(ISR) is done
@@ -164,8 +158,6 @@ class HHbbWWDoubleLeptonHardDataset(HardBase):
 
         self.match_coordinates(boost,self.data['final_states']) # need to be done after the boost
 
-        self.preprocess_particles(['final_states','ISR'])
-
 #        # Register gen level particles #
 #        self.register_object(
 #            name = 'boost',
@@ -209,7 +201,7 @@ class HHbbWWDoubleLeptonRecoDataset(RecoDoubleLepton):
     @property
     def processed_path(self):
         return os.path.join(
-            os.getcwd(),
+            self.build_dir,
             'hh_reco',
         )
 

@@ -30,6 +30,8 @@ class BaseCallback(Callback,metaclass=ABCMeta):
     def on_validation_epoch_end(self,trainer,pl_module):
         if trainer.sanity_checking:  # optional skip
             return
+        if trainer.current_epoch == 0:
+            return
         if trainer.current_epoch % self.frequency != 0:
            return
 
@@ -118,13 +120,11 @@ class BaseCallback(Callback,metaclass=ABCMeta):
             # Preprocessing #
             if self.raw:
                 preprocessing = self.dataset.hard_dataset._preprocessing
-                name = self.dataset.hard_dataset.selection[j]
-                fields = self.dataset.hard_dataset._fields[name]
-                inputs_type = preprocessing.inverse(
+                inputs_type, features = preprocessing.inverse(
                     name = name,
                     x = inputs_type,
-                    mask = torch.ones((inputs_type.shape[0],inputs_type.shape[1])),
-                    fields = fields,
+                    mask = torch.full((inputs_type.shape[0],inputs_type.shape[1]),fill_value=True),
+                    fields = features,
                 )
 
             # Loop over particles within type #
@@ -184,7 +184,7 @@ class AcceptanceCallback(BaseCallback):
         N = len(features)
         fig,axs = plt.subplots(ncols=N,nrows=2,figsize=(6*N,5),height_ratios=[1.0,0.2])
         plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.4,hspace=0.1)
-        mask = (targets > 0).ravel()
+        mask_sel = (targets > 0).ravel()
 
         plt.suptitle(title,fontsize=16)
         for i in range(N):
@@ -197,9 +197,9 @@ class AcceptanceCallback(BaseCallback):
                 thresh = self.min_selected_events_per_bin[features[i]]
             else:
                 raise RuntimeError(f'Type {type(self.min_selected_events_per_bin)} of min_selected_events_per_bin not understood')
-            binning = self.make_binning(inputs[mask,i],thresh)
+            binning = self.make_binning(inputs[mask_sel,i],thresh)
             # Make histogram of selected events only #
-            content_selected, binning = np.histogram(inputs[mask,i],bins=binning)
+            content_selected, binning = np.histogram(inputs[mask_sel,i],bins=binning)
             # Make histogram of all hard events #
             content_feat, _ = np.histogram(inputs[:,i],bins=binning)
             # Make histogram of prediction #

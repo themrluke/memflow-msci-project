@@ -64,8 +64,15 @@ class TransferFlow(L.LightningModule):
         self.flow_specific_args = flow_specific_args
         assert self.flow_mode in ['type','particle','global']
 
-        self.reco_mask_attn = torch.cat((torch.tensor([True]),reco_mask_attn),dim=0) # Adding True at index=0 for null token
+        if reco_mask_attn is None:
+            self.reco_mask_attn = None
+            print ('No reco attention mask provided, will use the exist mask for the attention')
+        else:
+            self.reco_mask_attn = torch.cat((torch.tensor([True]),reco_mask_attn),dim=0) # Adding True at index=0 for null token
+        if hard_mask_attn is None:
+            print ('No hard attention mask provided, will use the exist mask for the attention')
         self.hard_mask_attn  = hard_mask_attn
+
         self.onehot_encoding = onehot_encoding
 
         # Safety checks #
@@ -221,6 +228,21 @@ class TransferFlow(L.LightningModule):
         log_probs, mask, weights = self(batch)
         assert log_probs.shape == mask.shape, f'Log prob has shape {log_probs.shape}, and mask {mask.shape}'
         assert log_probs.shape == weights.shape, f'Log prob has shape {log_probs.shape}, and weights {weights.shape}'
+        if torch.isnan(log_probs).sum()>0:
+            where_nan = torch.where(torch.isnan(log_probs))
+            mask_nan = mask[where_nan]>0
+            where_nan = [coord[mask_nan] for coord in where_nan]
+            if where_nan[0].nelement() > 0:
+                #raise RuntimeError(f'nans at coordinates {where_nan}')
+                print (f'nans at coordinates {where_nan}')
+        if torch.isinf(log_probs).sum()>0:
+            where_inf = torch.where(torch.isinf(log_probs))
+            mask_inf = mask[where_inf]>0
+            where_inf = [coord[mask_inf] for coord in where_inf]
+            if where_inf[0].nelement() > 0:
+                #raise RuntimeError(f'infs at coordinates {where_inf}')
+                print (f'infs at coordinates {where_inf}')
+        log_probs = torch.nan_to_num(log_probs,nan=0.0,posinf=0.,neginf=0.)
         # Record per object loss #
         idx = 0
         for i,n in enumerate(self.n_reco_particles_per_type):
@@ -238,13 +260,10 @@ class TransferFlow(L.LightningModule):
         # Get total loss, weighted and averaged over existing objects and events #
         log_prob_tot = (
             (
-                torch.nan_to_num(
-                    (log_probs * mask * weights),   # log prob masked and weighted
-                    nan = 0.
-                )
+                log_probs * mask * weights          # log prob masked and weighted
             ).sum(dim=1) / mask.sum(dim=1)          # averaged over number of existing particles
         ).mean()                                    # averaged on all events
-        self.log(f"{prefix}/loss", log_prob_tot, prog_bar=True)
+        self.log(f"{prefix}/loss_tot", log_prob_tot, prog_bar=True)
         # Return #
         return log_prob_tot
 
@@ -308,26 +327,42 @@ class TransferFlow(L.LightningModule):
             dim = 1
         ) * reco_mask_exist_null[...,None]
 
-        # Expand correlation mask #
+        # Expand attention mask #
         # Need to turn 0->1 when particle exists #
-        hard_mask_attn  = torch.logical_or(
-            self.hard_mask_attn.to(hard_mask_exist.device),
-            hard_mask_exist,
-        )
-        reco_mask_attn = torch.logical_or(
-            self.reco_mask_attn.to(reco_mask_exist_null.device),
-            reco_mask_exist_null,
-        )
+        if self.hard_mask_attn is None:
+            hard_mask_attn = hard_mask_exist
+        else:
+            hard_mask_attn  = torch.logical_or(
+                self.hard_mask_attn.to(hard_mask_exist.device),
+                hard_mask_exist,
+            )
+        if self.reco_mask_attn is None:
+            reco_mask_attn = reco_mask_exist_null
+        else:
+            reco_mask_attn = torch.logical_or(
+                self.reco_mask_attn.to(reco_mask_exist_null.device),
+                reco_mask_exist_null,
+            )
         # -> Make sure that particles we want in the attention are considered even if missing
         # (in which case the default values are set in the dataset class, no need to re default them)
+        # Turn them into boolean arrays #
+        if hard_mask_attn.dtype != torch.bool:
+            hard_mask_attn = hard_mask_attn > 0
+        if reco_mask_attn.dtype != torch.bool:
+            reco_mask_attn = reco_mask_attn > 0
+        # replace True->0, False->-inf
+        # To have same dtype as tgt_mask
+        hard_mask_attn = torch.zeros_like(hard_mask_attn).to(torch.float32).masked_fill(~hard_mask_attn,float("-inf"))
+        reco_mask_attn = torch.zeros_like(reco_mask_attn).to(torch.float32).masked_fill(~reco_mask_attn,float("-inf"))
 
         # Transformer processing #
         condition = self.transformer(
-            src = hard_data,
-            tgt = reco_data_null,
-            tgt_mask = self.tgt_mask.to(hard_data.device),
-            src_key_padding_mask = (~hard_mask_attn).to(self.tgt_mask.dtype),
-            tgt_key_padding_mask = (~reco_mask_attn).to(self.tgt_mask.dtype),
+            src = hard_data,                                # encoder (hard) input
+            tgt = reco_data_null,                           # decorder (reco) input
+            tgt_mask = self.tgt_mask.to(hard_data.device),  # triangular (causality) mask
+            src_key_padding_mask = hard_mask_attn,          # encoder (hard) mask
+            memory_key_padding_mask = hard_mask_attn,       # encoder output / memory mask
+            tgt_key_padding_mask = reco_mask_attn,          # decoder (reco) mask
         )
 
         # Split condition per particle type to match reco_data segmentation #

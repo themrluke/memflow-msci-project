@@ -24,7 +24,7 @@ class TTDoubleLeptonHardDataset(HardBase):
     @property
     def processed_path(self):
         return os.path.join(
-            os.getcwd(),
+            self.build_dir,
             'tt_hard'
         )
 
@@ -81,10 +81,14 @@ class TTDoubleLeptonHardDataset(HardBase):
 
 
         # Make generator info #
-        #boost = self.make_boost(generator.x1,generator.x2)
-        x1 = np.random.random((self.data.events,1))
-        x2 = np.random.random((self.data.events,1))
-        boost = self.make_boost(x1,x2)
+        boost = self.make_boost(
+            self.data['Generator_x1'],
+            self.data['Generator_x2'],
+        )
+
+        # Register ISR #
+        # Need to be done before final states if a cut on N(ISR) is done
+        self.register_ISR()
 
         # Make particles #
         self.data.make_particles(
@@ -133,11 +137,9 @@ class TTDoubleLeptonHardDataset(HardBase):
             },
             lambda vec: vec.E > 0.,
         )
-        self.make_radiation_particles()
-        self.match_coordinates(boost,self.data['final_states']) # need to be done after the boost
+        self.register_particles(['final_states'])
 
-        self.register_particles(['final_states','ISR','FSR'])
-        self.preprocess_particles(['final_states','ISR','FSR'])
+        self.match_coordinates(boost,self.data['final_states']) # need to be done after the boost
 
         ## Register gen level particles #
         #self.register_object(
@@ -182,7 +184,7 @@ class TTDoubleLeptonRecoDataset(RecoDoubleLepton):
     @property
     def processed_path(self):
         return os.path.join(
-            os.getcwd(),
+            self.build_dir,
             'tt_reco',
         )
 
