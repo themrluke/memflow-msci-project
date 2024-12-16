@@ -1,11 +1,18 @@
+import os
+import yaml
 import numpy as np
 import torch
+import joblib
 import itertools
 from copy import deepcopy
 from abc import ABCMeta,abstractmethod
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
+
+import memflow
+from memflow.dataset.utils import recursive_tuple_to_list
+
 
 class AbsScaler(metaclass=ABCMeta):
     @abstractmethod
@@ -18,6 +25,14 @@ class AbsScaler(metaclass=ABCMeta):
 
     def fit(self,x):
         pass
+
+    def save(self,f):
+        return None
+
+    @classmethod
+    def load(cls,cfg):
+        return None
+
 
 class lowercutshift(AbsScaler):
     def __init__(self,lower_cut=None):
@@ -33,12 +48,28 @@ class lowercutshift(AbsScaler):
             raise RuntimeError('Lower cut has not been defined')
         return x + self.lower_cut
 
+    def save(self,f):
+        return {'lower_cut':self.lower_cut}
+
+    @classmethod
+    def load(cls,cfg):
+        return cls(lower_cut=cfg['lower_cut'])
+
+
 class logmodulus(AbsScaler):
     def transform(self,x):
         return torch.sign(x) * torch.log(1+torch.abs(x))
 
     def inverse(self,x):
         return torch.sign(x) * (torch.exp((x/torch.sign(x))) - 1)
+
+    def save(self,f):
+        return {}
+
+    @classmethod
+    def load(cls,cfg):
+        return cls()
+
 
 
 class SklearnScaler(AbsScaler):
@@ -83,6 +114,17 @@ class SklearnScaler(AbsScaler):
         if x.dtype != y.dtype:
             y = y.to(x.dtype)
         return y
+
+    def save(self,f):
+        joblib.dump(self.obj,f)
+        return {'obj':f}
+
+    @classmethod
+    def load(cls,cfg):
+        obj = joblib.load(cfg['obj'])
+        return cls(obj=obj)
+
+
 
 class PreprocessingPipeline:
     """
@@ -142,6 +184,38 @@ class PreprocessingPipeline:
     def __str__(self):
         return "\nPreprocessing steps\n" + "".join([str(step) for step in self.steps])
 
+    def save(self,outdir):
+        if os.path.exists(outdir):
+            print (f'Will overwrite what is in output directory {outdir}')
+        else:
+            os.makedirs(outdir)
+
+        configs = []
+        for i,step in enumerate(self.steps):
+            step_cfg = step.save(os.path.join(outdir,f'step_{i}'))
+            configs.append(step_cfg)
+
+        with open(os.path.join(outdir,'preprocessing_config.yml'),'w') as handle:
+            yaml.dump(configs,handle)
+        print (f'Preprocessing saved in {outdir}')
+
+    @classmethod
+    def load(cls,outdir):
+        if not os.path.exists(outdir):
+            raise RuntimeError(f'Could not find directory {outdir}')
+        config_path = os.path.join(outdir,'preprocessing_config.yml')
+        if not os.path.exists(config_path):
+            raise RuntimeError(f'Could not find config {config_path}')
+
+        with open(config_path,'r') as handle:
+            config = yaml.safe_load(handle)
+
+        inst = cls()
+        for step_cfg in config:
+            inst.add_step(PreprocessingStep.load(step_cfg,outdir))
+
+        return inst
+
 
 class PreprocessingStep:
     """
@@ -151,7 +225,7 @@ class PreprocessingStep:
         """
         Args :
               - names [str/list] : list of names for particle types to use
-                Need those to keeptrack of multiple objects during processing in the pipeline
+                Need those to keep track of multiple objects during processing in the pipeline
               - scaler_dict [dict] : dict with variable name as keys, and scalers as values
               - fields_select [list[list]/None] : list of features for each particle to restrict transform
             Example:
@@ -324,3 +398,39 @@ class PreprocessingStep:
         for name,fields in zip(self.names,self.fields_select):
             s += f'  - {name:{max_len+1}s}: {fields}\n'
         return s
+
+    def save(self,subdir):
+        if not os.path.exists(subdir):
+            os.makedirs(subdir)
+        # Save the scaler_dict instances content #
+        scaler_dict_cfg = {}
+        for feature,instance in self.scaler_dict.items():
+            instance_cfg = instance.save(os.path.join(subdir,f'{feature}.bin'))
+            instance_cls = instance.__class__.__name__
+            scaler_dict_cfg[feature] = {
+                'class' : instance_cls,
+                **instance_cfg
+            }
+
+        # Return config #
+        return {
+            'names': self.names,
+            'scaler_dict': scaler_dict_cfg,
+            'fields_select' : recursive_tuple_to_list(self.fields_select),
+        }
+
+    @classmethod
+    def load(cls,config,subdir):
+        scaler_dict = {}
+        for feature,cfg in config['scaler_dict'].items():
+            feature_cls = getattr(memflow.dataset.preprocessing,cfg.pop('class'))
+                # need to find a cleaner way with importlib
+            scaler_dict[feature] = feature_cls.load(cfg)
+
+        return cls(
+            names = config['names'],
+            scaler_dict = scaler_dict,
+            fields_select = config['fields_select'],
+        )
+
+

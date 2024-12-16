@@ -162,46 +162,91 @@ class MultiplicityDataset(Dataset):
     def dim_features(self):
         return self.inputs.shape[2]
 
-class MultiCombinedDataset(Dataset):
-    """
-        Dataset that combines several combined datasets, typically for different processes
-    """
+class MultiHelperClass:
     def __init__(self,datasets):
-        # Check dataset #
-        for dataset in datasets:
-            assert isinstance(dataset,CombinedDataset)
-        assert len(dataset)>1, 'Need to provide at least two datasets'
-        self.datasets = datasets
+        if isinstance(datasets,(tuple,list)):
+            self.names = [str(i) for i in range(len(datasets))]
+            self.datasets = datasets
+        elif isinstance(datasets,dict):
+            self.names = list(datasets.keys())
+            self.datasets = list(datasets.values())
+        else:
+            raise RuntimeError(f'Datasets must be list or dict')
 
-        self.hard_datasets = [dataset.hard_dataset for dataset in self.datasets]
-        self.reco_datasets = [dataset.reco_dataset for dataset in self.datasets]
-
-        # Hard process datasets #
-        print ('Processing the hard datasets')
-        self.process(self.hard_datasets)
-
-        # Reco datasets #
-        print ('Processing the reco datasets')
-        self.process(self.reco_datasets)
-
+    def compute(self):
         # Get attributes needed to find index per dataset #
         self.Ns = torch.tensor([len(dataset) for dataset in self.datasets])
         self.cumNs = torch.cumsum(self.Ns,dim=0)
         self.idx_dataset_start = self.cumNs-self.Ns
 
-    def process(self,datasets):
-        print ('... Undoing preprocessing')
-        self.undo_preprocessing(datasets)
-        print ('... Equalizing datasets')
-        self.equalize_datasets(datasets)
-        print ('... Matching preprocessing')
-        self.match_preprocessing(datasets)
-        print ('... Re-applying common preprocessing')
-        self.do_preprocessing(datasets)
-        print ('... Checking attention mask')
-        self.check_attention_masks(datasets)
-        print ()
+    def __getitem__(self, idx):
+        # Find which dataset to take the index from #
+        idx_of_dataset = torch.searchsorted((self.cumNs-1),idx).item()
+        # Find the index within the dataset #
+        idx_in_dataset = int(idx - self.idx_dataset_start[idx_of_dataset])
+        # return the corresponding item #
+        return {
+            'process' : idx_of_dataset,
+            **self.datasets[idx_of_dataset][idx_in_dataset],
+        }
 
+    def __len__(self):
+        return self.cumNs[-1]
+
+
+class MultiCombinedDataset(MultiHelperClass,Dataset):
+    """
+        Dataset that combines several combined datasets, typically for different processes
+    """
+    def __init__(self,datasets):
+
+        # Super #
+        super().__init__(datasets)
+
+        # Check dataset #
+        for dataset in self.datasets:
+            assert isinstance(dataset,CombinedDataset)
+        assert len(self.datasets)>0, 'Need to provide at least one dataset'
+
+        # plit between hard and reco #
+        self.hard_datasets = [dataset.hard_dataset for dataset in self.datasets]
+        self.reco_datasets = [dataset.reco_dataset for dataset in self.datasets]
+
+        # Hard process datasets #
+        print ('Processing the hard datasets')
+        MultiDataset(self.hard_datasets)
+
+        # Reco datasets #
+        print ('Processing the reco datasets')
+        MultiDataset(self.reco_datasets)
+
+        # Compute indices #
+        self.compute()
+
+    def __str__(self):
+        return f'MultiCombined dataset :\n'+'\n'.join([str(dataset) for dataset in self.datasets])
+
+
+
+class MultiDataset(MultiHelperClass):
+    def __init__(self,datasets):
+        # Super #
+        super().__init__(datasets)
+
+        # Process #
+        print ('... Undoing preprocessing')
+        self.undo_preprocessing(self.datasets)
+        print ('... Equalizing datasets')
+        self.equalize_datasets(self.datasets)
+        print ('... Matching preprocessing')
+        self.match_preprocessing(self.datasets)
+        print ('... Re-applying common preprocessing')
+        self.do_preprocessing(self.datasets)
+        print ('... Checking attention mask')
+        self.check_attention_masks(self.datasets)
+
+        # Compute indices #
+        self.compute()
 
     @staticmethod
     def check_attention_masks(datasets):
@@ -389,7 +434,7 @@ class MultiCombinedDataset(Dataset):
                         raise RuntimeError(f'At preprocessing step {i}, found different scikit-learn classes for feature {key}: {sklearn_classes}')
 
             # Reset the sklearn scalers in the scaler dict
-            # (kind if hack from https://github.com/scikit-learn/scikit-learn/blob/6e9039160f0dfc3153643143af4cfdca941d2045/sklearn/utils/validation.py#L1549-L1584)
+            # (kind of hack from https://github.com/scikit-learn/scikit-learn/blob/6e9039160f0dfc3153643143af4cfdca941d2045/sklearn/utils/validation.py#L1549-L1584)
             scaler_dict = deepcopy(steps[0].scaler_dict)
             # Copy because we need to inverse the preprocessing below
             for var,scaler in scaler_dict.items():
@@ -457,20 +502,13 @@ class MultiCombinedDataset(Dataset):
         # This is needed for when we plot them separately
         for dataset in datasets:
             dataset._preprocessing = preprocessing
-
-    def __getitem__(self, idx):
-        # Find which dataset to take the index from #
-        idx_of_dataset = torch.searchsorted((self.cumNs-1),idx).item()
-        # Find the index within the dataset #
-        idx_in_dataset = int(idx - self.idx_dataset_start[idx_of_dataset])
-        # return the corresponding item #
-        return self.datasets[idx_of_dataset][idx_in_dataset]
-
-    def __len__(self):
-        return self.cumNs[-1]
+            dataset._save_preprocessing()
 
     def __str__(self):
-        return f'MultiCombined dataset :\n'+'\n'.join([str(dataset) for dataset in self.datasets])
+        return f'MultiDataset :\n'+'\n'.join([str(dataset) for dataset in self.datasets])
+
+
+
 
 class CombinedDataset(Dataset):
     """
@@ -599,7 +637,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
     cartesian_fields = set(['px','py','pz','E'])
     cylindrical_fields = set(['pt','eta','phi','mass'])
 
-    def __init__(self,data,selection,default_features=None,build=False,device=None,dtype=None,**kwargs):
+    def __init__(self,data,selection,default_features=None,build=False,fit=True,device=None,dtype=None,**kwargs):
         """
             Initialises class, then perform the following steps
              - init (user class)
@@ -617,12 +655,14 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
                         val : value to put in case field is missing fo object
                               if None, field is removed from variables
             - build [bool] : whether to force saving tensors to file
+            - fit [bool] : whether to fit the preprocessing pipeline (if False, load if was built)
             - device [str] : device for torch tensors
             - dtype [torch.type] : torch type for torch tensors
         """
         # Attributes #
         self.data = data
         self.build = build
+        self.fit = fit
         self.selection = selection
         self.default_features = default_features
         assert len(self.selection) > 0, 'You need to have at least some object selected'
@@ -645,11 +685,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             self._get_metadata()
             self._save()
         self.finalize()
-        self._fit_preprocessing()
+        self._standardize()
+        if self.processed_path is not None and os.path.exists(self.processed_path) and self.fit:
+            self._fit_preprocessing()
+            self._save_preprocessing()
+        else:
+            self._load_preprocessing()
         self._do_preprocessing()
         self._to_device(device)
         self._to_dtype(dtype)
-        self._standardize()
 
         # Safety checks #
         for name in self.selection:
@@ -808,7 +852,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
 
     def _undo_preprocessing(self):
         if not self._preprocessed:
-            raise RuntimeError('Cannot undo preprocessing, data had not been preprocessed')
+            raise RuntimeError('Cannot undo preprocessing, data has not been preprocessed')
         for name in self._objects.keys():
             data, mask, weights = self._objects[name]
             data, fields = self._preprocessing.inverse(name,data,mask,self._fields[name])
@@ -1053,8 +1097,23 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
                 os.path.join(self.processed_path,'metadata.pt')
             )
         else:
-            print ('No `processed_path` provided, will not save')
+            print ('No `processed_path` provided, will not save the data')
         self._check_tensors('Processed tensors')
+
+    def _save_preprocessing(self):
+        """ If user defines the property processed_path, will save the preprocessing pipeline """
+        if self.processed_path is not None:
+            print (f'Saving preprocessing to {self.processed_path}')
+            # Make output directory #
+            preprocessing_dir = os.path.join(self.processed_path,'preprocessing')
+            if not os.path.exists(preprocessing_dir):
+                os.makedirs(preprocessing_dir)
+            # Save #
+            self._preprocessing.save(preprocessing_dir)
+        else:
+            print ('No `processed_path` provided, will not save the preprocessing')
+        self._check_tensors('Processed tensors')
+
 
     def _load(self):
         """ If user defines the property processed_path, will load each object from file """
@@ -1073,6 +1132,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         if len(self._metadata) == 0:
             raise RuntimeError(f'Could not find {os.path.join(self.processed_path,"metadata.pt")}')
         self._check_tensors('Loaded tensors')
+
+    def _load_preprocessing(self):
+        """ If user defines the property processed_path, will load preprocessing """
+        if self.processed_path is None:
+            raise RuntimeError('Not processed path defined, cannot load the data')
+        preprocessing_dir = os.path.join(self.processed_path,'preprocessing')
+        if not os.path.exists(preprocessing_dir):
+            raise RuntimeError(f'Cannot find preprocessing subdirectory {preprocessing_dir}')
+        self._preprocessing.load(preprocessing_dir)
 
     ##### Magic methods #####
     def __getitem__(self,idx):

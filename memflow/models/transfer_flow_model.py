@@ -36,6 +36,7 @@ class TransferFlow(L.LightningModule):
         flow_classes = {},
         flow_specific_args = {},
         onehot_encoding = False,
+        process_names = None,
         optimizer = None,
         scheduler_config = None,
     ):
@@ -74,6 +75,7 @@ class TransferFlow(L.LightningModule):
         self.hard_mask_attn  = hard_mask_attn
 
         self.onehot_encoding = onehot_encoding
+        self.process_names = process_names
 
         # Safety checks #
         assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features_per_type)} sets of input features'
@@ -159,7 +161,7 @@ class TransferFlow(L.LightningModule):
                             out_features = self.embed_dims[i],
                         )
                     )
-                    if self.embed_act is not None:
+                    if self.embed_act is not None and i < len(self.embed_dims) - 1:
                         layers.append(self.embed_act())
                     if self.dropout != 0.:
                         layers.append(nn.Dropout(self.dropout))
@@ -243,7 +245,7 @@ class TransferFlow(L.LightningModule):
                 #raise RuntimeError(f'infs at coordinates {where_inf}')
                 print (f'infs at coordinates {where_inf}')
         log_probs = torch.nan_to_num(log_probs,nan=0.0,posinf=0.,neginf=0.)
-        # Record per object loss #
+        # Log per object loss #
         idx = 0
         for i,n in enumerate(self.n_reco_particles_per_type):
             for j in range(n):
@@ -257,6 +259,17 @@ class TransferFlow(L.LightningModule):
                         prog_bar=False,
                     )
                 idx += 1
+        # Loss per process #
+        if 'process' in batch.keys():
+            for idx in torch.unique(batch['process']).sort()[0]:
+                process_idx = torch.where(batch['process'] == idx)[0]
+                process_name = self.process_names[idx] if self.process_names is not None else str(idx.item())
+                self.log(
+                    f"{prefix}/loss_process_{process_name}",
+                    ((log_probs[process_idx,:] * mask[process_idx,:]).sum(dim=-1) / mask[process_idx,:].sum(dim=-1)).mean(),
+                    prog_bar=False,
+                )
+
         # Get total loss, weighted and averaged over existing objects and events #
         log_prob_tot = (
             (
