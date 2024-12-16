@@ -27,7 +27,7 @@ class TemplateHardDataset(HardDataset):
 
 
     # The process method is the one where the data object is treated
-    # Objects from the awkward arrays are registered and the preprocessing
+    # Objects from the awkward arrays are registered
     def process(self):
         # 1) : select the decay you are interested in for your process
         # -> make mask (data type dependent) and apply it
@@ -86,7 +86,13 @@ class TemplateHardDataset(HardDataset):
 
         # Note, you can also include a weight in the object, needs to be better described
 
-        # 5) : Reqister the preprocessing steps
+
+    # Here you can modify the object tensors and any final change you want
+    # Most importantly here you can register the preprocessing steps
+    # We do it here rather than in the process, because that way we can load the raw
+    # tensors and modify the preprocessing any time
+    def finalize(self):
+        # Register the preprocessing steps
         # You might want to apply multiple scaling in steps
         # Needs to be registered to be able to inverse all steps at the end
         self.register_preprocessing_step(
@@ -115,6 +121,7 @@ class TemplateHardDataset(HardDataset):
         # - logmodulus : apply sign(x) * log(1+|x|)
         # - lowercutshift : rescale by the cut value
         # - SklearnScaler : anything from the sklearn.preprocessing
+        #      Note : dimension change preprocessing allowed (eg onehot encoding)
         # - anything custom, see the logic in memflow.dataset.preprocessing
 
 

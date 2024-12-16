@@ -119,7 +119,7 @@ class BaseCallback(Callback,metaclass=ABCMeta):
 
             # Preprocessing #
             if self.raw:
-                preprocessing = self.dataset.hard_dataset._preprocessing
+                preprocessing = self.dataset.hard_dataset.preprocessing
                 inputs_type, features = preprocessing.inverse(
                     name = name,
                     x = inputs_type,

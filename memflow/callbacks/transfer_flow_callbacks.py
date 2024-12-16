@@ -520,14 +520,14 @@ class BiasCallback(Callback):
 
             # Record #
             for i in range(N_reco):
-                samples[i].append(batch_samples[i])
-                truth[i].append(reco_data[i][...,model.flow_indices[i]])
-                mask[i].append(reco_mask_exist[i])
+                samples[i].append(batch_samples[i].cpu())
+                truth[i].append(reco_data[i][...,model.flow_indices[i]].cpu())
+                mask[i].append(reco_mask_exist[i].cpu())
 
         # Concat the whole samples list #
-        samples = [torch.cat(sample,dim=1).cpu() for sample in samples]
-        truth   = [torch.cat(t,dim=0).cpu() for t in truth]
-        mask    = [torch.cat(m,dim=0).cpu() for m in mask]
+        samples = [torch.cat(sample,dim=1) for sample in samples]
+        truth   = [torch.cat(t,dim=0) for t in truth]
+        mask    = [torch.cat(m,dim=0) for m in mask]
 
         # Inverse preprocessing if raw #
         if self.preprocessing is not None:

@@ -207,7 +207,7 @@ class HardBase(Base,HardDataset):
 
     def finalize(self):
         particles = ['final_states']
-        if 'ISR' in self._objects.keys():
+        if 'ISR' in self.objects.keys():
             particles.append('ISR')
 
         if self.apply_preprocessing:

@@ -54,7 +54,11 @@ class AbsData(Mapping):
         array = ak.concatenate(arrays,axis=0)
         if isinstance(array.layout,ak.contents.listoffsetarray.ListOffsetArray):
             pass # the typical type of awkward array we want
-        if isinstance(array.layout,ak.contents.numpyarray.NumpyArray):
+        elif isinstance(array.layout,ak.contents.numpyarray.NumpyArray):
+            pass # other typical layout we want
+        elif isinstance(array.layout,ak.contents.listarray.ListArray):
+            pass # other typical layout we want
+        elif isinstance(array.layout,ak.contents.indexedarray.IndexedArray):
             pass # other typical layout we want
         elif isinstance(array.layout,ak.contents.bytemaskedarray.ByteMaskedArray):
             # arrays with a option[var* ...] type, nasty

@@ -52,7 +52,7 @@ class AcceptanceDataset(Dataset):
 
         # Get input #
         self.inputs = [
-                self.hard_dataset._objects[name][0]
+                self.hard_dataset.objects[name][0]
                 for name in self.hard_dataset.selection
         ]
         shapes = [inp[:,0,:].shape for inp in self.inputs] # check the #events and #features between inputs
@@ -114,7 +114,7 @@ class MultiplicityDataset(Dataset):
         # Make inputs #
         # Get input #
         self.inputs = [
-                self.hard_dataset._objects[name][0][self.selected_idx]
+                self.hard_dataset.objects[name][0][self.selected_idx]
                 for name in self.hard_dataset.selection
         ]
         shapes = [inp[:,0,:].shape for inp in self.inputs] # check the #events and #features between inputs
@@ -298,11 +298,11 @@ class MultiDataset(MultiHelperClass):
             print (f'Reweighting factor : {factor:.5f}')
             # Loop through each type
             for name in all_selection:
-                if name in dataset._objects.keys():
+                if name in dataset.objects.keys():
                     # Particle type is present, need to check whether to pad it or not
                     if dataset.number_particles(name) < max_number_particles_per_name[name]:
                         n_diff = max_number_particles_per_name[name] - dataset.number_particles(name)
-                        data, mask, weights = dataset._objects[name]
+                        data, mask, weights = dataset.objects[name]
                         # Zero-pad the inputs data #
                         data = torch.cat(
                             [
@@ -349,7 +349,7 @@ class MultiDataset(MultiHelperClass):
                         raise RuntimeError
                     else:
                         # The tensors are already at the maximum length size
-                        data, mask, weights = dataset._objects[name]
+                        data, mask, weights = dataset.objects[name]
                 else:
                     # Particle is not present, need to make up tensors
                     N = len(dataset)
@@ -360,11 +360,11 @@ class MultiDataset(MultiHelperClass):
                     mask = torch.full((N,S),fill_value=False)
                     weights = torch.ones((N,S))
                     # Need to add features for dummy tensor #
-                    dataset._fields[name] = features_per_name[name]
+                    dataset.fields[name] = features_per_name[name]
                 # Reweight for class imbalance #
                 weights *= factor
                 # Replace the object #
-                dataset._objects[name] = data, mask, weights
+                dataset.objects[name] = data, mask, weights
 
             # Make sure the datasets all have the same order of selection
             dataset.selection = all_selection
@@ -385,12 +385,12 @@ class MultiDataset(MultiHelperClass):
     def match_preprocessing(datasets):
         # Find a common preprocessing pipeline #
         preprocessing = PreprocessingPipeline()
-        N_steps = list(set([len(dataset._preprocessing.steps) for dataset in datasets]))
+        N_steps = list(set([len(dataset.preprocessing.steps) for dataset in datasets]))
         if len(N_steps) != 1:
             raise RuntimeError(f'Different number of steps for preprocessing {N_steps}')
         for i in range(N_steps[0]):
             # Get all i steps #
-            steps = [dataset._preprocessing.steps[i] for dataset in datasets]
+            steps = [dataset.preprocessing.steps[i] for dataset in datasets]
             # Check the names #
             # Order does not matter, so can use sets #
             names = list(set(chain.from_iterable([step.names for step in steps])))
@@ -463,10 +463,10 @@ class MultiDataset(MultiHelperClass):
         for dataset in datasets:
             for name in dataset.selection:
                 # Extract #
-                data,mask,_ = dataset._objects[name]
+                data,mask,_ = dataset.objects[name]
                 if mask.dtype != torch.bool:
                     mask = mask > 0
-                flds = tuple(dataset._fields[name])
+                flds = tuple(dataset.fields[name])
 
                 # Record #
                 if name in datas.keys():
@@ -530,20 +530,20 @@ class CombinedDataset(Dataset):
             # Assume the trees are the same for both reco and hard,
             # will just check their length and file branch
             print ('Not intersection branch for either hard or reco datasets, will assume bijection between datasets')
-            if len(self.hard_dataset._metadata['file']) != len(self.reco_dataset._metadata['file']):
-                raise RuntimeError(f'Different number of entries between hard ({len(self.hard_dataset._metadata["file"])}) compared to reco ({len(self.reco_dataset._metadata["file"])})')
-            if not all(self.hard_dataset._metadata['file'] == self.reco_dataset._metadata['file']):
-                raise RuntimeError(f'Different `file` content in hard and reco file metadata : {self.hard_dataset._metadata["file"]} and {self.reco_dataset._metadata["file"]}')
-            self.N = len(self.hard_dataset._metadata['file'])
+            if len(self.hard_dataset.metadata['file']) != len(self.reco_dataset.metadata['file']):
+                raise RuntimeError(f'Different number of entries between hard ({len(self.hard_dataset.metadata["file"])}) compared to reco ({len(self.reco_dataset.metadata["file"])})')
+            if not all(self.hard_dataset.metadata['file'] == self.reco_dataset.metadata['file']):
+                raise RuntimeError(f'Different `file` content in hard and reco file metadata : {self.hard_dataset.metadata["file"]} and {self.reco_dataset.metadata["file"]}')
+            self.N = len(self.hard_dataset.metadata['file'])
             self.hard_idx, self.reco_idx = None,None
         elif self.hard_dataset.intersection_branch is not None and self.reco_dataset.intersection_branch is not None:
             print (f'Intersection branches : `{self.hard_dataset.intersection_branch}` for hard dataset and `{self.reco_dataset.intersection_branch}` for reco dataset')
-            hard_files = set(np.unique(self.hard_dataset._metadata['file']))
-            reco_files = set(np.unique(self.reco_dataset._metadata['file']))
+            hard_files = set(np.unique(self.hard_dataset.metadata['file']))
+            reco_files = set(np.unique(self.reco_dataset.metadata['file']))
             self.hard_idx, self.reco_idx = get_metadata_intersection_indices(
                 metadatas = [
-                    self.hard_dataset._metadata,
-                    self.reco_dataset._metadata,
+                    self.hard_dataset.metadata,
+                    self.reco_dataset.metadata,
                 ],
                 different_files = len(hard_files.intersection(reco_files)) == 0,
             )
@@ -659,7 +659,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             - device [str] : device for torch tensors
             - dtype [torch.type] : torch type for torch tensors
         """
-        # Attributes #
+        # Public attributes #
         self.data = data
         self.build = build
         self.fit = fit
@@ -667,11 +667,13 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         self.default_features = default_features
         assert len(self.selection) > 0, 'You need to have at least some object selected'
 
+        # Internal data #
+        self.preprocessing = PreprocessingPipeline()
+        self.objects = {}
+        self.fields = {}
+        self.metadata = {}
+
         # Private attributes #
-        self._objects = {}
-        self._fields = {}
-        self._metadata = {}
-        self._preprocessing = PreprocessingPipeline()
         self._reserved_object_names = ['ps','detjinv','metadata']
         self._forbidden_characters = [' ','/',r'\\',r'\t',r'\n']
         self._preprocessed = False
@@ -697,16 +699,16 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
 
         # Safety checks #
         for name in self.selection:
-            if name not in self._objects.keys():
-                raise RuntimeError(f'`{name}` not in registered objects {self._objects.keys()}')
+            if name not in self.objects.keys():
+                raise RuntimeError(f'`{name}` not in registered objects {self.objects.keys()}')
         events = []
-        for key,(data,mask,weights) in self._objects.items():
+        for key,(data,mask,weights) in self.objects.items():
             if data.shape[0] != mask.shape[0]:
                 raise RuntimeError(f'Object `{key}` has {data.shape[0]} data events but {mask.shape[0]} mask events')
             events.append(data.shape[0])
         events = list(set(events))
         if len(events) != 1:
-            raise RuntimeError(f'Number of events mismatch {events} for objects {list(self._objects.keys())}')
+            raise RuntimeError(f'Number of events mismatch {events} for objects {list(self.objects.keys())}')
         else:
             self.events = events[0]
 
@@ -754,6 +756,10 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
 
     ##### Main methods #####
     def object_to_tensor(self,obj,fields=None):
+        """
+            Turns object (awkward array) to tensor
+            Fields are the only ones turned into the final tensor
+        """
         if not isinstance(obj,ak.Array):
             raise RuntimeError(f'Expects an awkward array, got {type(obj)}')
         # From awkward to numpy #
@@ -782,12 +788,12 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
              - fields [list] : which fields to extract from the object (if None, will take all the ones in the object)
              - preprocessing [PreprocessingPipeline] : preprocessing instance
             Returns : None
-            Self : save object in self._objects and fields in in self._fields
+            Self : save object in self.objects and fields in in self.fields
         """
         # Avoid overwriting objects #
         if name in self._reserved_object_names:
             raise RuntimeError(f'Name `{name}` already reserved')
-        if name in self._objects.keys():
+        if name in self.objects.keys():
             raise RuntimeError(f'Name `{name}` already present in objects')
         for char in self._forbidden_characters:
             if char in name:
@@ -822,51 +828,54 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
                 raise RuntimeError(f'Weights shape {weights.shape} of {name} objects differs from {mask.shape} object shape')
 
         # Record #
-        self._objects[name] = (data,mask,weights)
-        self._fields[name] = fields
+        self.objects[name] = (data,mask,weights)
+        self.fields[name] = fields
 
     def register_preprocessing_step(self,preprocessing):
+        """
+            Register a PreprocessingStep (from memflow.dataset.preprocessing)
+        """
         assert isinstance(preprocessing,PreprocessingStep), f'Preprocessing must be a PreprocessingStep instance'
-        assert len(set(preprocessing.keys())-set(self._objects.keys())) > 0, f'Object names {[key for key in preprocessing.keys() if key not in self._objects.keys()]} have not been registered yet'
-        self._preprocessing.add_step(preprocessing)
+        assert len(set(preprocessing.keys())-set(self.objects.keys())) > 0, f'Object names {[key for key in preprocessing.keys() if key not in self.objects.keys()]} have not been registered yet'
+        self.preprocessing.add_step(preprocessing)
 
     def _get_metadata(self):
         branches = ['file','tree','sample'] # branches by default in data
         for branch in branches:
-            self._metadata[branch] = self.data[branch].to_numpy()
+            self.metadata[branch] = self.data[branch].to_numpy()
         if self.intersection_branch is not None:
             assert isinstance(self.intersection_branch,str)
-            self._metadata['intersection'] = self.data[self.intersection_branch].to_numpy()
+            self.metadata['intersection'] = self.data[self.intersection_branch].to_numpy()
 
 
     def _do_preprocessing(self):
         if self._preprocessed:
             raise RuntimeError('Cannot do preprocessing, data is already preprocessed')
-        for name in self._objects.keys():
-            data, mask, weights = self._objects[name]
-            data, fields = self._preprocessing.transform(name,data,mask,self._fields[name])
-            self._objects[name] = (data,mask,weights)
-            self._fields[name] = fields
+        for name in self.objects.keys():
+            data, mask, weights = self.objects[name]
+            data, fields = self.preprocessing.transform(name,data,mask,self.fields[name])
+            self.objects[name] = (data,mask,weights)
+            self.fields[name] = fields
         self._check_tensors('Preprocessed tensors')
         self._preprocessed = True
 
     def _undo_preprocessing(self):
         if not self._preprocessed:
             raise RuntimeError('Cannot undo preprocessing, data has not been preprocessed')
-        for name in self._objects.keys():
-            data, mask, weights = self._objects[name]
-            data, fields = self._preprocessing.inverse(name,data,mask,self._fields[name])
-            self._objects[name] = (data,mask,weights)
-            self._fields[name] = fields
+        for name in self.objects.keys():
+            data, mask, weights = self.objects[name]
+            data, fields = self.preprocessing.inverse(name,data,mask,self.fields[name])
+            self.objects[name] = (data,mask,weights)
+            self.fields[name] = fields
         self._check_tensors('Unpreprocessed tensors')
         self._preprocessed = False
 
     def _fit_preprocessing(self):
-        self._preprocessing.fit(
-            names = list(self._objects.keys()),
-            xs = [self._objects[name][0] for name in self._objects.keys()],
-            masks = [self._objects[name][1] for name in self._objects.keys()],
-            fields = [self._fields[name] for name in self._objects.keys()],
+        self.preprocessing.fit(
+            names = list(self.objects.keys()),
+            xs = [self.objects[name][0] for name in self.objects.keys()],
+            masks = [self.objects[name][1] for name in self.objects.keys()],
+            fields = [self.fields[name] for name in self.objects.keys()],
         )
 
     @staticmethod
@@ -973,28 +982,31 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
     def _standardize(self):
         """
             If default features asked, will fill the missing ones for each object
-            Self : modifies the self._objects and self._fields
+            Self : modifies the self.objects and self.fields
         """
         if self.default_features is None:
             return
         elif isinstance(self.default_features,(float,int)):
             # Get the comprehensive list of fields and complete with value #
             default_val = self.default_features
-            all_fields = sorted(list(set(chain.from_iterable(self._fields.values()))))
+            all_fields = sorted(list(set(chain.from_iterable(self.fields.values()))))
             default_values = {f:default_val for f in all_fields}
         elif isinstance(self.default_features,dict):
             default_values = self.default_features
         else:
             raise NotImplementedError(f'Type {type(self.default_features)} of default_features not implemented')
         # Modify each object data #
-        for name,(data,mask,weights) in self._objects.items():
-            fields = self._fields[name]
+        for name,(data,mask,weights) in self.objects.items():
+            fields = self.fields[name]
             data,fields = self.expand_tensor(data,fields,default_values)
-            self._objects[name] = (data,mask,weights)
-            self._fields[name] = fields
+            self.objects[name] = (data,mask,weights)
+            self.fields[name] = fields
 
     @staticmethod
     def _check_tensor(t,flag):
+        """
+            Perform a few checks (inf and nan)
+        """
         is_error = torch.logical_or(
             torch.isnan(t),
             torch.isinf(t)
@@ -1017,7 +1029,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
 
     def _check_tensors(self,step):
         for name in self.selection:
-            data, mask, weights = self._objects[name]
+            data, mask, weights = self.objects[name]
             # Check for nans and infs
             self._check_tensor(data,f'{step} / {name} [data]')
             self._check_tensor(mask,f'{step} / {name} [mask]')
@@ -1027,7 +1039,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
     ##### Intrinsic properties #####
 
     def input_features_particle(self,name):
-        return tuple(self._fields[name])
+        return tuple(self.fields[name])
 
     @property
     def input_features(self):
@@ -1037,7 +1049,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         )
 
     def number_particles(self,name):
-        return self._objects[name][0].shape[1]
+        return self.objects[name][0].shape[1]
 
     @property
     def number_particles_per_type(self):
@@ -1065,15 +1077,15 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         """ Move all tensors to device """
         if device is None:
             return
-        for name,(data,mask,weights) in self._objects.items():
-            self._objects[name] = (data.to(device),mask.to(device),weights.to(device))
+        for name,(data,mask,weights) in self.objects.items():
+            self.objects[name] = (data.to(device),mask.to(device),weights.to(device))
 
     def _to_dtype(self,dtype=None):
         """ Modifies the type of all tensors """
         if dtype is None:
             return
-        for name,(data,mask,weights) in self._objects.items():
-            self._objects[name] = (data.to(dtype),mask.to(dtype),weights.to(dtype))
+        for name,(data,mask,weights) in self.objects.items():
+            self.objects[name] = (data.to(dtype),mask.to(dtype),weights.to(dtype))
 
     ##### Save and load methods ######
     def _save(self):
@@ -1084,16 +1096,16 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             if not os.path.exists(self.processed_path):
                 os.makedirs(self.processed_path)
             # Save the different tensors #
-            for name in self._objects.keys():
-                data,mask,weights = self._objects[name]
-                fields = self._fields[name]
+            for name in self.objects.keys():
+                data,mask,weights = self.objects[name]
+                fields = self.fields[name]
                 torch.save(
                     (data,mask,weights,fields),
                     os.path.join(self.processed_path,f'{name}.pt')
                 )
             # Save metadata #
             torch.save(
-                self._metadata,
+                self.metadata,
                 os.path.join(self.processed_path,'metadata.pt')
             )
         else:
@@ -1109,7 +1121,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             if not os.path.exists(preprocessing_dir):
                 os.makedirs(preprocessing_dir)
             # Save #
-            self._preprocessing.save(preprocessing_dir)
+            self.preprocessing.save(preprocessing_dir)
         else:
             print ('No `processed_path` provided, will not save the preprocessing')
         self._check_tensors('Processed tensors')
@@ -1124,12 +1136,12 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             name = os.path.basename(f).replace('.pt','')
             content = torch.load(f)
             if name == 'metadata':
-                self._metadata = content
+                self.metadata = content
             else:
                 data,mask,weights,fields = content
-                self._objects[name] = (data,mask,weights)
-                self._fields[name] = fields
-        if len(self._metadata) == 0:
+                self.objects[name] = (data,mask,weights)
+                self.fields[name] = fields
+        if len(self.metadata) == 0:
             raise RuntimeError(f'Could not find {os.path.join(self.processed_path,"metadata.pt")}')
         self._check_tensors('Loaded tensors')
 
@@ -1140,7 +1152,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         preprocessing_dir = os.path.join(self.processed_path,'preprocessing')
         if not os.path.exists(preprocessing_dir):
             raise RuntimeError(f'Cannot find preprocessing subdirectory {preprocessing_dir}')
-        self._preprocessing.load(preprocessing_dir)
+        self.preprocessing.load(preprocessing_dir)
 
     ##### Magic methods #####
     def __getitem__(self,idx):
@@ -1149,9 +1161,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             Joins the data and mask along new dimension (axis = 2)
         """
         return {
-            'data': [self._objects[name][0][idx] for name in self.selection],
-            'mask': [self._objects[name][1][idx] for name in self.selection],
-            'weights': [self._objects[name][2][idx] for name in self.selection],
+            'data': [self.objects[name][0][idx] for name in self.selection],
+            'mask': [self.objects[name][1][idx] for name in self.selection],
+            'weights': [self.objects[name][2][idx] for name in self.selection],
         }
 
     def __len__(self):
@@ -1161,8 +1173,8 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
     def __str__(self):
         """ Representation string to show all defined objects with some info """
         s = f'\nContaining the following tensors'
-        names_len = max([len(name) for name in self._objects.keys()]) + 1
-        for name,(data,mask,weights) in self._objects.items():
+        names_len = max([len(name) for name in self.objects.keys()]) + 1
+        for name,(data,mask,weights) in self.objects.items():
             props = mask.sum(axis=0) / mask.shape[0] * 100
             prop_str = ', '.join([f'{prop:3.2f}%' if prop==0. or prop>=0.01 else '<0.01%' for prop in props])
             w_sum = weights.sum(dim=0)
@@ -1171,9 +1183,9 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             s += f'\n{" "*names_len}   Mask exist    : [{prop_str}]'
             s += f'\n{" "*names_len}   Mask attn     : {self.object_attention_mask(name)}'
             s += f'\n{" "*names_len}   Weights       : {w_str}'
-            s += f'\n{" "*names_len}   Features      : {self._fields[name]}'
+            s += f'\n{" "*names_len}   Features      : {self.fields[name]}'
             s += f'\n{" "*names_len}   Selected for batches : {name in self.selection}'
-        s += str(self._preprocessing)
+        s += str(self.preprocessing)
         return s
 
     ##### User accessible helper methods #####
@@ -1185,7 +1197,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         return {
             'data': [
                 torch.index_select(
-                    input = self._objects[name][0],
+                    input = self.objects[name][0],
                     dim = 0,
                     index = idx,
                 )
@@ -1193,7 +1205,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             ],
             'mask': [
                 torch.index_select(
-                    input = self._objects[name][1],
+                    input = self.objects[name][1],
                     dim = 0,
                     index = idx,
                 )
@@ -1201,7 +1213,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
             ],
             'weights': [
                 torch.index_select(
-                    input = self._objects[name][2],
+                    input = self.objects[name][2],
                     dim = 0,
                     index = idx,
                 )
@@ -1210,7 +1222,7 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
         }
 
     def plot(self,fields_to_plot=None,raw=False,selection=False,weighted=False,log=False):
-        names = self.selection if selection else self._objects.keys()
+        names = self.selection if selection else self.objects.keys()
         if fields_to_plot is not None:
             if isinstance(fields_to_plot,(list,tuple)):
                 pass
@@ -1220,13 +1232,13 @@ class AbsDataset(Dataset,metaclass=ABCMeta):
                 raise RuntimeError(f'Type {type(fields_to_plot)} not understood')
         for name in names:
             # Get objects for name #
-            data,mask,weights = self._objects[name]
-            fields = self._fields[name]
+            data,mask,weights = self.objects[name]
+            fields = self.fields[name]
             # Some processing #
             if mask.dtype != torch.bool:
                 mask = mask > 0
             if raw:
-                data,fields = self._preprocessing.inverse(name,data,mask,fields)
+                data,fields = self.preprocessing.inverse(name,data,mask,fields)
             # Generate figure #
             n_parts = data.shape[1]
             if fields_to_plot is None:
@@ -1396,18 +1408,18 @@ class HardDataset(AbsDataset):
 
         momenta = []
         for name in names:
-            if name not in self._objects.keys():
-                raise RuntimeError(f'{name} not found in the objects recorded {self._objects.keys()}')
-            momenta.append(self._objects[name][0])
+            if name not in self.objects.keys():
+                raise RuntimeError(f'{name} not found in the objects recorded {self.objects.keys()}')
+            momenta.append(self.objects[name][0])
         shapes = [mom.shape for mom in momenta]
         for axis in [0,2]:
             if len(set([shape[axis] for shape in shapes])) != 1:
                 raise RuntimeError(f'Shapes mismatch {shapes} for axis {axis}')
         momenta = torch.cat(momenta,dim=1)
 
-        if 'boost' not in self._objects.keys():
+        if 'boost' not in self.objects.keys():
             raise RuntimeError(f'`boost` must have been recorded in the objects')
-        boost = self._objects['boost'][0]
+        boost = self.objects['boost'][0]
 
         phasespace = PhaseSpace(
             collider_energy = self.energy / GeV,
@@ -1425,16 +1437,16 @@ class HardDataset(AbsDataset):
             x2 = x2,
         )
         detjinv = detjinv.unsqueeze(-1)
-        self._objects['ps'] = (
+        self.objects['ps'] = (
             ps.unsqueeze(dim=-1),
             torch.full(ps.shape,True)#.unsqueeze(-1),
         )
-        self._fields['ps'] = [f'ps_{i}' for i in range(ps.shape[1])]
-        self._objects['detjinv'] = (
+        self.fields['ps'] = [f'ps_{i}' for i in range(ps.shape[1])]
+        self.objects['detjinv'] = (
             detjinv.unsqueeze(-1),
             torch.full(detjinv.shape,True)#.unsqueeze(-1),
         )
-        self._fields['detjinv'] = ['det']
+        self.fields['detjinv'] = ['det']
 
     def __str__(self):
         """ Specific hard representations + mother class one """
