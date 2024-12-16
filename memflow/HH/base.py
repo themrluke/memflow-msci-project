@@ -170,6 +170,7 @@ class HardBase(Base,HardDataset):
             value = 0.,
             max_no = self.n_ISR,
         )
+
         # Register #
         if self.coordinates == 'cylindrical':
             fields = ['pt','eta','phi','mass','pdgId']
@@ -235,6 +236,16 @@ class HardBase(Base,HardDataset):
             #        },
             #    )
             #)
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = particles,
+                    scaler_dict = {
+                        'pdgId'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                    },
+                )
+            )
+
+
             if self.coordinates == 'cylindrical':
                 self.register_preprocessing_step(
                     PreprocessingStep(
@@ -294,23 +305,9 @@ class RecoDoubleLepton(Base,RecoDataset):
 
 
     def process(self):
-        # Make selection #
-        print ('Initial reco events :',self.data.events)
-        if self.topology == 'resolved':
-            mask_resolved = np.logical_and.reduce(
-                (
-                    self.data['flag_SR']==1,
-                    self.data['n_AK4']>=2,
-                    self.data['n_AK4B']>=1,
-                )
-            )
-            self.data.cut(mask_resolved)
-            print ('Resolved reco events :',self.data.events)
-        if self.topology == 'boosted':
-            raise NotImplementedError
         # Make particles #
-        n_jets = 15
-        jets = self.data.make_particles(
+        n_jets = 6
+        self.data.make_particles(
             'jets',
             {
                 'px'      : [f'j{i}_Px' for i in range(1,n_jets+1)],
@@ -322,8 +319,8 @@ class RecoDoubleLepton(Base,RecoDataset):
             },
             lambda vec: vec.E > 0.,
         )
-        n_e = 4
-        electrons = self.data.make_particles(
+        n_e = 2
+        self.data.make_particles(
             'electrons',
             {
                 'px'      : [f'e{i}_Px' for i in range(1,n_e+1)],
@@ -335,8 +332,8 @@ class RecoDoubleLepton(Base,RecoDataset):
             },
             lambda vec: vec.E > 0.,
         )
-        n_m = 4
-        muons = self.data.make_particles(
+        n_m = 2
+        self.data.make_particles(
             'muons',
             {
                 'px'      : [f'm{i}_Px' for i in range(1,n_m+1)],
@@ -348,7 +345,7 @@ class RecoDoubleLepton(Base,RecoDataset):
             },
             lambda vec: vec.E > 0.,
         )
-        met = self.data.make_particles(
+        self.data.make_particles(
             'met',
             {
                 'px'      : ['met_Px'],
@@ -357,6 +354,37 @@ class RecoDoubleLepton(Base,RecoDataset):
                 'E'       : ['met_E'],
             },
         )
+        # Make selection #
+        print ('Initial reco events :',self.data.events)
+        mask_leptons = (ak.num(self.data['electrons'].pt,axis=1) + ak.num(self.data['muons'].pt,axis=1)) == 2
+        self.data.cut(mask_leptons)
+        print ('Dilepton cut :',self.data.events)
+        if self.topology == 'resolved':
+            #mask_resolved = np.logical_and.reduce(
+            #    (
+            #        self.data['flag_SR']==1,
+            #        self.data['n_AK4']>=2,
+            #        self.data['n_AK4B']>=1,
+            #    )
+            #)
+            mask_resolved = np.logical_and.reduce(
+                (
+                    ak.num(self.data['jets'],axis=1) >= 2,           # >= 2 jets
+                    ak.sum(self.data['jets'].btagged,axis=1) >= 1,   # >= 1 btagged jets
+                )
+            )
+            self.data.cut(mask_resolved)
+            print ('Resolved events :',self.data.events)
+        if self.topology == 'boosted':
+            raise NotImplementedError
+
+
+        # Get objects (for easier handling) #
+        jets      = self.data['jets']
+        electrons = self.data['electrons']
+        muons     = self.data['muons']
+        met       = self.data['met']
+
 
         # Change jet order #
         # Firs make sure they are btag-ordered #
@@ -399,7 +427,18 @@ class RecoDoubleLepton(Base,RecoDataset):
             input = muons,
             value = 0.,
         )
+        # Order leptons (- then +)
+        # Doing after the padding so in cases where 1 muon + 1 electron,
+        # we still put the negative lepton first (because padded has charge 0)
+        # Also need to reorder the mask
+        idx_e = ak.argsort(electrons_padded.charge,ascending=True)
+        electrons_padded = electrons_padded[idx_e]
+        electrons_mask   = electrons_mask[idx_e]
+        idx_m = ak.argsort(muons_padded.charge,ascending=True)
+        muons_padded = muons_padded[idx_m]
+        muons_mask   = muons_mask[idx_m]
 
+        # Matc coordinates #
         self.match_coordinates(boost,jets) # need to be done after the boost
 
 
@@ -443,6 +482,27 @@ class RecoDoubleLepton(Base,RecoDataset):
             if self.coordinates != 'cylindrical':
                 raise NotImplementedError
 
+            #self.register_preprocessing_step(
+            #    PreprocessingStep(
+            #        names = ['jets','electrons','muons','met'],
+            #        scaler_dict = {
+            #            'pdgId'   : SklearnScaler(
+            #                preprocessing.OneHotEncoder(
+            #                    categories = [np.array([-15,-13,-11,0,+11,+13,+15])],
+            #                    sparse_output = False,
+            #                    handle_unknown = 'ignore', # ignores zero-padded missing particles
+            #                ),
+            #            ),
+            #            'charge'   : SklearnScaler(
+            #                preprocessing.OneHotEncoder(
+            #                    categories = [np.array([-1,0,+1])],
+            #                    sparse_output = False,
+            #                    handle_unknown = 'ignore', # ignores zero-padded missing particles
+            #                ),
+            #            ),
+            #        },
+            #    )
+            #)
             self.register_preprocessing_step(
                 PreprocessingStep(
                     names = ['muons','electrons'],
@@ -468,8 +528,8 @@ class RecoDoubleLepton(Base,RecoDataset):
                     },
                     fields_select = [
                         ('pt','mass'),
-                        ('pt',),
-                        ('pt',),
+                        ('pt','mass'),
+                        ('pt','mass'),
                         ('pt',),
                     ]
 
@@ -477,35 +537,23 @@ class RecoDoubleLepton(Base,RecoDataset):
             )
             self.register_preprocessing_step(
                 PreprocessingStep(
-                    names = ['jets','electrons','muons','met'],
+                    names = ['electrons','muons','jets','met'],
                     scaler_dict = {
-                        'pt'   : SklearnScaler(preprocessing.StandardScaler()),
-                        'eta'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
-                        'phi'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
-                        'mass' : SklearnScaler(preprocessing.StandardScaler()),
+                        'pt'     : SklearnScaler(preprocessing.StandardScaler()),
+                        'eta'    : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                        'phi'    : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                        'mass'   : SklearnScaler(preprocessing.StandardScaler()),
+                        'pdgId'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                        'charge' : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
                     },
                     fields_select = [
-                        ('pt','eta','phi','mass'),
-                        ('pt','eta','phi','mass'),
+                        ('pt','eta','phi','mass','pdgId','charge'),
+                        ('pt','eta','phi','mass','pdgId','charge'),
                         ('pt','eta','phi','mass'),
                         ('pt','phi'),
                     ]
                 )
             )
-            #self.register_preprocessing_step(
-            #    PreprocessingStep(
-            #        names = ['jets','electrons','muons','met'],
-            #        scaler_dict = {
-            #            'pdgId'   : SklearnScaler(
-            #                preprocessing.OneHotEncoder(
-            #                    categories = [np.array([-15,-13,-11,0,+11,+13,+15])],
-            #                    sparse_output = False,
-            #                    handle_unknown = 'ignore', # ignores zero-padded missing particles
-            #                ),
-            #            ),
-            #        },
-            #    )
-            #)
 
 
     @property

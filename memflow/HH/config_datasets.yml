@@ -1,0 +1,179 @@
+build_dir: &build_dir '/nfs/scratch/fynu/fbury/MEMFlow_data/transfer_flow_v7'
+
+slurm:
+  sbatch_partition: 'cp3'
+  sbatch_qos: 'cp3'
+  sbatch_time: '02:00:00'
+  sbatch_memPerCPU: '120G'
+
+parameters:
+  - cls: 'memflow.HH.HH:HHbbWWDoubleLeptonHardDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH0.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH1.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH2p45.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH5.root'
+    treename: 'gen_HH;1'
+    coordinates: 'cylindrical'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    n_ISR: 1
+    selection: ['final_states','ISR']
+    build_dir: *build_dir
+  - cls: 'memflow.HH.HH:HHbbWWDoubleLeptonRecoDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH0.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH1.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH2p45.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/GluGluToHHTo2B2VTo2L2Nu_node_cHHH5.root'
+    treename: 'reco_DL;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    topology: 'resolved'
+    selection: ['muons','electrons','met','jets']
+    build_dir: *build_dir
+
+  - cls: 'memflow.HH.ttbar:TTDoubleLeptonHardDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/TTTo2L2Nu.root'
+    treename: 'gen_TT;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    n_ISR: 1
+    selection: ['final_states','ISR']
+    build_dir: *build_dir
+    N: 5000000
+  - cls: 'memflow.HH.ttbar:TTDoubleLeptonRecoDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/TTTo2L2Nu.root'
+    treename: 'reco_DL;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    topology: 'resolved'
+    selection: ['muons','electrons','met','jets']
+    build_dir: *build_dir
+    N: 5000000
+
+  - cls: 'memflow.HH.DY:DYDoubleLeptonHardDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYJetsToLL_M-10to50.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYJetsToLL_M-50.root'
+        #- '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYToLL_0J.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYToLL_1J.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYToLL_2J.root'
+    treename: 'gen_DY;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    n_ISR: 2
+    selection: ['final_states','ISR']
+    build_dir: *build_dir
+    N: 10000000
+  - cls: 'memflow.HH.DY:DYDoubleLeptonRecoDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYJetsToLL_M-10to50.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYJetsToLL_M-50.root'
+        #- '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYToLL_0J.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYToLL_1J.root'
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/DYToLL_2J.root'
+    treename: 'reco_DL;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    topology: 'resolved'
+    selection: ['muons','electrons','met','jets']
+    build_dir: *build_dir
+    N: 10000000
+
+  - cls: 'memflow.HH.ZZ:ZZDoubleLeptonHardDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ZZTo2L2Q.root'
+    treename: 'gen_ZZ;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    n_ISR: 0
+    selection: ['final_states']
+    build_dir: *build_dir
+  - cls: 'memflow.HH.ZZ:ZZDoubleLeptonRecoDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ZZTo2L2Q.root'
+    treename: 'reco_DL;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    topology: 'resolved'
+    selection: ['muons','electrons','met','jets']
+    build_dir: *build_dir
+
+  - cls: 'memflow.HH.ZH:ZHDoubleLeptonHardDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ZH_HToBB_ZToLL.root'
+    treename: 'gen_ZH;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    n_ISR: 2
+    selection: ['final_states','ISR']
+    build_dir: *build_dir
+  - cls: 'memflow.HH.ZH:ZHDoubleLeptonRecoDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ZH_HToBB_ZToLL.root'
+    treename: 'reco_DL;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    topology: 'resolved'
+    selection: ['muons','electrons','met','jets']
+    build_dir: *build_dir
+
+  - cls: 'memflow.HH.ST:STPlusDoubleLeptonHardDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ST_tW_top_5f.root'
+    treename: 'gen_ST;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    n_ISR: 1
+    selection: ['final_states','ISR']
+    build_dir: *build_dir
+  - cls: 'memflow.HH.ST:STPlusDoubleLeptonRecoDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ST_tW_top_5f.root'
+    treename: 'reco_DL;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    topology: 'resolved'
+    selection: ['muons','electrons','met','jets']
+    build_dir: *build_dir
+
+  - cls: 'memflow.HH.ST:STMinusDoubleLeptonHardDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ST_tW_antitop_5f.root'
+    treename: 'gen_ST;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    n_ISR: 1
+    selection: ['final_states','ISR']
+    build_dir: *build_dir
+  - cls: 'memflow.HH.ST:STMinusDoubleLeptonRecoDataset'
+    files: 
+      - '/home/ucl/cp3/fbury/scratch/MEM_data/Transfermer_v7_2016/results/ST_tW_antitop_5f.root'
+    treename: 'reco_DL;1'
+    apply_boost: False
+    apply_preprocessing: True
+    coordinates: 'cylindrical'
+    topology: 'resolved'
+    selection: ['muons','electrons','met','jets']
+    build_dir: *build_dir
+
+
+
+
+
