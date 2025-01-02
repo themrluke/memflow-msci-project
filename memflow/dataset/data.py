@@ -9,76 +9,9 @@ import dask.dataframe as dd
 import uproot
 from collections.abc import Mapping
 from abc import abstractmethod
-from functools import reduce, cached_property
+from functools import cached_property
 
 vector.register_awkward()
-
-def get_intersection_indices(datas,branch,different_files=False):
-    """
-        Return a list of indices for each data instance that intersect on the branch provided
-        Args:
-         - datas [list] : list of AbsData instances
-         - branch [str] : data branch on which to check for intersection (eg, event number)
-        Note : this search is performed file by file, assuming different trees
-    """
-    # Make recasting and checks #
-    if not isinstance(datas,(list,tuple)):
-        datas = [datas]
-    assert len(datas) > 1, f'Need at least 2 Data objects, got {len(data)}'
-    for i,data in enumerate(datas):
-        assert isinstance(data,AbsData), f'Data entry number {i} (type : {type(data)}) is not a Data class'
-
-    # Get matching between files
-    print ('Looking into file metadata')
-    if different_files:
-        # The different trees from which the data are taken are from different files
-        # Cannot make any checks here, rely on the fact the user provided them in the correct order
-        common_files = [np.unique(data['file']) for data in datas]
-        lengths = [len(files) for files in common_files]
-        assert len(set(lengths))==1, f'The data objects have different number of files : {lengths}'
-        print ('Will pair these files together :')
-        for i in range(lengths[0]):
-            print ('   - '+' <-> '.join([files[i] for files in common_files]))
-    else:
-        # Assume the files contain multiple trees that are extracted in the data objects
-        # We want to only compare corresponding files, because the intersecton branch is probably not unique
-        unique_files = None
-        for i, data in enumerate(datas):
-            assert data['file'].layout.purelist_depth == 1
-            uniq = np.unique(data['file'].to_numpy())
-            print (f'\tentry {i} : {uniq}')
-            if unique_files is None:
-                unique_files = uniq
-            else:
-                unique_files = [f for f in unique_files if f in uniq]
-        common_files = [unique_files] * len(datas)
-        print (f'Will only consider common files : {unique_files}')
-        print ('(Note : this assumes the files have the same order between the different data objects)')
-
-    # Obtain set of indices for each Data object that intersect on the branch #
-    idxs = [np.array([],dtype=np.int64) for _ in range(len(datas))]
-    sizes = [0 for _ in range(len(datas))] # Need to avoid resetting indices to zero
-    for i in range(len(common_files[0])):
-        arrays = [data[branch][data['file']==files[i]].to_numpy() for data,files in zip(datas,common_files)]
-        matched = reduce(np.intersect1d, arrays) # find common values between all arrays
-        for j in range(len(datas)):
-            idx = np.nonzero(np.in1d(arrays[j],matched))[0] # for specific array, get common indices with matched
-            idx += sizes[j]
-            idxs[j] = np.concatenate((idxs[j],idx),axis = 0)
-            sizes[j] += len(arrays[j])  # keep track to add to next iteration
-
-    # Info printout #
-    for i in range(len(datas)):
-        print (f'For entry {i} : from {datas[i].events} events, {len(idxs[i])} selected')
-
-    # Safety check : make sure the intersection branch returns the same values
-    for i in range(1,len(datas)):
-        if not all(datas[0][branch][idxs[0]] == datas[i][branch][idxs[i]]):
-            print (f'Disagreement between Data object 0 and {i} on branch {branch} after the index selection')
-
-    return idxs
-
-
 
 class AbsData(Mapping):
     """
@@ -121,7 +54,11 @@ class AbsData(Mapping):
         array = ak.concatenate(arrays,axis=0)
         if isinstance(array.layout,ak.contents.listoffsetarray.ListOffsetArray):
             pass # the typical type of awkward array we want
-        if isinstance(array.layout,ak.contents.numpyarray.NumpyArray):
+        elif isinstance(array.layout,ak.contents.numpyarray.NumpyArray):
+            pass # other typical layout we want
+        elif isinstance(array.layout,ak.contents.listarray.ListArray):
+            pass # other typical layout we want
+        elif isinstance(array.layout,ak.contents.indexedarray.IndexedArray):
             pass # other typical layout we want
         elif isinstance(array.layout,ak.contents.bytemaskedarray.ByteMaskedArray):
             # arrays with a option[var* ...] type, nasty
@@ -337,12 +274,18 @@ class AbsData(Mapping):
             # Turn the floats/ints into the awkward arrays #
             # Turn into vector awkward array #
             vec = ak.zip(
-                {key: array.tolist() if isinstance(array,ak.Array) else array for key,array in arrays.items()},
+                {
+                    key: array.tolist() if isinstance(array,ak.Array) else array
+                    for key,array in arrays.items()
+                },
                 # need the list to get *var* number of entries on axis=1
                 with_name="Momentum4D",
             )
             if lambda_mask is not None:
-                vec = vec[lambda_mask(vec)]
+                vec = ak.mask(vec,lambda_mask(vec))
+                # Need to use ak.mask to keep empty entries that do not pass the test
+                # but ak.mask puts None in empty places, let's drop them
+                vec = vec[~ak.is_none(vec,axis=-1)]
             self[name] = vec
         # If string, just make sure it is treated as Momentum4D #
         elif isinstance(link,str):
@@ -378,7 +321,7 @@ class RootData(AbsData):
                 if treename not in F.keys():
                     raise RuntimeError(f'Tree {treename} is not in file {f}')
                 if self.lazy:
-                    tree = uproot.dask(f'{F._file._file_path}:{treename}',library='ak',step_size='100 MB')
+                    tree = uproot.dask(f'{F._file._file_path}:{treename}',library='ak',steps_per_file=20)  #,step_size='100 MB')
                     n_tree = len(tree[tree.fields[0]])
                 else:
                     tree = F[treename]

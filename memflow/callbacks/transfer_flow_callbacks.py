@@ -10,18 +10,20 @@ from lightning.pytorch.callbacks import Callback
 
 
 class SamplingCallback(Callback):
-    def __init__(self,dataset,idx_to_monitor,N_sample,frequency=1,raw=False,bins=50,log_scale=False,suffix='', device=None):
+    def __init__(self,dataset,idx_to_monitor,preprocessing=None,N_sample=1,frequency=1,bins=50,log_scale=False,suffix='',label_names={},device=None):
         super().__init__()
 
         # Attributes #
         self.dataset = dataset
         self.N_sample = N_sample
         self.frequency = frequency
-        self.raw = raw
+        self.preprocessing = preprocessing
         self.bins = bins
         self.log_scale = log_scale
+        self.label_names = label_names
         self.device = device
         self.suffix = suffix
+        self.label_names = label_names
 
         # Call batch getting #
         self.set_idx(idx_to_monitor)
@@ -36,7 +38,28 @@ class SamplingCallback(Callback):
         self.N_event = self.idx_to_monitor.shape[0]
 
         # Get batch of data #
-        self.batch = self.dataset.batch_by_index(self.idx_to_monitor)
+        self.batch = {
+            'hard': {
+                'data' : [],
+                'mask' : [],
+            },
+            'reco': {
+                'data' : [],
+                'mask' : [],
+            },
+        }
+        for idx in self.idx_to_monitor:
+            entry = self.dataset[idx]
+            self.batch['hard']['data'].append(entry['hard']['data'])
+            self.batch['hard']['mask'].append(entry['hard']['mask'])
+            self.batch['reco']['data'].append(entry['reco']['data'])
+            self.batch['reco']['mask'].append(entry['reco']['mask'])
+
+        from torch.utils.data._utils.collate import default_collate
+        self.batch['hard']['data'] = default_collate(self.batch['hard']['data'])
+        self.batch['hard']['mask'] = default_collate(self.batch['hard']['mask'])
+        self.batch['reco']['data'] = default_collate(self.batch['reco']['data'])
+        self.batch['reco']['mask'] = default_collate(self.batch['reco']['mask'])
 
     def plot_particle(self,sample,reco,features,title):
         # sample (N,F)
@@ -49,7 +72,7 @@ class SamplingCallback(Callback):
         plt.subplots_adjust(left=0.1,bottom=0.1,right=0.9,top=0.9,hspace=0.3,wspace=0.3)
 
         def get_bins(feature,sample,reco):
-            if feature in ['pt']:
+            if feature in ['pt','m','mass']:
                 bins = np.linspace(
                     0.,
                     max(torch.quantile(sample,0.9999,interpolation='higher'),reco),
@@ -66,21 +89,29 @@ class SamplingCallback(Callback):
 
         for i in range(N):
             bins_x = get_bins(features[i],sample[:,i],reco[i])
+            if features[i] in self.label_names.keys():
+                feature_x_name = self.label_names[features[i]]
+            else:
+                feature_x_name = features[i]
             for j in range(N):
+                if features[j] in self.label_names.keys():
+                    feature_y_name = self.label_names[features[j]]
+                else:
+                    feature_y_name = features[j]
                 bins_y = get_bins(features[j],sample[:,j],reco[j])
                 if j > i:
                     axs[i,j].axis('off')
                 elif j == i:
                     axs[i,j].hist(sample[:,i],bins=bins_x)
                     axs[i,j].axvline(reco[i],color='r')
-                    axs[i,j].set_xlabel(features[i])
+                    axs[i,j].set_xlabel(f'${feature_x_name}$',fontsize=16)
                     if self.log_scale:
                         axs[i,j].set_yscale('log')
                 else:
                     h = axs[i,j].hist2d(sample[:,i],sample[:,j],bins=(bins_x,bins_y),norm=matplotlib.colors.LogNorm() if self.log_scale else None)
                     axs[i,j].scatter(reco[i],reco[j],marker='x',color='r',s=40)
-                    axs[i,j].set_xlabel(features[i])
-                    axs[i,j].set_ylabel(features[j])
+                    axs[i,j].set_xlabel(f'${feature_x_name}$',fontsize=16)
+                    axs[i,j].set_ylabel(f'${feature_y_name}$',fontsize=16)
                     plt.colorbar(h[3], ax=axs[i,j])
         return fig
 
@@ -109,28 +140,47 @@ class SamplingCallback(Callback):
         reco_mask_exist = [mask.to("cpu") for mask in reco_mask_exist]
 
         # Inverse preprocessing #
-        if self.raw:
-
-            preprocessing = self.dataset.reco_dataset._preprocessing
+        if self.preprocessing is not None:
             for i in range(len(reco_data)):
-                name = self.dataset.reco_dataset.selection[i]
-                fields = self.dataset.reco_dataset._fields[name]
-                flow_fields = [fields[k] for k in model.flow_indices[i]]
+                name = model.reco_particle_type_names[i]
+                fields = list(model.reco_input_features_per_type[i])
+                flow_fields = [fields[idx] for idx in model.flow_indices[i]]
 
                 # Inverse for data #
-                reco_data[i] = preprocessing.inverse(name,reco_data[i],reco_mask_exist[i],fields)
+                reco_data[i],_ = self.preprocessing.inverse(
+                    name = name,
+                    x = reco_data[i],
+                    mask = reco_mask_exist[i],
+                    fields = fields,
+                )
 
                 # preprocessing expects :
                 #   data = [events, particles, features]
                 #   mask = [events, particles]
                 # samples dims = [samples, events, particles, features]
                 # will merge samples*event and unmerge later
-                samples[i] = preprocessing.inverse(
+                samples[i], fields[i] = self.preprocessing.inverse(
                     name = name,
-                    x = samples[i].reshape(self.N_sample*self.N_event,samples[i].shape[2],samples[i].shape[3]),
-                    mask = reco_mask_exist[i].unsqueeze(0).repeat_interleave(self.N_sample,dim=0).reshape(self.N_sample*reco_mask_exist[i].shape[0],reco_mask_exist[i].shape[1]),
+                    x = samples[i].reshape(
+                            self.N_sample * self.N_event,
+                            samples[i].shape[2],
+                            samples[i].shape[3],
+                    ),
+                    mask = reco_mask_exist[i].unsqueeze(0).repeat_interleave(
+                        self.N_sample,
+                        dim = 0,
+                    ).reshape(
+                            self.N_sample * reco_mask_exist[i].shape[0],
+                            reco_mask_exist[i].shape[1],
+                    ),
                     fields = flow_fields,
-                ).reshape(self.N_sample,self.N_event,samples[i].shape[2],samples[i].shape[3])
+                )
+                samples[i] = samples[i].reshape(
+                    self.N_sample,
+                    self.N_event,
+                    reco_data[i].shape[1],
+                    len(flow_fields),
+                )
 
         # Loop over events #
         figs = {}
@@ -144,11 +194,11 @@ class SamplingCallback(Callback):
                             sample = samples[i][:,event,j,:],
                             reco = reco_data[i][event,j,flow_indices],
                             features = flow_features,
-                            title = f'{self.dataset.reco_dataset.selection[i]} #{j} (event #{event})',
+                            title = f'{model.reco_particle_type_names[i]} #{j} (event #{event})',
                         )
                         if show:
                             plt.show()
-                        figure_name = f'event_{event}_obj_{self.dataset.reco_dataset.selection[i]}_{j}'
+                        figure_name = f'event_{event}_obj_{model.reco_particle_type_names[i]}_{j}'
                         if len(self.suffix) > 0:
                             figure_name += f'_{self.suffix}'
                         figs[figure_name] = fig
@@ -157,6 +207,8 @@ class SamplingCallback(Callback):
 
     def on_validation_epoch_end(self,trainer,pl_module):
         if trainer.sanity_checking:  # optional skip
+            return
+        if trainer.current_epoch == 0:
             return
         if trainer.current_epoch % self.frequency != 0:
            return
@@ -175,19 +227,20 @@ class SamplingCallback(Callback):
             plt.close(figure)
 
 class BiasCallback(Callback):
-    def __init__(self,dataset,N_sample=1,frequency=1,raw=False,bins=50,points=20,device=None,suffix='',N_batch=math.inf,batch_size=1024):
+    def __init__(self,dataset,preprocessing=None,N_sample=1,frequency=1,raw=False,bins=50,points=20,log_scale=False,device=None,suffix='',label_names={},N_batch=math.inf,batch_size=1024):
         super().__init__()
 
         # Attributes #
         self.dataset = dataset
         self.loader = DataLoader(dataset,batch_size=batch_size,shuffle=False)
+        self.preprocessing = preprocessing
         self.N_sample = N_sample
         self.N_batch = N_batch
         self.frequency = frequency
-        self.raw = raw
         self.bins = bins
         self.points = points
         self.log_scale = log_scale
+        self.label_names = label_names
         self.device = device
         self.suffix = suffix
 
@@ -266,6 +319,11 @@ class BiasCallback(Callback):
         truth = truth.unsqueeze(0).repeat_interleave(repeats=samples.shape[0],dim=0)
         diff = samples-truth
         for j in range(N):
+            # Getting feature name #
+            if features[j] in self.label_names.keys():
+                feature_name = self.label_names[features[j]]
+            else:
+                feature_name = features[j]
             # 1D plot #
             diff_max = abs(diff[...,j]).max()
             diff_bins = np.linspace(-diff_max,diff_max,self.bins)
@@ -275,7 +333,7 @@ class BiasCallback(Callback):
                 histtype = 'step',
                 color = 'b',
             )
-            axs[0,j].set_xlabel(f'${features[j]}_{{sampled}} - {features[j]}_{{true}}$')
+            axs[0,j].set_xlabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$')
             if self.log_scale:
                 axs[0,j].set_yscale('log')
 
@@ -307,8 +365,8 @@ class BiasCallback(Callback):
                 bins = (scale_bins,scale_bins),
                 norm = matplotlib.colors.LogNorm() if self.log_scale else None,
             )
-            axs[1,j].set_xlabel(f'${features[j]}_{{true}}$')
-            axs[1,j].set_ylabel(f'${features[j]}_{{sampled}}$')
+            axs[1,j].set_xlabel(f'${feature_name}$ (true)')
+            axs[1,j].set_ylabel(f'${feature_name}$ (sampled)')
             plt.colorbar(h[3],ax=axs[1,j])
 
             # Bias plot #
@@ -380,11 +438,11 @@ class BiasCallback(Callback):
             cov_max = abs(coverages).max()
             axs[2,j].set_ylim(-cov_max,cov_max)
             axs[2,j].legend(loc='upper right',facecolor='white',framealpha=1)
-            axs[2,j].set_xlabel(f'${features[j]}_{{true}}$')
+            axs[2,j].set_xlabel(f'${feature_name}$ (true)')
             if relative:
-                axs[2,j].set_ylabel(fr'$\frac{{{features[j]}_{{sampled}} - {features[j]}_{{true}}}}{{{features[j]}_{{true}}}}$')
+                axs[2,j].set_ylabel(fr'$\frac{{{feature_name} \text{{ (sampled)}} - {feature_name}(true)}}{{{feature_name} \text{{ (true)}}}}$')
             else:
-                axs[2,j].set_ylabel(fr'${features[j]}_{{sampled}} - {features[j]}_{{true}}$')
+                axs[2,j].set_ylabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$')
 
         return fig
 
@@ -401,18 +459,25 @@ class BiasCallback(Callback):
         fig,ax = plt.subplots(1,1,figsize=(6,5))
         colors = plt.cm.rainbow(np.linspace(0, 1, len(features)))
         for j in range(len(features)):
+            # Getting feature name #
+            if features[j] in self.label_names.keys():
+                feature_name = self.label_names[features[j]]
+            else:
+                feature_name = features[j]
+            # Calculate qq plot #
             true_quantiles = torch.linspace(0,1,21)
             true_cuts = torch.quantile(truth[:,j],true_quantiles)
             sampled_quantiles = torch.zeros_like(true_quantiles)
             for k,cut in enumerate(true_cuts):
                 sampled_quantiles[k] = (samples[:,j].ravel() <= cut).sum() / samples.shape[0]
+            # Plot #
             ax.plot(
                 true_quantiles,
                 sampled_quantiles,
                 marker = 'o',
                 markersize = 3,
                 color = colors[j],
-                label = features[j],
+                label = f'${feature_name}$',
             )
         ax.plot(
             [0,1],
@@ -435,7 +500,7 @@ class BiasCallback(Callback):
             device = self.device
         model = model.to(device)
 
-        N_reco = len(self.dataset.reco_dataset.number_particles_per_type)
+        N_reco = len(model.n_reco_particles_per_type)
         samples = [[] for _ in range(N_reco)]
         truth   = [[] for _ in range(N_reco)]
         mask    = [[] for _ in range(N_reco)]
@@ -455,23 +520,22 @@ class BiasCallback(Callback):
 
             # Record #
             for i in range(N_reco):
-                samples[i].append(batch_samples[i])
-                truth[i].append(reco_data[i][...,model.flow_indices[i]])
-                mask[i].append(reco_mask_exist[i])
+                samples[i].append(batch_samples[i].cpu())
+                truth[i].append(reco_data[i][...,model.flow_indices[i]].cpu())
+                mask[i].append(reco_mask_exist[i].cpu())
 
         # Concat the whole samples list #
-        samples = [torch.cat(sample,dim=1).cpu() for sample in samples]
-        truth   = [torch.cat(t,dim=0).cpu() for t in truth]
-        mask    = [torch.cat(m,dim=0).cpu() for m in mask]
+        samples = [torch.cat(sample,dim=1) for sample in samples]
+        truth   = [torch.cat(t,dim=0) for t in truth]
+        mask    = [torch.cat(m,dim=0) for m in mask]
 
         # Inverse preprocessing if raw #
-        if self.raw:
-            preprocessing = self.dataset.reco_dataset._preprocessing
+        if self.preprocessing is not None:
             for i in range(len(truth)):
-                name = self.dataset.reco_dataset.selection[i]
-                fields = self.dataset.reco_dataset._fields[name]
+                name = model.reco_particle_type_names[i]
+                fields = model.reco_input_features_per_type[i]
                 flow_fields = [fields[idx] for idx in model.flow_indices[i]]
-                truth[i] = preprocessing.inverse(
+                truth[i], _ = self.preprocessing.inverse(
                     name = name,
                     x = truth[i],
                     mask = mask[i],
@@ -482,12 +546,12 @@ class BiasCallback(Callback):
                 #   mask = [events, particles]
                 # samples dims = [samples, events, particles, features]
                 # will merge samples*event and unmerge later
-                samples[i] = preprocessing.inverse(
+                samples[i] = self.preprocessing.inverse(
                     name = name,
                     x = samples[i].reshape(self.N_sample*samples[i].shape[1],samples[i].shape[2],samples[i].shape[3]),
                     mask = mask[i].unsqueeze(0).repeat_interleave(self.N_sample,dim=0).reshape(self.N_sample*mask[i].shape[0],mask[i].shape[1]),
                     fields = flow_fields,
-                ).reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
+                )[0].reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
 
         # Make figure plots #
         figs = {}
@@ -498,11 +562,11 @@ class BiasCallback(Callback):
                     mask = mask_type[:,j],
                     samples = samples_type[:,:,j,:],
                     features = model.flow_input_features[i],
-                    title = f'{self.dataset.reco_dataset.selection[i]} #{j}',
+                    title = f'{model.reco_particle_type_names[i]} #{j}',
                 )
                 if show:
                     plt.show()
-                figure_name = f'{self.dataset.reco_dataset.selection[i]}_{j}_bias'
+                figure_name = f'{model.reco_particle_type_names[i]}_{j}_bias'
                 if len(self.suffix) > 0:
                     figure_name += f'_{self.suffix}'
                 figs[figure_name] = fig
@@ -512,9 +576,9 @@ class BiasCallback(Callback):
                     mask = mask_type[:,j],
                     samples = samples_type[:,:,j,:],
                     features = model.flow_input_features[i],
-                    title = f'{self.dataset.reco_dataset.selection[i]} #{j}',
+                    title = f'{model.reco_particle_type_names[i]} #{j}',
                 )
-                figure_name = f'{self.dataset.reco_dataset.selection[i]}_{j}_quantile'
+                figure_name = f'{model.reco_particle_type_names[i]}_{j}_quantile'
                 if len(self.suffix) > 0:
                     figure_name += f'_{self.suffix}'
                 figs[figure_name] = fig
@@ -524,6 +588,8 @@ class BiasCallback(Callback):
 
     def on_validation_epoch_end(self,trainer,pl_module):
         if trainer.sanity_checking:  # optional skip
+            return
+        if trainer.current_epoch == 0:
             return
         if trainer.current_epoch % self.frequency != 0:
            return

@@ -30,6 +30,8 @@ class BaseCallback(Callback,metaclass=ABCMeta):
     def on_validation_epoch_end(self,trainer,pl_module):
         if trainer.sanity_checking:  # optional skip
             return
+        if trainer.current_epoch == 0:
+            return
         if trainer.current_epoch % self.frequency != 0:
            return
 
@@ -117,14 +119,12 @@ class BaseCallback(Callback,metaclass=ABCMeta):
 
             # Preprocessing #
             if self.raw:
-                preprocessing = self.dataset.hard_dataset._preprocessing
-                name = self.dataset.hard_dataset.selection[j]
-                fields = self.dataset.hard_dataset._fields[name]
-                inputs_type = preprocessing.inverse(
+                preprocessing = self.dataset.hard_dataset.preprocessing
+                inputs_type, features = preprocessing.inverse(
                     name = name,
                     x = inputs_type,
-                    mask = torch.ones((inputs_type.shape[0],inputs_type.shape[1])),
-                    fields = fields,
+                    mask = torch.full((inputs_type.shape[0],inputs_type.shape[1]),fill_value=True),
+                    fields = features,
                 )
 
             # Loop over particles within type #
@@ -153,12 +153,12 @@ class AcceptanceCallback(BaseCallback):
         self.min_selected_events_per_bin = min_selected_events_per_bin
         super().__init__(**kwargs)
 
-    def make_binning(self,values):
+    def make_binning(self,values,thresh=None):
         bin_content,bin_edges = np.histogram(values,self.bins)
         # No threshold, just use bins #
-        if self.min_selected_events_per_bin is None:
-            return bins_edges
-        assert isinstance(self.min_selected_events_per_bin,(float,int))
+        if thresh is None:
+            return bin_edges
+        assert isinstance(thresh,(float,int))
         # Accumulate bins to have them always above threshold #
         acc_content = 0.
         final_bin_edges = []
@@ -170,7 +170,7 @@ class AcceptanceCallback(BaseCallback):
                     final_bin_edges.append(bin_edges[i])
             # Check if total of accumaulated bin is above threshold
             acc_content += bin_content[i]
-            if acc_content > self.min_selected_events_per_bin:
+            if acc_content > thresh:
                 final_bin_edges.append(bin_edges[i+1])
                 acc_content = 0.
             if bin_content[i] > 0:
@@ -184,14 +184,22 @@ class AcceptanceCallback(BaseCallback):
         N = len(features)
         fig,axs = plt.subplots(ncols=N,nrows=2,figsize=(6*N,5),height_ratios=[1.0,0.2])
         plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.4,hspace=0.1)
-        mask = (targets > 0).ravel()
+        mask_sel = (targets > 0).ravel()
 
         plt.suptitle(title,fontsize=16)
         for i in range(N):
-            # Determine the binning from
-            binning = self.make_binning(inputs[mask,i])
+            # Determine the binning from selected events #
+            if isinstance(self.min_selected_events_per_bin,(float,int)):
+                thresh = self.min_selected_events_per_bin
+            elif isinstance(self.min_selected_events_per_bin,dict):
+                if not features[i] in self.min_selected_events_per_bin.keys():
+                    raise RuntimeError(f'Feature {features[i]} not in min_selected_events_per_bin choices {self.min_selected_events_per_bin.keys()}')
+                thresh = self.min_selected_events_per_bin[features[i]]
+            else:
+                raise RuntimeError(f'Type {type(self.min_selected_events_per_bin)} of min_selected_events_per_bin not understood')
+            binning = self.make_binning(inputs[mask_sel,i],thresh)
             # Make histogram of selected events only #
-            content_selected, binning = np.histogram(inputs[mask,i],bins=binning)
+            content_selected, binning = np.histogram(inputs[mask_sel,i],bins=binning)
             # Make histogram of all hard events #
             content_feat, _ = np.histogram(inputs[:,i],bins=binning)
             # Make histogram of prediction #

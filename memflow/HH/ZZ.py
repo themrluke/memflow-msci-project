@@ -25,7 +25,7 @@ class ZZDoubleLeptonHardDataset(HardBase):
     @property
     def processed_path(self):
         return os.path.join(
-            os.getcwd(),
+            self.build_dir,
             'zz_hard'
         )
 
@@ -60,9 +60,24 @@ class ZZDoubleLeptonHardDataset(HardBase):
             },
             verbose=True,
         )
+        # Make sure n(leptons)+n(quarks) == 4
+        mask_4_decay = sum(
+            [
+                self.data['n_lep_from_Z1'],
+                self.data['n_lep_from_Z2'],
+                self.data['n_antilep_from_Z1'],
+                self.data['n_antilep_from_Z2'],
+                self.data['n_quark_from_Z1'],
+                self.data['n_quark_from_Z2'],
+                self.data['n_antiquark_from_Z1'],
+                self.data['n_antiquark_from_Z2'],
+                self.data['n_lep_from_nonres'],
+                self.data['n_antilep_from_nonres'],
+            ]
+        ) == 4
+        print (f'Selecting n(leptons)+n(quarks) == 4 : {ak.sum(mask_4_decay)} out of {ak.num(mask_4_decay,axis=0)} events')
+        self.data.cut(mask_4_decay)
 
-        # Now going to use select_present_particles
-        # because we either have res or nonres leptons
         # For now exclude the taus completely #
         #mask_tau_veto = np.logical_and.reduce(
         #    (
@@ -79,11 +94,14 @@ class ZZDoubleLeptonHardDataset(HardBase):
 
 
         # Make generator info #
-        #boost = self.make_boost(generator.x1,generator.x2)
-        x1 = np.random.random((self.data.events,1))
-        x2 = np.random.random((self.data.events,1))
-        boost = self.make_boost(x1,x2)
+        boost = self.make_boost(
+            self.data['Generator_x1'],
+            self.data['Generator_x2'],
+        )
 
+        # Register ISR #
+        # Need to be done before final states if a cut on N(ISR) is done
+        self.register_ISR()
 
         # Make particles #
         self.data.make_particles(
@@ -92,72 +110,71 @@ class ZZDoubleLeptonHardDataset(HardBase):
                 'px'  : [
                     'lep_from_Z1_Px',
                     'antilep_from_Z1_Px',
-                    'lep_from_Z2_Px',
-                    'antilep_from_Z2_Px',
-                    'lep_from_nonres_Px',
-                    'antilep_from_nonres_Px',
                     'quark_from_Z1_Px',
                     'antiquark_from_Z1_Px',
+                    'lep_from_Z2_Px',
+                    'antilep_from_Z2_Px',
                     'quark_from_Z2_Px',
                     'antiquark_from_Z2_Px',
+                    'lep_from_nonres_Px',
+                    'antilep_from_nonres_Px',
                 ],
                 'py'  : [
                     'lep_from_Z1_Py',
                     'antilep_from_Z1_Py',
-                    'lep_from_Z2_Py',
-                    'antilep_from_Z2_Py',
-                    'lep_from_nonres_Py',
-                    'antilep_from_nonres_Py',
                     'quark_from_Z1_Py',
                     'antiquark_from_Z1_Py',
+                    'lep_from_Z2_Py',
+                    'antilep_from_Z2_Py',
                     'quark_from_Z2_Py',
                     'antiquark_from_Z2_Py',
+                    'lep_from_nonres_Py',
+                    'antilep_from_nonres_Py',
                 ],
                 'pz'  : [
                     'lep_from_Z1_Pz',
                     'antilep_from_Z1_Pz',
-                    'lep_from_Z2_Pz',
-                    'antilep_from_Z2_Pz',
-                    'lep_from_nonres_Pz',
-                    'antilep_from_nonres_Pz',
                     'quark_from_Z1_Pz',
                     'antiquark_from_Z1_Pz',
+                    'lep_from_Z2_Pz',
+                    'antilep_from_Z2_Pz',
                     'quark_from_Z2_Pz',
                     'antiquark_from_Z2_Pz',
+                    'lep_from_nonres_Pz',
+                    'antilep_from_nonres_Pz',
                 ],
                 'E'  : [
                     'lep_from_Z1_E',
                     'antilep_from_Z1_E',
-                    'lep_from_Z2_E',
-                    'antilep_from_Z2_E',
-                    'lep_from_nonres_E',
-                    'antilep_from_nonres_E',
                     'quark_from_Z1_E',
                     'antiquark_from_Z1_E',
+                    'lep_from_Z2_E',
+                    'antilep_from_Z2_E',
                     'quark_from_Z2_E',
                     'antiquark_from_Z2_E',
+                    'lep_from_nonres_E',
+                    'antilep_from_nonres_E',
                 ],
                 'pdgId'  : [
                     'lep_from_Z1_pdgId',
                     'antilep_from_Z1_pdgId',
-                    'lep_from_Z2_pdgId',
-                    'antilep_from_Z2_pdgId',
-                    'lep_from_nonres_pdgId',
-                    'antilep_from_nonres_pdgId',
                     'quark_from_Z1_pdgId',
                     'antiquark_from_Z1_pdgId',
+                    'lep_from_Z2_pdgId',
+                    'antilep_from_Z2_pdgId',
                     'quark_from_Z2_pdgId',
                     'antiquark_from_Z2_pdgId',
+                    'lep_from_nonres_pdgId',
+                    'antilep_from_nonres_pdgId',
                 ],
 
             },
             lambda vec: vec.E > 0.,
         )
-        self.make_radiation_particles()
+        self.register_particles(['final_states'])
+
         self.match_coordinates(boost,self.data['final_states']) # need to be done after the boost
 
-        self.register_particles(['final_states','ISR','FSR'])
-        self.preprocess_particles(['final_states','ISR','FSR'])
 
         # Register gen level particles #
         #self.register_object(
@@ -200,7 +217,7 @@ class ZZDoubleLeptonRecoDataset(RecoDoubleLepton):
     @property
     def processed_path(self):
         return os.path.join(
-            os.getcwd(),
+            self.build_dir,
             'zz_reco',
         )
 
