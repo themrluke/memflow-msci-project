@@ -19,8 +19,11 @@ class ttHBase:
     @staticmethod
     def get_coordinates(obj):
         if all([f in obj.fields for f in ['pt','eta','phi','mass']]):
+            print('get coordinates function returns CYLINDRICAL')
             return 'cylindrical'
+
         elif all([f in obj.fields for f in ['px','py','pz','E']]):
+            print('get coordinates function returns CARTESIAN')
             return 'cartesian'
         else:
             raise RuntimeError(f'Could not find coordinates from {obj.fields}')
@@ -56,22 +59,31 @@ class TemplateHardDataset(ttHBase, HardDataset):
         # Return the energy of the center-of-mass in GeV for the ttH process
         return 13000 * GeV  # Replace 13000 GeV with the actual value if different
 
+    # Some properties are required for the ME integration
+    # This is to be linked with Rambo
+    # If you are not using it right now, you can just return None
+
     @property
     def initial_states_pdgid(self):
+        # return the pdgids of the two initial state quarks as they are in the ME
         return [21, 21]  # Initial particles (gluons)
 
     @property
     def final_states_pdgid(self):
+        # return the pdgids of the process final states as they are in the ME
         # Assuming the final states of the ttH process are t, tbar, H
-        return [25, 6, -6, 25]  # PDG IDs for Higgs, top, anti-top
+        return [25, 6, -6]  # PDG IDs for Higgs, top, anti-top
 
     @property
     def final_states_object_name(self):
+        # names associated to the final states
+        # these names will be fetched in the object registered in the process method
         # Define the final objects (Higgs, tops)
         return ["higgs", "top", "antitop"]
 
     @property
     def processed_path(self):
+        # return path of where to store the tensors in case build=True
         print("Processed path method called.")  # Debug print
         # Directory to save processed ttH data
         return os.path.join(os.getcwd(), 'ttH_hard')
@@ -129,7 +141,7 @@ class TemplateHardDataset(ttHBase, HardDataset):
         #     ...
         # )
 
-        self.data.make_particles(
+        higgs = self.data.make_particles(
             'higgs',
             {
                 'pt'  : [
@@ -149,7 +161,8 @@ class TemplateHardDataset(ttHBase, HardDataset):
                 ],
             },
         )
-        self.data.make_particles(
+
+        tops = self.data.make_particles(
             'tops',
             {
                 'pt'  : [
@@ -174,7 +187,8 @@ class TemplateHardDataset(ttHBase, HardDataset):
                 ],
             },
         )
-        self.data.make_particles(
+
+        bottoms = self.data.make_particles(
             'bottoms',
             {
                 'pt'  : [
@@ -199,7 +213,8 @@ class TemplateHardDataset(ttHBase, HardDataset):
                 ],
             },
         )
-        self.data.make_particles(
+
+        Ws = self.data.make_particles(
             'Ws',
             {
                 'pt'  : [
@@ -224,7 +239,8 @@ class TemplateHardDataset(ttHBase, HardDataset):
                 ],
             },
         )
-        self.data.make_particles(
+
+        quarks = self.data.make_particles(
             'quarks',
             {
                 'pt'  : [
@@ -260,7 +276,8 @@ class TemplateHardDataset(ttHBase, HardDataset):
             },
             pad_value = 0.,
         )
-        self.data.make_particles(
+
+        Zs = self.data.make_particles(
             'Zs',
             {
                 'pt'  : [
@@ -280,7 +297,8 @@ class TemplateHardDataset(ttHBase, HardDataset):
                 ],
             },
         )
-        self.data.make_particles(
+
+        neutrinos = self.data.make_particles(
             'neutrinos',
             {
                 'pt'  : [
@@ -306,13 +324,42 @@ class TemplateHardDataset(ttHBase, HardDataset):
         # <obj_boosted> = self.boost(<obj>,boost)
 
         if self.apply_boost:
-            higgs = self.boost(higgs,boost)
-            tops = self.boost(tops,boost)
-            bottoms = self.boost(bottoms,boost)
-            Ws = self.boost(Ws,boost)
-            quarks = self.boost(quarks,boost)
-            Zs = self.boost(Zs,boost)
-            neutrinos = self.boost(neutrinos,boost)
+            higgs = self.boost(higgs, boost)
+            tops = self.boost(tops, boost)
+            bottoms = self.boost(bottoms, boost)
+            Ws = self.boost(Ws, boost)
+            quarks = self.boost(quarks, boost)
+            Zs = self.boost(Zs, boost)
+            neutrinos = self.boost(neutrinos, boost)
+
+        # In case you expect a variable number of particles (not always the case)
+        # <mask> can be obtained when reshaping the awkward array as below
+        # This is not always needed, for example when you know you have the same number of that particle per event
+
+        # <array_reshaped>, <array_mask> = self.reshape(
+        #     input = <awkward_array>,
+        #     value = <padding_value>, # number used to pad the missing entries (0 typically)
+        #     max_no = <value/None> # maximum number of particles in the padded array
+        #     # if max_no is None, will use the maximum number of particles in all events
+        # )
+        # self.register_object(
+        #     name = <name>,
+        #     obj = <array_reshaped>,
+        #     fields = <list_of_fields>,
+        #     mask = <array_mask>,
+        # )
+
+        quarks_padded, quarks_mask = self.reshape(
+            input = quarks,
+            value = 0.
+        )
+
+        neutrinos_padded, neutrinos_mask = self.reshape(
+            input = neutrinos,
+            value = 0.
+        )
+
+        # Note, you can also include a weight in the object, needs to be better described
 
         # 4) : Register the objecs to do awkward->rectangular array->tensor
 
@@ -331,68 +378,51 @@ class TemplateHardDataset(ttHBase, HardDataset):
         # typically this will be ['pt','eta','phi','mass',('pdgId')]
         # note: the fields can be from the array directly, or attributes of vector
 
-        ME_fields = ['pt','eta','phi','mass',('pdgId')] # ['E','px','py','pz'] in Rambo format
+        ME_fields = ['pt', 'eta', 'phi', 'mass', 'pdgId'] # ['E','px','py','pz'] in Rambo format
 
         self.register_object(
             name = 'higgs',
-            obj = self.data['higgs'],
+            obj = higgs,
             fields = ME_fields,
             )
 
         self.register_object(
             name = 'tops',
-            obj = self.data['tops'],
+            obj = tops,
             fields = ME_fields,
             )
 
         self.register_object(
             name = 'bottoms',
-            obj = self.data['bottoms'],
+            obj = bottoms,
             fields = ME_fields,
             )
 
         self.register_object(
             name = 'Ws',
-            obj = self.data['Ws'],
+            obj = Ws,
             fields = ME_fields,
             )
 
         self.register_object(
             name = 'quarks',
-            obj = self.data['quarks'],
+            obj = quarks_padded,
             fields = ME_fields,
+            mask = quarks_mask,
             )
 
         self.register_object(
             name = 'Zs',
-            obj = self.data['Zs'],
+            obj = Zs,
             fields = ME_fields,
             )
 
         self.register_object(
             name = 'neutrinos',
-            obj = self.data['neutrinos'],
+            obj = neutrinos_padded,
             fields = ME_fields,
+            mask = neutrinos_mask,
             )
-
-        # In case you expect a variable number of particles (not always the case)
-        # <mask> can be obtained when reshaping the awkward array as below
-        # This is not always needed, for example when you know you have the same number of that particle per event
-
-        <array_reshaped>, <array_mask> = self.reshape(
-            input = <awkward_array>,
-            value = <padding_value>, # number used to pad the missing entries (0 typically)
-            max_no = <value/None> # maximum number of particles in the padded array
-            # if max_no is None, will use the maximum number of particles in all events
-        )
-        self.register_object(
-            name = <name>,
-            obj = <array_reshaped>,
-            fields = <list_of_fields>,
-            mask = <array_mask>,
-        )
-
-        # Note, you can also include a weight in the object, needs to be better described
 
 
     # Here you can modify the object tensors and any final change you want
@@ -403,19 +433,21 @@ class TemplateHardDataset(ttHBase, HardDataset):
         # Register the preprocessing steps
         # You might want to apply multiple scaling in steps
         # Needs to be registered to be able to inverse all steps at the end
-        self.register_preprocessing_step(
-            PreprocessingStep(
-                names = <list_of_names>,
-                scaler_dict = <scaler_dict>,
-                fields_select = <list_fields>,
-            )
-        )
-        # <list_of_names> is the list of registered names in step 4
+
+        # self.register_preprocessing_step(
+        #     PreprocessingStep(
+        #         names = <list_of_names>,
+        #         scaler_dict = <scaler_dict>,
+        #         fields_select = <list_fields>,
+        #     )
+        # )
+
+        # # <list_of_names> is the list of registered names in step 4
         # you can either
         #   - include multiple objects,
         #     -> preprocessing will be fit (eg using a sklearn) scaler on all the objects
         #   - register preprocessing for particles individually
-        #     -> each will be fit for eac particle independently
+        #     -> each will be fit for each particle independently
         # <scaler_dict> : dict of
         #   - key : field as saved in the register objects
         #     -> apply different preprocessing for each feature
@@ -432,6 +464,53 @@ class TemplateHardDataset(ttHBase, HardDataset):
         #      Note : dimension change preprocessing allowed (eg onehot encoding)
         # - anything custom, see the logic in memflow.dataset.preprocessing
 
+        if self.apply_preprocessing:
+
+            if self.coordinates == 'cylindrical':
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names=['higgs', 'tops', 'bottoms', 'Ws', 'quarks', 'Zs', 'neutrinos'],
+                        scaler_dict={
+                            'pt': logmodulus(),
+                            'mass': logmodulus(),
+                        }
+                    )
+                )
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names=['higgs', 'tops', 'bottoms', 'Ws', 'quarks', 'Zs', 'neutrinos'],
+                        scaler_dict={
+                            'pt': SklearnScaler(preprocessing.StandardScaler()),
+                            'eta': SklearnScaler(preprocessing.StandardScaler()),
+                            'phi': SklearnScaler(preprocessing.StandardScaler()),
+                            'mass': SklearnScaler(preprocessing.StandardScaler()),
+                        }
+                    )
+                )
+
+            if self.coordinates == 'cartesian':
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names=['higgs', 'tops', 'bottoms', 'Ws', 'quarks', 'Zs', 'neutrinos'],
+                        scaler_dict={
+                            'px': logmodulus(),
+                            'py': logmodulus(),
+                            'pz': logmodulus(),
+                            'E': logmodulus(),
+                        }
+                    )
+                )
+                self.register_preprocessing_step(
+                    PreprocessingStep(
+                        names=['higgs', 'tops', 'bottoms', 'Ws', 'quarks', 'Zs', 'neutrinos'],
+                        scaler_dict={
+                            'px': SklearnScaler(preprocessing.StandardScaler()),
+                            'py': SklearnScaler(preprocessing.StandardScaler()),
+                            'pz': SklearnScaler(preprocessing.StandardScaler()),
+                            'E': SklearnScaler(preprocessing.StandardScaler()),
+                        }
+                    )
+                )
 
     # Properties #
     @property
@@ -439,32 +518,15 @@ class TemplateHardDataset(ttHBase, HardDataset):
         # Need to return a dict (or None if not needed)
         # - key : name of a registered object
         # - value : indices to consider in the attention mask (even if not present)
-
-    @property
-    def processed_path(self):
-        # return path of where to store the tensors in case build=True
-
-
-    # Some properties are required for the ME integration
-    # This is to be linked with Rambo
-    # If you are not using it right now, you can just return None
-
-    @property
-    def initial_states_pdgid(self):
-        # return the pdgids of the two initial state quarks as they are in the ME
-        return None
-
-    @property
-    def final_states_pdgid(self):
-        # return the pdgids of the process final states as they are in the ME
-        return None
-
-    @property
-    def final_states_object_name(self):
-        # names associated to the final states
-        # these names will be fetched in the object registered in the process method
-        # (see above)
-        return None
+        return {
+            'higgs': [0],
+            'tops': [0, 1],
+            'bottoms': [0, 1],
+            'Ws': [0, 1],
+            'quarks': [0, 1, 2, 3],
+            'Zs': [0],
+            'neutrinos': [0, 1, 2, 3],
+        }
 
 
 class TemplateRecoDataset(RecoDataset):
