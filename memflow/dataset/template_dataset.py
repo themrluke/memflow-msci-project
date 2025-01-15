@@ -38,11 +38,11 @@ class ttHBase:
 
 
 M_GLUON = 1e-3
-class TemplateHardDataset(ttHBase, HardDataset):
+class ttHHardDataset(ttHBase, HardDataset):
     # This is a template class for hard-scattering dataset
     # Will highlight below the all the required methods and properties
     # Some clues will be given on helper methods
-    def __init__(self, foo,bar,**kwargs):
+    def __init__(self,**kwargs):
         # The kwargs are the args required by the base HardDataset class
         # (data,selection,default_features,build,device,dtype)
         # Any user requested argument can also be defined in the __init__ args
@@ -51,8 +51,6 @@ class TemplateHardDataset(ttHBase, HardDataset):
         super().__init__(**kwargs)
 
         # Here save in self any argument you need to use further
-        self.foo = foo
-        self.bar = bar
 
     @property
     def energy(self):
@@ -88,12 +86,23 @@ class TemplateHardDataset(ttHBase, HardDataset):
         # Directory to save processed ttH data
         return os.path.join(os.getcwd(), 'ttH_hard')
 
-
     # The process method is the one where the data object is treated
     # Objects from the awkward arrays are registered
     def process(self):
+
         # 1) : select the decay you are interested in for your process
         # -> make mask (data type dependent) and apply it
+
+
+        self.select_objects([
+            'quarks',       # Final-state quarks from W boson decays
+            'bottoms',      # Bottom quarks from top decays
+            'neutrinos',    # Neutrinos from Z boson decays
+            'leptons'       # Leptons from W boson decays
+        ])
+
+
+        print('got this far')
 
         mask = np.logical_and.reduce(
             [
@@ -117,15 +126,17 @@ class TemplateHardDataset(ttHBase, HardDataset):
         )
         print (f'Selecting {mask.sum()} events out of {len(mask)}')
 
-        print (f'Before cut : {self.data.events} events')
+        print(f'Before cut: {len(self.data)} events')
         self.data.cut(mask)
-        print (f'After cut : {self.data.events} events')
+        print(f'After cut: {self.events} events')
+
 
         # 2) : obtain boost from the x1 and x2 parton fractions
         # Note : this is only needed in the case of the ME integration, not the transfer-flow
         # x1 = self.data[<branch_x1>]
         # x2 = self.data[<branch_x2>]
         # boost = self.make_boost(x1,x2)
+        print('DATA FIELDS: ', self.data.fields)
         generator = self.data['generator_info']
         boost = self.make_boost(generator.x1,generator.x2)
         # Note : for the ME case, you need to register the boost as it is used in rambo
@@ -423,8 +434,6 @@ class TemplateHardDataset(ttHBase, HardDataset):
             fields = ME_fields,
             mask = neutrinos_mask,
             )
-
-
     # Here you can modify the object tensors and any final change you want
     # Most importantly here you can register the preprocessing steps
     # We do it here rather than in the process, because that way we can load the raw
@@ -529,27 +538,25 @@ class TemplateHardDataset(ttHBase, HardDataset):
         }
 
 
-class TemplateRecoDataset(RecoDataset):
-    # Most of the parts are similar to the HardDataset
-    # Will only illustrate the differences here for reco
-    # In particular everything related to ME can be dismissed:
-    # - initial_states_pdgid
-    # - final_states_pdgid
-    # - final_states_object_name
+# class ttHRecoDataset(RecoDataset):
+#     # Most of the parts are similar to the HardDataset
+#     # Will only illustrate the differences here for reco
+#     # In particular everything related to ME can be dismissed:
+#     # - initial_states_pdgid
+#     # - final_states_pdgid
+#     # - final_states_object_name
 
-    # Properties #
-    @property
-    def attention_idx(self):
-        # same as Hard
+#     # Properties #
+#     @property
+#     def attention_idx(self):
+#         # same as Hard
 
-    @property
-    def processed_path(self):
-        # same as Hard
-
-
-    def process(self):
-        # Only difference is step 2)
-        # Boost can be defined as a the total particle momentum
-        boost = self.make_boost(jets,electrons,muons,met)
+#     @property
+#     def processed_path(self):
+#         # same as Hard
 
 
+#     def process(self):
+#         # Only difference is step 2)
+#         # Boost can be defined as a the total particle momentum
+#         boost = self.make_boost(jets,electrons,muons,met)
