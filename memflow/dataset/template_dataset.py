@@ -48,7 +48,8 @@ class ttHHardDataset(ttHBase, HardDataset):
         # Any user requested argument can also be defined in the __init__ args
 
         # Call abstract class
-        super().__init__(**kwargs)
+        ttHBase.__init__(self,**kwargs)
+        HardDataset.__init__(self,**kwargs)
 
         # Here save in self any argument you need to use further
 
@@ -82,9 +83,8 @@ class ttHHardDataset(ttHBase, HardDataset):
     @property
     def processed_path(self):
         # return path of where to store the tensors in case build=True
-        print("Processed path method called.")  # Debug print
         # Directory to save processed ttH data
-        return os.path.join(os.getcwd(), 'ttH_hard')
+        return os.path.join(os.getcwd(), 'ttHinv_hard')
 
     # The process method is the one where the data object is treated
     # Objects from the awkward arrays are registered
@@ -92,17 +92,6 @@ class ttHHardDataset(ttHBase, HardDataset):
 
         # 1) : select the decay you are interested in for your process
         # -> make mask (data type dependent) and apply it
-
-
-        self.select_objects([
-            'quarks',       # Final-state quarks from W boson decays
-            'bottoms',      # Bottom quarks from top decays
-            'neutrinos',    # Neutrinos from Z boson decays
-            'leptons'       # Leptons from W boson decays
-        ])
-
-
-        print('got this far')
 
         mask = np.logical_and.reduce(
             [
@@ -128,6 +117,7 @@ class ttHHardDataset(ttHBase, HardDataset):
 
         print(f'Before cut: {len(self.data)} events')
         self.data.cut(mask)
+        self.events = self.data.events
         print(f'After cut: {self.events} events')
 
 
@@ -136,9 +126,7 @@ class ttHHardDataset(ttHBase, HardDataset):
         # x1 = self.data[<branch_x1>]
         # x2 = self.data[<branch_x2>]
         # boost = self.make_boost(x1,x2)
-        print('DATA FIELDS: ', self.data.fields)
-        generator = self.data['generator_info']
-        boost = self.make_boost(generator.x1,generator.x2)
+        boost = self.make_boost(self.data['Generator_x1'],self.data['Generator_x2'])
         # Note : for the ME case, you need to register the boost as it is used in rambo
         # (see below to register)
         self.register_object(name='boost', obj=boost)
@@ -167,7 +155,7 @@ class ttHHardDataset(ttHBase, HardDataset):
                 'mass'  : [
                     'higgs_mass',
                 ],
-                'pdgid'  : [
+                'pdgId'  : [
                     'higgs_pdgId',
                 ],
             },
@@ -192,7 +180,7 @@ class ttHHardDataset(ttHBase, HardDataset):
                     'top_mass',
                     'antitop_mass',
                 ],
-                'pdgid'  : [
+                'pdgId'  : [
                     'top_pdgId',
                     'antitop_pdgId',
                 ],
@@ -218,7 +206,7 @@ class ttHHardDataset(ttHBase, HardDataset):
                     'bottom_mass',
                     'antibottom_mass',
                 ],
-                'pdgid'  : [
+                'pdgId'  : [
                     'bottom_pdgId',
                     'antibottom_pdgId',
                 ],
@@ -244,7 +232,7 @@ class ttHHardDataset(ttHBase, HardDataset):
                     'W_plus_from_top_mass',
                     'W_minus_from_antitop_mass',
                 ],
-                'pdgid'  : [
+                'pdgId'  : [
                     'W_plus_from_top_pdgId',
                     'W_minus_from_antitop_pdgId',
                 ],
@@ -278,7 +266,7 @@ class ttHHardDataset(ttHBase, HardDataset):
                     'quark_from_W_minus_mass',
                     'antiquark_from_W_minus_mass',
                 ],
-                'pdgid'  : [
+                'pdgId'  : [
                     'quark_from_W_plus_pdgId',
                     'antiquark_from_W_plus_pdgId',
                     'quark_from_W_minus_pdgId',
@@ -303,7 +291,7 @@ class ttHHardDataset(ttHBase, HardDataset):
                 'mass'  : [
                     'Z_from_higgs_mass',
                 ],
-                'pdgid'  : [
+                'pdgId'  : [
                     'Z_from_higgs_pdgId',
                 ],
             },
@@ -324,7 +312,7 @@ class ttHHardDataset(ttHBase, HardDataset):
                 'mass'  : [
                     'neutrinos_from_Z_mass',
                 ],
-                'pdgid'  : [
+                'pdgId'  : [
                     'neutrinos_from_Z_pdgId',
                 ],
             },
@@ -434,6 +422,7 @@ class ttHHardDataset(ttHBase, HardDataset):
             fields = ME_fields,
             mask = neutrinos_mask,
             )
+
     # Here you can modify the object tensors and any final change you want
     # Most importantly here you can register the preprocessing steps
     # We do it here rather than in the process, because that way we can load the raw
