@@ -55,7 +55,7 @@ class ttHHardDataset(ttHBase, HardDataset):
 
     @property
     def energy(self):
-        # Return the energy of the center-of-mass in GeV for the ttH process
+        # Return the center-of-mass energy in GeV for the ttH process
         return 13000 * GeV  # Replace 13000 GeV with the actual value if different
 
     # Some properties are required for the ME integration
@@ -64,7 +64,7 @@ class ttHHardDataset(ttHBase, HardDataset):
 
     @property
     def initial_states_pdgid(self):
-        # return the pdgids of the two initial state quarks as they are in the ME
+        # return the pdgids of the two initial state gluons
         return [21, 21]  # Initial particles (gluons)
 
     @property
@@ -84,7 +84,7 @@ class ttHHardDataset(ttHBase, HardDataset):
     def processed_path(self):
         # return path of where to store the tensors in case build=True
         # Directory to save processed ttH data
-        return os.path.join(os.getcwd(), 'ttHinv_hard')
+        return os.path.join(os.getcwd(), 'ttH_hard')
 
     # The process method is the one where the data object is treated
     # Objects from the awkward arrays are registered
@@ -94,6 +94,9 @@ class ttHHardDataset(ttHBase, HardDataset):
         # -> make mask (data type dependent) and apply it
 
         mask = np.logical_and.reduce(
+            # The numbers correspond to the expeted counts of particles in each step
+            # Names are the keys in awkward array dataset self.data: print(data_hard)
+            # These keys correspond to branches in the Parquet file
             [
                 # Higgs decay : H->ZZ->4nu #
                 ak.num(self.data['higgs_idx']) == 1,
@@ -141,7 +144,8 @@ class ttHHardDataset(ttHBase, HardDataset):
         # )
 
         higgs = self.data.make_particles(
-            'higgs',
+            'higgs', # This name to be later used in the registration step
+            # The below names match the branch keys in self.data
             {
                 'pt'  : [
                     'higgs_pt',
@@ -331,35 +335,6 @@ class ttHHardDataset(ttHBase, HardDataset):
             Zs = self.boost(Zs, boost)
             neutrinos = self.boost(neutrinos, boost)
 
-        # In case you expect a variable number of particles (not always the case)
-        # <mask> can be obtained when reshaping the awkward array as below
-        # This is not always needed, for example when you know you have the same number of that particle per event
-
-        # <array_reshaped>, <array_mask> = self.reshape(
-        #     input = <awkward_array>,
-        #     value = <padding_value>, # number used to pad the missing entries (0 typically)
-        #     max_no = <value/None> # maximum number of particles in the padded array
-        #     # if max_no is None, will use the maximum number of particles in all events
-        # )
-        # self.register_object(
-        #     name = <name>,
-        #     obj = <array_reshaped>,
-        #     fields = <list_of_fields>,
-        #     mask = <array_mask>,
-        # )
-
-        quarks_padded, quarks_mask = self.reshape(
-            input = quarks,
-            value = 0.
-        )
-
-        neutrinos_padded, neutrinos_mask = self.reshape(
-            input = neutrinos,
-            value = 0.
-        )
-
-        # Note, you can also include a weight in the object, needs to be better described
-
         # 4) : Register the objecs to do awkward->rectangular array->tensor
 
         # self.register_object(
@@ -405,9 +380,8 @@ class ttHHardDataset(ttHBase, HardDataset):
 
         self.register_object(
             name = 'quarks',
-            obj = quarks_padded,
+            obj = quarks,
             fields = ME_fields,
-            mask = quarks_mask,
             )
 
         self.register_object(
@@ -418,9 +392,8 @@ class ttHHardDataset(ttHBase, HardDataset):
 
         self.register_object(
             name = 'neutrinos',
-            obj = neutrinos_padded,
+            obj = neutrinos,
             fields = ME_fields,
-            mask = neutrinos_mask,
             )
 
     # Here you can modify the object tensors and any final change you want
@@ -516,9 +489,13 @@ class ttHHardDataset(ttHBase, HardDataset):
         # Need to return a dict (or None if not needed)
         # - key : name of a registered object
         # - value : indices to consider in the attention mask (even if not present)
+
+        # having no return {} will by default attend to all the particles
+        # To deactivate attention, need to specify empty index:
+        # e.g.: 'higgs': [],
         return {
-            'higgs': [0],
-            'tops': [0, 1],
+            'higgs': [0], # Only 1 Higgs so use 0 index
+            'tops': [0, 1], # There are 2 top quarks so indexes 0, 1
             'bottoms': [0, 1],
             'Ws': [0, 1],
             'quarks': [0, 1, 2, 3],
@@ -549,3 +526,42 @@ class ttHHardDataset(ttHBase, HardDataset):
 #         # Only difference is step 2)
 #         # Boost can be defined as a the total particle momentum
 #         boost = self.make_boost(jets,electrons,muons,met)
+
+
+
+        # In case you expect a variable number of particles (not always the case)
+        # <mask> can be obtained when reshaping the awkward array as below
+        # This is not always needed, for example when you know you have the same number of that particle per event
+
+        # <array_reshaped>, <array_mask> = self.reshape(
+        #     input = <awkward_array>,
+        #     value = <padding_value>, # number used to pad the missing entries (0 typically)
+        #     max_no = <value/None> # maximum number of particles in the padded array
+        #     # if max_no is None, will use the maximum number of particles in all events
+        # )
+        # self.register_object(
+        #     name = <name>,
+        #     obj = <array_reshaped>,
+        #     fields = <list_of_fields>,
+        #     mask = <array_mask>,
+        # )
+
+        # quarks_padded, quarks_mask = self.reshape(
+        #     input = quarks,
+        #     value = 0.
+        # )
+
+        # neutrinos_padded, neutrinos_mask = self.reshape(
+        #     input = neutrinos,
+        #     value = 0.
+        # )
+
+        # Note, you can also include a weight in the object, needs to be better described
+
+        # might need these argumetns for padded later
+            # self.register_object(
+            # name = 'quarks',
+            # obj = quarks_padded,
+            # fields = ME_fields,
+            # mask = quarks_mask,
+            # )
