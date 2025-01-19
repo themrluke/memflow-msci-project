@@ -39,7 +39,7 @@ class ttHBase:
 
 M_GLUON = 1e-3
 class ttHHardDataset(ttHBase, HardDataset):
-    # This is a template class for hard-scattering dataset
+    # This is a class for hard-scattering dataset
     # Will highlight below the all the required methods and properties
     # Some clues will be given on helper methods
     def __init__(self,**kwargs):
@@ -85,6 +85,25 @@ class ttHHardDataset(ttHBase, HardDataset):
         # return path of where to store the tensors in case build=True
         # Directory to save processed ttH data
         return os.path.join(os.getcwd(), 'ttH_hard')
+
+    @property
+    def attention_idx(self):
+        # Need to return a dict (or None if not needed)
+        # - key : name of a registered object
+        # - value : indices to consider in the attention mask (even if not present)
+
+        # having no return {} will by default attend to all the particles
+        # To deactivate attention, need to specify empty index:
+        # e.g.: 'higgs': [],
+        return {
+            'higgs': [0], # Only 1 Higgs so use 0 index
+            'tops': [0, 1], # There are 2 top quarks so indexes 0, 1
+            'bottoms': [0, 1],
+            'Ws': [0, 1],
+            'quarks': [0, 1, 2, 3],
+            'Zs': [0],
+            'neutrinos': [0, 1, 2, 3],
+        }
 
     # The process method is the one where the data object is treated
     # Objects from the awkward arrays are registered
@@ -483,51 +502,77 @@ class ttHHardDataset(ttHBase, HardDataset):
                     )
                 )
 
-    # Properties #
+
+class ttHRecoDataset(ttHBase, RecoDataset):
+
+    # This is a class for reco-level dataset
+    # Will highlight below the all the required methods and properties
+
+    def __init__(self,**kwargs):
+        # Call abstract class
+        ttHBase.__init__(self,**kwargs)
+        RecoDataset.__init__(self,**kwargs)
+
+    # Most of the parts are similar to the HardDataset
+    # Everything related to ME can be dismissed:
+    # - initial_states_pdgid
+    # - final_states_pdgid
+    # - final_states_object_name
+
+    @property
+    def energy(self):
+        # Return the center-of-mass energy in GeV for the ttH process
+        return 13000 * GeV  # Replace 13000 GeV with the actual value if different
+
+    @property
+    def processed_path(self):
+        # return path of where to store the tensors in case build=True
+        # Directory to save processed ttH data
+        return os.path.join(os.getcwd(), 'ttH_reco')
+
     @property
     def attention_idx(self):
-        # Need to return a dict (or None if not needed)
-        # - key : name of a registered object
-        # - value : indices to consider in the attention mask (even if not present)
+        return None
+        # {
+                # 'met': [0],
+                # 'jets': [0, 1],
 
-        # having no return {} will by default attend to all the particles
-        # To deactivate attention, need to specify empty index:
-        # e.g.: 'higgs': [],
-        return {
-            'higgs': [0], # Only 1 Higgs so use 0 index
-            'tops': [0, 1], # There are 2 top quarks so indexes 0, 1
-            'bottoms': [0, 1],
-            'Ws': [0, 1],
-            'quarks': [0, 1, 2, 3],
-            'Zs': [0],
-            'neutrinos': [0, 1, 2, 3],
-        }
+        #     }
 
+    # The process method is the one where the data object is treated
+    # Objects from the awkward arrays are registered
+    def process(self):
 
-# class ttHRecoDataset(RecoDataset):
-#     # Most of the parts are similar to the HardDataset
-#     # Will only illustrate the differences here for reco
-#     # In particular everything related to ME can be dismissed:
-#     # - initial_states_pdgid
-#     # - final_states_pdgid
-#     # - final_states_object_name
+        # For now only consider events in SR
+        mask = self.data['region'] == 0
+        print('Before cut', self.data.events)
+        self.data.cut(mask)
+        print('After cut', self.data.events)
 
-#     # Properties #
-#     @property
-#     def attention_idx(self):
-#         # same as Hard
+        # boost = self.make_boost(jets,electrons,muons,met)
 
-#     @property
-#     def processed_path(self):
-#         # same as Hard
-
-
-#     def process(self):
-#         # Only difference is step 2)
-#         # Boost can be defined as a the total particle momentum
-#         boost = self.make_boost(jets,electrons,muons,met)
-
-
+        # 3) : Make the particles
+        jets = self.data.make_particles(
+            'jets',
+            {
+                'pt'      : 'cleanedJet_pt',
+                'eta'     : 'cleanedJet_eta',
+                'phi'     : 'cleanedJet_phi',
+                'mass'    : 'cleanedJet_mass',
+                'btag'    : 'cleanedJet_btagDeepFlavB',
+            },
+            pad_value = 0.,
+        )
+        met = self.data.make_particles(
+            'met',
+            {
+                'pt'      : 'InputMet_pt',
+                'eta'     : 0.,
+                'phi'     : 'InputMet_phi',
+                'mass'    : 0.,
+            },
+            pad_value = 0.,
+        )
 
         # In case you expect a variable number of particles (not always the case)
         # <mask> can be obtained when reshaping the awkward array as below
@@ -546,22 +591,110 @@ class ttHHardDataset(ttHBase, HardDataset):
         #     mask = <array_mask>,
         # )
 
-        # quarks_padded, quarks_mask = self.reshape(
-        #     input = quarks,
-        #     value = 0.
+        jets_padded, jets_mask = self.reshape(
+            input = jets,
+            value = 0.
+        )
+
+        if self.apply_boost:
+            raise ValueError('Do not use boost for now')
+
+
+        # 4) : Register the objecs to do awkward->rectangular array->tensor
+
+        self.register_object(
+            name = 'jets',
+            obj = jets_padded,
+            mask = jets_mask,
+            fields = ['pt', 'eta', 'phi', 'mass', 'btag'],
+            )
+
+
+        self.register_object(
+            name = 'met',
+            obj = met,
+            fields = ['pt', 'eta', 'phi', 'mass'],
+            )
+
+    def finalize(self):
+        # Register the preprocessing steps
+        # You might want to apply multiple scaling in steps
+        # Needs to be registered to be able to inverse all steps at the end
+
+        # self.register_preprocessing_step(
+        #     PreprocessingStep(
+        #         names = <list_of_names>,
+        #         scaler_dict = <scaler_dict>,
+        #         fields_select = <list_fields>,
+        #     )
         # )
 
-        # neutrinos_padded, neutrinos_mask = self.reshape(
-        #     input = neutrinos,
-        #     value = 0.
-        # )
 
-        # Note, you can also include a weight in the object, needs to be better described
+        # # <list_of_names> is the list of registered names in step 4
+        # you can either
+        #   - include multiple objects,
+        #     -> preprocessing will be fit (eg using a sklearn) scaler on all the objects
+        #   - register preprocessing for particles individually
+        #     -> each will be fit for each particle independently
+        # <scaler_dict> : dict of
+        #   - key : field as saved in the register objects
+        #     -> apply different preprocessing for each feature
+        #   - value : a class defined in memflow.dataset.preprocessing
+        #       (see below)
+        # <fields_select> : list (same length as <list_of_names>) of fields to consider
+        # this can be useful when for example you include leptons and met,
+        # and want to preprocess pt for both, but only eta for leptons
 
-        # might need these argumetns for padded later
-            # self.register_object(
-            # name = 'quarks',
-            # obj = quarks_padded,
-            # fields = ME_fields,
-            # mask = quarks_mask,
-            # )
+        # Available preprocessing :
+        # - logmodulus : apply sign(x) * log(1+|x|)
+        # - lowercutshift : rescale by the cut value
+        # - SklearnScaler : anything from the sklearn.preprocessing
+        #      Note : dimension change preprocessing allowed (eg onehot encoding)
+        # - anything custom, see the logic in memflow.dataset.preprocessing
+
+        if self.apply_preprocessing:
+
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['jets'],
+                    scaler_dict = {
+                        'pt' : lowercutshift(30),
+                    },
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['met'],
+                    scaler_dict = {
+                        'pt' : lowercutshift(20),
+                    },
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['jets','met'],
+                    scaler_dict = {
+                        'pt' : logmodulus(),
+                        'mass'  : logmodulus(),
+                    },
+                    fields_select = [
+                        ('pt','mass'),
+                        ('pt',),
+                    ]
+                )
+            )
+            self.register_preprocessing_step(
+                PreprocessingStep(
+                    names = ['jets','met'],
+                    scaler_dict = {
+                        'pt'   : SklearnScaler(preprocessing.StandardScaler()),
+                        'eta'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                        'phi'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
+                        'mass'    : SklearnScaler(preprocessing.StandardScaler()),
+                    },
+                    fields_select = [
+                        ('pt','eta','phi','mass'),
+                        ('pt','phi'),
+                    ]
+                )
+            )
