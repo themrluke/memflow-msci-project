@@ -1,0 +1,78 @@
+- fields_select:
+  - - pt
+    - mass
+  - - pt
+    - mass
+  - - pt
+    - mass
+  - - pt
+    - mass
+  - - pt
+    - mass
+  - - pt
+    - mass
+  - - pt
+    - mass
+  names:
+  - higgs
+  - tops
+  - bottoms
+  - Ws
+  - quarks
+  - Zs
+  - neutrinos
+  scaler_dict:
+    mass:
+      class: logmodulus
+    pt:
+      class: logmodulus
+- fields_select:
+  - - pt
+    - eta
+    - phi
+    - mass
+  - - pt
+    - eta
+    - phi
+    - mass
+  - - pt
+    - eta
+    - phi
+    - mass
+  - - pt
+    - eta
+    - phi
+    - mass
+  - - pt
+    - eta
+    - phi
+    - mass
+  - - pt
+    - eta
+    - phi
+    - mass
+  - - pt
+    - eta
+    - phi
+    - mass
+  names:
+  - higgs
+  - tops
+  - bottoms
+  - Ws
+  - quarks
+  - Zs
+  - neutrinos
+  scaler_dict:
+    eta:
+      class: SklearnScaler
+      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttHinv_hard/preprocessing/step_1/eta.bin
+    mass:
+      class: SklearnScaler
+      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttHinv_hard/preprocessing/step_1/mass.bin
+    phi:
+      class: SklearnScaler
+      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttHinv_hard/preprocessing/step_1/phi.bin
+    pt:
+      class: SklearnScaler
+      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttHinv_hard/preprocessing/step_1/pt.bin
