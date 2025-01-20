@@ -87,6 +87,10 @@ class ttHHardDataset(ttHBase, HardDataset):
         return os.path.join(os.getcwd(), 'ttH_hard')
 
     @property
+    def intersection_branch(self):
+        return 'event'
+
+    @property
     def attention_idx(self):
         # Need to return a dict (or None if not needed)
         # - key : name of a registered object
@@ -529,6 +533,10 @@ class ttHRecoDataset(ttHBase, RecoDataset):
         # return path of where to store the tensors in case build=True
         # Directory to save processed ttH data
         return os.path.join(os.getcwd(), 'ttH_reco')
+
+    @property
+    def intersection_branch(self):
+        return 'event'
 
     @property
     def attention_idx(self):

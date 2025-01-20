@@ -68,7 +68,7 @@ class SamplingCallback(Callback):
         assert reco.shape[0] == len(features)
         N = len(features)
         fig,axs = plt.subplots(N,N,figsize=(4*N,3*N))
-        fig.suptitle(title, 'TEST TIME')
+        fig.suptitle(title)
         plt.subplots_adjust(left=0.1,bottom=0.1,right=0.9,top=0.9,hspace=0.3,wspace=0.3)
 
         def get_bins(feature,sample,reco):
