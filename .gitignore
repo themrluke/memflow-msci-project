@@ -142,3 +142,4 @@ cython_debug/
 src/*/_version.py
 
 *.pt
+*.zip
