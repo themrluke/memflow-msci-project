@@ -105,7 +105,7 @@ class ttHHardDataset(ttHBase, HardDataset):
             'bottoms': [0, 1],
             'Ws': [0, 1],
             'quarks': [0, 1, 2, 3],
-            'Zs': [0],
+            'Zs': [0, 1],
             'neutrinos': [0, 1, 2, 3],
         }
 
@@ -128,12 +128,14 @@ class ttHHardDataset(ttHBase, HardDataset):
 
                 # top decay : t->b q qbar #
                 ak.num(self.data['top_idx']) == 1,
+                ak.num(self.data['bottom_idx']) == 1,
                 ak.num(self.data['W_plus_from_top_idx']) == 1,
                 ak.num(self.data['quark_from_W_plus_idx']) == 1,
                 ak.num(self.data['antiquark_from_W_plus_idx']) == 1,
 
                 # antitop decay : tbar->bbar q qbar #
                 ak.num(self.data['antitop_idx']) == 1,
+                ak.num(self.data['antibottom_idx']) == 1,
                 ak.num(self.data['W_minus_from_antitop_idx']) == 1,
                 ak.num(self.data['quark_from_W_minus_idx']) == 1,
                 ak.num(self.data['antiquark_from_W_minus_idx']) == 1,
@@ -141,10 +143,9 @@ class ttHHardDataset(ttHBase, HardDataset):
         )
         print (f'Selecting {mask.sum()} events out of {len(mask)}')
 
-        print(f'Before cut: {len(self.data)} events')
+        print(f'Before cut: {self.data.events} events')
         self.data.cut(mask)
-        self.events = self.data.events
-        print(f'After cut: {self.events} events')
+        print(f'After cut: {self.data.events} events')
 
 
         # 2) : obtain boost from the x1 and x2 parton fractions
@@ -540,7 +541,8 @@ class ttHRecoDataset(ttHBase, RecoDataset):
 
     @property
     def attention_idx(self):
-        return None
+        return None # Assumes that if event has N jets then attends between N jets when learning
+                    # If there is 1 jet in event, to learn that ones are missing, need to specify [0, 1, 2]
         # {
                 # 'met': [0],
                 # 'jets': [0, 1],
