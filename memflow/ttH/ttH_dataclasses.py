@@ -4,6 +4,7 @@ import awkward as ak
 import numpy as np
 from hepunits.units import MeV, GeV
 from sklearn import preprocessing
+import vector
 
 from memflow.dataset.dataset import HardDataset, RecoDataset
 from memflow.dataset.preprocessing import *
@@ -580,6 +581,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                 'eta'     : 0.,
                 'phi'     : 'InputMet_phi',
                 'mass'    : 0.,
+                'btag'    : 0.,
             },
             pad_value = 0.,
         )
@@ -601,9 +603,15 @@ class ttHRecoDataset(ttHBase, RecoDataset):
         #     mask = <array_mask>,
         # )
 
+        # 1) Sort the jets by btag DESC
+        #    ak.argsort(...) returns an array of indices
+        #    then we use fancy indexing to reorder
+        sorted_jets = jets[ak.argsort(jets['btag'], axis=-1, ascending=False)]
+
         jets_padded, jets_mask = self.reshape(
-            input = jets,
-            value = 0.
+            input = sorted_jets,
+            value = 0.,
+            max_no = 6,
         )
 
         # Number of events in the dataset
