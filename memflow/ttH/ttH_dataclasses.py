@@ -611,7 +611,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
         jets_padded, jets_mask = self.reshape(
             input = sorted_jets,
             value = 0.,
-            max_no = 6,
+            #max_no = 6,
         )
 
         # Number of events in the dataset
@@ -621,22 +621,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
         num_jets_per_event = ak.num(jets_padded, axis=1)
 
         print(f"Number of Events: {num_events}")
-        print(f"Number of Jets Per Event (after padding): {num_jets_per_event[:5]}")  # Print first 5
-
-        # Convert to a NumPy array if needed for further inspection
-        jets_padded_numpy = ak.to_numpy(jets_padded)
-        print(f"Jets Padded (NumPy Array): {jets_padded_numpy[:5]}")
-
-        # Number of valid jets per event
-        valid_jets_per_event = ak.sum(jets_mask, axis=1)
-
-        print(f"Valid Jets Per Event: {valid_jets_per_event[:5]}")  # Print first 5
-
-        # Inspect the mask itself
-        print(f"Jets Mask (first 5 events): {jets_mask[:5]}")
-
-
-
+        print(f"Number of Jets Per Event (after padding): {num_jets_per_event}")
 
         if self.apply_boost:
             raise ValueError('Do not use boost for now')

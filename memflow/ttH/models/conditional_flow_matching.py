@@ -30,26 +30,13 @@ def pad_t_like_x(t, x):
 
 class TransferCFM(L.LightningModule):
     """
-    A Conditional Flow Matching model that parallels the 'TransferFlow' structure:
-      - Takes lists of (hard_data, reco_data) per particle type,
-      - Embeds them via small MLP layers,
-      - Runs a Transformer for context conditioning,
-      - Then, instead of normalizing flow heads, uses bridging distribution x(t)
-        and velocity nets to compute a CFM loss.
-
-    Data structure assumptions:
-      - hard_data: list of length len(n_hard_particles_per_type)
-        each element has shape (batch, nHard_i, #features_for_that_type).
-      - reco_data: same structure for reco particles.
-      - hard_mask_exist[i], reco_mask_exist[i]: bool or float masks
-        indicating which particles exist in each event.
-      - We also have "flow_input_features[i]" to pick which features
-        (pt, eta, phi, mass, etc.) are included in the bridging distribution
-        for type i.
-
-    The main difference from TransferFlow is that we do not loop feature-by-feature
-    with normalizing flows, but rather a single velocity net per type
-    (or per particle, if you like).
+    A fully 'global' Conditional Flow-Matching model:
+      - The entire set of hard particles is the Transformer-encoder input.
+      - The entire set of reco particles is the Transformer-decoder input.
+      - We add exactly one global null token at the start of the reco sequence.
+      - We define a single bridging distribution from a simple prior (e.g. Normal(0,1))
+        to the real reco features, conditioned on the transformer's output.
+      - We have ONE velocity net that is used across all reco tokens (no 1:1 bridging).
     """
 
     def __init__(
@@ -67,10 +54,8 @@ class TransferCFM(L.LightningModule):
         reco_mask_attn,
         hard_mask_attn,
         dropout=0.0,
+        process_names = None,
         transformer_args=None,
-        onehot_encoding=False,
-        process_names=None,
-        # CFM-specific arguments:
         sigma=0.1,
         optimizer=None,
         scheduler_config=None,
@@ -93,37 +78,21 @@ class TransferCFM(L.LightningModule):
         self.n_reco_particles_per_type = n_reco_particles_per_type
         self.reco_particle_type_names = lowercase_recursive(reco_particle_type_names)
         self.reco_input_features_per_type = lowercase_recursive(reco_input_features_per_type)
-
         self.flow_input_features = lowercase_recursive(flow_input_features)
-        self.hard_mask_attn = hard_mask_attn
-        self.reco_mask_attn = reco_mask_attn
-        self.onehot_encoding = onehot_encoding
         self.process_names = process_names
 
         self.sigma = sigma  # bridging-dist std
         self._optimizer = optimizer
         self._scheduler_config = scheduler_config
 
-        # Basic checks:
-        assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), (
-            f"Got {len(n_reco_particles_per_type)} sets of reco particles vs. "
-            f"{len(reco_input_features_per_type)} sets of reco features."
-        )
-        assert len(n_hard_particles_per_type) == len(hard_input_features_per_type), (
-            f"Got {len(n_hard_particles_per_type)} sets of hard particles vs. "
-            f"{len(hard_input_features_per_type)} sets of hard features."
-        )
-        assert len(flow_input_features) == len(reco_input_features_per_type), (
-            f"flow_input_features has length {len(flow_input_features)} but "
-            f"we have {len(reco_input_features_per_type)} reco feature sets."
-        )
-
-        # Prepend True for null token in reco_mask_attn if present
-        if self.reco_mask_attn is not None:
-            self.reco_mask_attn = torch.cat(
-                [torch.tensor([True]), self.reco_mask_attn],
-                dim=0
-            )
+        if reco_mask_attn is None:
+            self.reco_mask_attn = None
+            print ('No reco attention mask provided, will use the exist mask for the attention')
+        else:
+            self.reco_mask_attn = torch.cat((torch.tensor([True]),reco_mask_attn),dim=0) # Adding True at index=0 for null token
+        if hard_mask_attn is None:
+            print ('No hard attention mask provided, will use the exist mask for the attention')
+        self.hard_mask_attn  = hard_mask_attn
 
         # Build embeddings for Hard and Reco
         self.hard_embeddings = self.make_embeddings(self.hard_input_features_per_type)
@@ -136,38 +105,26 @@ class TransferCFM(L.LightningModule):
             transformer_args["dropout"] = self.dropout
 
         self.transformer = nn.Transformer(batch_first=True, **transformer_args)
-        max_reco_len = sum(self.n_reco_particles_per_type) + 1  # +1 for null
+        max_reco_len = sum(self.n_reco_particles_per_type) + 1  # +1 for a single global null token
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(max_reco_len)
+        print(f"Max Reco Length: {max_reco_len}")
+        print(f"Target Mask Shape: {self.tgt_mask.shape}")
 
-        # Build velocity nets (one per type):
-        self.vel_nets = nn.ModuleList()
-        self.flow_indices = []
-        for i in range(len(self.n_reco_particles_per_type)):
-            # find which features we use for type i
-            feats = self.flow_input_features[i]
-            hi_feats = self.hard_input_features_per_type[i]  # e.g. ["pt","eta","phi","mass"]
-            indices_hard = []
-            for f_ in feats:
-                idx_ = hi_feats.index(f_)
-                indices_hard.append(idx_)
-            self.flow_indices.append(indices_hard)
-
-            # small MLP: input = (transformer_context + x(t) + t), output = velocity for #feats
-            d_in = self.embed_dim + len(feats) + 1
-            d_hid = 128
-            net = nn.Sequential(
-                nn.Linear(d_in, d_hid),
-                nn.SiLU(),
-                nn.Linear(d_hid, d_hid),
-                nn.SiLU(),
-                nn.Linear(d_hid, len(feats)),
-            )
-            self.vel_nets.append(net)
+        # A single velocity net for bridging the chosen features
+        d_in = self.embed_dim + len(self.flow_input_features) + 1  # [context + x(t) + t]
+        d_hid = 128
+        self.velocity_net = nn.Sequential(
+            nn.Linear(d_in, d_hid),
+            nn.SiLU(),
+            nn.Linear(d_hid, d_hid),
+            nn.SiLU(),
+            nn.Linear(d_hid, len(self.flow_input_features)),
+        )
 
     def make_embeddings(self, input_features_per_type):
         """
-        Build an MLP embedding for each type's raw features,
-        just like in TransferFlow. The final dimension = self.embed_dim.
+        Build an MLP embedding for each type's raw features.
+        The final dimension = self.embed_dim.
         """
         embs = nn.ModuleList()
         for feat_list in input_features_per_type:
@@ -190,10 +147,6 @@ class TransferCFM(L.LightningModule):
         self._scheduler_config = scheduler_config
 
     def configure_optimizers(self):
-        """
-        Lightning method that returns optimizer (and optional scheduler).
-        You can also just define this inline or pass in self._optimizer externally.
-        """
         if self._optimizer is None:
             opt = torch.optim.Adam(self.parameters(), lr=1e-3)
         else:
@@ -207,93 +160,179 @@ class TransferCFM(L.LightningModule):
                 "lr_scheduler": self._scheduler_config,
             }
 
-    def conditioning(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist):
+    #def conditioning(self, hard_data, hard_mask, reco_data, reco_mask):
         """
-        Runs the Transformer “context” step:
-          1) Embed all hard_data → cat across types → pass as Transformer encoder input
-          2) Embed all reco_data, but prepend a null token for the first type
-          3) Output the final decoder: (B, sum(n_reco) + 1, embed_dim)
-
-        The “mask_attn” logic is inherited from the original TransferFlow approach.
+        1) Encode all hard data => [B, sum_hard, embed_dim]
+        2) Decode all reco data (+1 null token) => [B, sum_reco+1, embed_dim]
+        3) Return the transformer's output (same shape).
+        4) We also apply optional attention masks (self.hard_mask_attn, self.reco_mask_attn).
         """
-        # 1) Hard side
-        hard_embed = []
-        hard_mask_all = []
-        for i in range(len(hard_data)):
-            he = self.hard_embeddings[i](hard_data[i])  # shape (B, nHard_i, embed_dim)
-            # multiply by exist mask
-            he = he * hard_mask_exist[i].unsqueeze(-1)
-            hard_embed.append(he)
-            hard_mask_all.append(hard_mask_exist[i])
+        B = hard_data[0].shape[0]
 
-        hard_embed_cat = torch.cat(hard_embed, dim=1)   # shape (B, sum(nHard_i), embed_dim)
-        hard_mask_cat  = torch.cat(hard_mask_all, dim=1)  # shape (B, sum(nHard_i))
+        # (a) Hard side embed + concat
+        hard_embed_list = []
+        hard_mask_list = []
+        for emb, x, m in zip(self.hard_embeddings, hard_data, hard_mask):
+            e = emb(x) * m.unsqueeze(-1)  # zero out if missing
+            hard_embed_list.append(e)
+            hard_mask_list.append(m)
+        hard_embed_cat = torch.cat(hard_embed_list, dim=1)  # (B, sum_hard, embed_dim)
+        hard_mask_cat  = torch.cat(hard_mask_list, dim=1)  # (B, sum_hard)
 
-        # 2) Reco side (null token in the first type):
-        emb_list = []
-        mask_list = []
-        if len(reco_data) > 0:
-            # first type
-            bsz, n_reco_0, feat_dim = reco_data[0].shape
-            null_token = torch.full(
-                (bsz, 1, feat_dim), -1.0,
-                device=reco_data[0].device,
-                dtype=reco_data[0].dtype,
-            )
-            # cat
-            x0 = torch.cat([null_token, reco_data[0]], dim=1)
-            # embed
-            e0 = self.reco_embeddings[0](x0)
-            # mask: True for null token
-            m0 = torch.cat([
-                torch.ones_like(reco_mask_exist[0][:, :1]),  # shape (B,1)
-                reco_mask_exist[0]
-            ], dim=1)
-            e0 = e0 * m0.unsqueeze(-1)
-            emb_list.append(e0)
-            mask_list.append(m0)
+        # (b) Reco side embed + 1 global null token
+        reco_embed_list = []
+        reco_mask_list = []
+        for emb, x, m in zip(self.reco_embeddings, reco_data, reco_mask):
+            e = emb(x) * m.unsqueeze(-1)
+            reco_embed_list.append(e)
+            reco_mask_list.append(m)
+        reco_embed_cat = torch.cat(reco_embed_list, dim=1)  # (B, sum_reco, embed_dim)
+        reco_mask_cat  = torch.cat(reco_mask_list, dim=1)  # (B, sum_reco)
 
-            # subsequent reco types
-            for i in range(1, len(reco_data)):
-                e_ = self.reco_embeddings[i](reco_data[i]) \
-                     * reco_mask_exist[i].unsqueeze(-1)
-                emb_list.append(e_)
-                mask_list.append(reco_mask_exist[i])
-            reco_embed_cat = torch.cat(emb_list, dim=1)  # shape (B, sum(nReco_i)+1, embed_dim)
-            reco_mask_cat  = torch.cat(mask_list, dim=1) # shape (B, sum(nReco_i)+1)
+        null_token = torch.full((B, 1, self.embed_dim), -1.0,
+                                device=hard_embed_cat.device, dtype=hard_embed_cat.dtype)
+        null_mask  = torch.ones(B, 1, device=hard_embed_cat.device, dtype=reco_mask_cat.dtype)
+
+        reco_embed_cat = torch.cat([null_token, reco_embed_cat], dim=1)  # shape (B, sum_reco+1, embed_dim)
+        reco_mask_cat  = torch.cat([null_mask,  reco_mask_cat],  dim=1)  # shape (B, sum_reco+1)
+
+        # (c) Convert to key_padding_mask => True=ignore
+        # If mask=1 => particle exists => key_padding=False => ~mask.bool()
+        if self.hard_mask_attn is None:
+            hard_key_pad = ~hard_mask_cat.bool()
         else:
-            # corner case if no reco data
-            reco_embed_cat = torch.zeros_like(hard_embed_cat)
-            reco_mask_cat  = torch.zeros_like(hard_mask_cat)
+            # Combine user-supplied attention mask with existence mask
+            # E.g. if self.hard_mask_attn is shape [sum_hard] or [1, sum_hard],
+            # you might need to tile or ensure the shapes match. Here we assume
+            # self.hard_mask_attn is shape (sum_hard,) => broadcast.
+            # Then final => True=ignore => OR => means "any are True => ignore"
+            # NOTE: You might want to invert your self.hard_mask_attn if you stored it differently.
+            # Adjust as needed:
+            _mask = self.hard_mask_attn.to(hard_mask_cat.device)  # (sum_hard,) or (1,sum_hard)
+            # broadcast to (B,sum_hard):
+            while _mask.dim() < hard_mask_cat.dim():
+                _mask = _mask.unsqueeze(0)
+            hard_key_pad = torch.logical_or(~hard_mask_cat.bool(), _mask.bool())
 
-        # 3) Convert mask to “key_padding_mask=True => ignore”
-        if self.hard_mask_attn is not None:
-            keep_hard = torch.logical_or(
-                self.hard_mask_attn.to(hard_mask_cat.device), hard_mask_cat.bool()
-            )
+        if self.reco_mask_attn is None:
+            reco_key_pad = ~reco_mask_cat.bool()
         else:
-            keep_hard = hard_mask_cat.bool()
-        if self.reco_mask_attn is not None:
-            keep_reco = torch.logical_or(
-                self.reco_mask_attn.to(reco_mask_cat.device), reco_mask_cat.bool()
-            )
-        else:
-            keep_reco = reco_mask_cat.bool()
+            _mask = self.reco_mask_attn.to(reco_mask_cat.device)
+            while _mask.dim() < reco_mask_cat.dim():
+                _mask = _mask.unsqueeze(0)
+            reco_key_pad = torch.logical_or(~reco_mask_cat.bool(), _mask.bool())
 
-        hard_key_pad = ~keep_hard  # True=ignore in PyTorch
-        reco_key_pad = ~keep_reco
+        tgt_seq_len = reco_embed_cat.size(1)  # This is sum_reco+1 for *this batch*
+        dynamic_tgt_mask = self.transformer.generate_square_subsequent_mask(tgt_seq_len)
 
-        # 4) Pass through Transformer
+        # (d) run Transformer
         out = self.transformer(
             src=hard_embed_cat,
             tgt=reco_embed_cat,
             src_key_padding_mask=hard_key_pad,
             tgt_key_padding_mask=reco_key_pad,
             memory_key_padding_mask=hard_key_pad,
-            tgt_mask=self.tgt_mask.to(reco_embed_cat.device),
+            tgt_mask=dynamic_tgt_mask.to(reco_embed_cat.device),
         )
-        # out => shape (B, sum(n_reco)+1, embed_dim)
         return out
+
+    def conditioning(self,hard_data,hard_mask_exist,reco_data,reco_mask_exist):
+        # Add null token to first reco object #
+        null_token = torch.ones((reco_data[0].shape[0],1,reco_data[0].shape[2])) * -1
+        reco_data_null = [
+            torch.cat(
+                (
+                    null_token.to(reco_data[0].device),
+                    reco_data[0],
+                ),
+                dim = 1, # along particle axis
+            )
+        ] + [data[:] for data in reco_data[1:]]
+        reco_mask_exist_null = [
+            torch.cat(
+                (
+                    torch.full((reco_mask_exist[0].shape[0],1),fill_value=True).to(reco_mask_exist[0].device),
+                    reco_mask_exist[0],
+                ),
+                dim = 1,
+            )
+
+        ] + [mask[:] for mask in reco_mask_exist[1:]]
+
+        # Apply onehot encoding #
+        if self.onehot_encoding:
+            reco_data_null = [
+                torch.cat(
+                    [
+                        data,
+                        onehot.repeat(data.shape[0],1,1).to(data.device),
+                    ],
+                    dim = 2,
+                )
+                for data,onehot in zip(reco_data_null,self.onehot_tensors)
+            ]
+
+        # Apply embeddings and concat along particle axis #
+        hard_mask_exist = torch.cat(hard_mask_exist,dim=1)
+        hard_data = torch.cat(
+            [
+                self.hard_embeddings[i](hard_data[i])
+                for i in range(len(self.hard_embeddings))
+            ],
+            dim = 1
+        ) * hard_mask_exist[...,None]
+        reco_mask_exist_null = torch.cat(reco_mask_exist_null,dim=1)
+        reco_data_null = torch.cat(
+            [
+                self.reco_embeddings[i](reco_data_null[i])
+                for i in range(len(self.reco_embeddings))
+            ],
+            dim = 1
+        ) * reco_mask_exist_null[...,None]
+
+        # Expand attention mask #
+        # Need to turn 0->1 when particle exists #
+        if self.hard_mask_attn is None:
+            hard_mask_attn = hard_mask_exist
+        else:
+            hard_mask_attn  = torch.logical_or(
+                self.hard_mask_attn.to(hard_mask_exist.device),
+                hard_mask_exist,
+            )
+        if self.reco_mask_attn is None:
+            reco_mask_attn = reco_mask_exist_null
+        else:
+            reco_mask_attn = torch.logical_or(
+                self.reco_mask_attn.to(reco_mask_exist_null.device),
+                reco_mask_exist_null,
+            )
+        # -> Make sure that particles we want in the attention are considered even if missing
+        # (in which case the default values are set in the dataset class, no need to re default them)
+        # Turn them into boolean arrays #
+        if hard_mask_attn.dtype != torch.bool:
+            hard_mask_attn = hard_mask_attn > 0
+        if reco_mask_attn.dtype != torch.bool:
+            reco_mask_attn = reco_mask_attn > 0
+        # replace True->0, False->-inf
+        # To have same dtype as tgt_mask
+        hard_mask_attn = torch.zeros_like(hard_mask_attn).to(torch.float32).masked_fill(~hard_mask_attn,float("-inf"))
+        reco_mask_attn = torch.zeros_like(reco_mask_attn).to(torch.float32).masked_fill(~reco_mask_attn,float("-inf"))
+
+        # Transformer processing #
+        condition = self.transformer(
+            src = hard_data,                                # encoder (hard) input
+            tgt = reco_data_null,                           # decorder (reco) input
+            tgt_mask = self.tgt_mask.to(hard_data.device),  # triangular (causality) mask
+            src_key_padding_mask = hard_mask_attn,          # encoder (hard) mask
+            memory_key_padding_mask = hard_mask_attn,       # encoder output / memory mask
+            tgt_key_padding_mask = reco_mask_attn,          # decoder (reco) mask
+        )
+
+        # Split condition per particle type to match reco_data segmentation #
+        slices = np.r_[0,np.array(self.n_reco_particles_per_type).cumsum()]
+        conditions = [condition[:,ni:nf,:] for ni,nf in zip(slices[:-1],slices[1:])]
+
+        return conditions
 
     def bridging_distribution(self, x0, x1, t):
         """
@@ -302,83 +341,113 @@ class TransferCFM(L.LightningModule):
         """
         eps = torch.randn_like(x0)
         t_ = pad_t_like_x(t, x0)
-        x_t = (1.0 - t_) * x0 + t_ * x1 + self.sigma * eps
-        return x_t
+        return (1.0 - t_) * x0 + t_ * x1 + self.sigma * eps
+
 
     def cfm_loss(self, batch):
         """
-        Compute the MSE loss for conditional flow matching:
-          1) Get Transformer context
-          2) For each type i, slice out the portion of context
-             (account for the single null token in type0).
-          3) bridging distribution x(t)
-          4) velocity net => v_pred
-          5) MSE vs. (x1 - x0), masked
+        1) Transformer => shape (B, sum_reco+1, embed_dim)
+        2) Flatten all reco tokens (except the null) => shape (B, sum_reco, embed_dim)
+        3) Gather only 'flow_input_features' from each reco token => bridging from prior => real
+        4) velocity_net => MSE vs. target velocity
+        5) If some features don't exist in a token type, mask them out.
+        6) Optionally log per-process or other metrics.
         """
         hard_data = batch["hard"]["data"]
         hard_mask = batch["hard"]["mask"]
         reco_data = batch["reco"]["data"]
         reco_mask = batch["reco"]["mask"]
+        # e.g. batch["process"] if you store that
 
-        # 1) condition
-        condition = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)
-        # shape => (B, sum(n_reco_particles)+1, embed_dim)
+        # (a) build transformer context
+        transformer_out = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)
+        B = transformer_out.shape[0]
+        # skip the first null token => real tokens => shape (B, sum_reco, embed_dim)
+        context = transformer_out[:, 1:, :]
 
-        # 2) We'll slice condition into type i chunks
-        # The first chunk has length (n_reco_particles_for_type0+1), subsequent ones have n_i
-        slices = np.cumsum([1] + self.n_reco_particles_per_type)
-        B = condition.size(0)
-        # print("condition.shape =", condition.shape)
-        # print("slices =", slices)
+        # (b) build a [B, sum_reco, len(flow_input_features)] array
+        #     also build a mask for each feature => 1=exists, 0=missing
+        x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)
+        # x_real => shape (B, sum_reco, len_flow_feats)
+        # feat_mask => shape (B, sum_reco, len_flow_feats), 1=exists
 
-        # random t in [0,1] for bridging
-        t = torch.rand(B, device=condition.device)
+        # (c) bridging from x0 ~ Normal(0,1) => x_real
+        x0 = torch.randn_like(x_real)
+        x1 = x_real
+        t = torch.rand(B, device=x_real.device)
+        x_t = self.bridging_distribution(x0, x1, t)
 
-        total_loss = 0.0
-        total_count = 0
+        # (d) velocity => flatten across tokens
+        sum_reco_tokens = context.shape[1]
+        len_flow_feats = x_real.shape[2]
+        net_in = torch.cat([
+            context.reshape(B * sum_reco_tokens, -1),           # embed_dim
+            x_t.reshape(B * sum_reco_tokens, len_flow_feats),   # bridging dims
+            t.repeat_interleave(sum_reco_tokens).unsqueeze(-1), # shape (B*sum_reco_tokens,1)
+        ], dim=1)
+        v_pred = self.velocity_net(net_in).reshape(B, sum_reco_tokens, len_flow_feats)
 
-        for i in range(len(self.n_reco_particles_per_type)):
-            # slice out the context
-            c_i = condition[:, slices[i] : slices[i+1], :]
-            # print(f"Type {i}, after slice =>", c_i.shape)
-            if i == 0:
-                c_i = c_i
-                # print(f"Type {i}, after removing null =>", c_i.shape)
+        # (e) target velocity => (x1 - x0), apply feature mask => MSE
+        v_true = x1 - x0
+        diff = (v_pred - v_true)**2 * feat_mask
+        loss_per_event = diff.mean(dim=(1,2))  # average over tokens+features
+        loss = loss_per_event.mean(dim=0)      # average over batch
 
-            # get x0_i, x1_i from the chosen flow_input_features
-            idxs = self.flow_indices[i]  # list of indices
-            x0_i = hard_data[i][..., idxs]  # shape (B, nHard_i, fSel)
-            x1_i = reco_data[i][..., idxs]  # shape (B, nReco_i, fSel)
-            # Typically we assume nHard_i == nReco_i if you're matching 1:1 quarks→jets, etc.
-            # If they differ, you'll need additional logic.
+        # (f) Optionally track per-process
+        # if "process" in batch:
+        #     for pid in torch.unique(batch["process"]):
+        #         pid_idx = (batch["process"]==pid).nonzero(as_tuple=True)[0]
+        #         if pid_idx.numel()>0:
+        #             sub_loss = loss_per_event[pid_idx].mean()
+        #             proc_name = (self.process_names[pid.item()] 
+        #                          if self.process_names is not None else f"proc_{pid}")
+        #             self.log(f"loss_{proc_name}", sub_loss, prog_bar=False)
 
-            # bridging distribution
-            x_t = self.bridging_distribution(x0_i, x1_i, t)  # shape (B, n_i, fSel)
+        return loss
 
-            # flatten for velocity net
-            B_i, n_i, fSel = x_t.shape
-            net_input = torch.cat([
-                c_i.reshape(B_i*n_i, -1),        # (B*n_i, embed_dim)
-                x_t.reshape(B_i*n_i, fSel),      # (B*n_i, fSel)
-                t.unsqueeze(-1).expand(B_i, n_i).reshape(B_i*n_i, 1),
-            ], dim=1)
 
-            v_pred = self.vel_nets[i](net_input)  # shape (B*n_i, fSel)
-            v_pred = v_pred.reshape(B_i, n_i, fSel)
+    def pack_reco_features(self, reco_data, reco_mask):
+        """
+        Build a single (B, sum_reco, len(self.flow_input_features)) array
+        plus a mask for each feature => shape (B, sum_reco, len_flow_feats).
 
-            # target velocity
-            v_true = x1_i - x0_i  # shape (B, n_i, fSel)
+        If a token type lacks a certain feature, fill that feature with 0
+        and mark mask=0. Otherwise, fill real value & mask=1.
 
-            # MSE with mask
-            mask_2d = reco_mask[i].float()  # shape (B, n_i)
-            mask_3d = mask_2d.unsqueeze(-1) # shape (B, n_i, 1)
-            diff = (v_pred - v_true)**2 * mask_3d
-            loss_i_per_event = diff.mean(dim=(1, 2))  # average over particles/features
-            total_loss += loss_i_per_event.sum()
-            total_count += B_i
+        This code assumes each 'reco_data[i]' has shape (B, n_i, #features_for_type_i).
+        We'll flatten them into sum_reco along the particle axis.
+        """
+        B = reco_data[0].shape[0]
+        # total tokens
+        n_tokens_each = [rd.shape[1] for rd in reco_data]
+        sum_reco = sum(n_tokens_each)
 
-        cfm_loss = total_loss / float(total_count)
-        return cfm_loss
+        len_flow_feats = len(self.flow_input_features)
+        x_real = torch.zeros((B, sum_reco, len_flow_feats), device=reco_data[0].device)
+        feat_mask = torch.zeros((B, sum_reco, len_flow_feats), device=reco_data[0].device)
+
+        offset = 0
+        for type_i in range(len(self.n_reco_particles_per_type)):
+            # retrieve e.g. shape => (B, n_i, F_i)
+            rd_i = reco_data[type_i]
+            mask_i = reco_mask[type_i]  # shape (B, n_i)
+            F_i = rd_i.shape[2]
+            # for each requested feature f_k, check if it is in the type_i's feature set
+            feat_list_i = self.reco_input_features_per_type[type_i]
+            for feat_k, feat_name in enumerate(self.flow_input_features):
+                if feat_name in feat_list_i:
+                    col_idx = feat_list_i.index(feat_name)
+                    # fill x_real for tokens in [offset : offset + n_i]
+                    x_real[:, offset:offset + rd_i.shape[1], feat_k] = rd_i[:, :, col_idx]
+                    # set feat_mask=1 where mask_i=1
+                    feat_mask[:, offset:offset + rd_i.shape[1], feat_k] = mask_i
+                else:
+                    # not present => remain 0 => mask=0
+                    pass
+            offset += rd_i.shape[1]
+
+        return x_real, feat_mask, sum_reco
+
 
     def forward(self, batch):
         """
@@ -396,107 +465,48 @@ class TransferCFM(L.LightningModule):
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
-    def gen_only_context(self, hard_data_list, hard_mask_list):
-        """
-        Build a Transformer ENCODER context for each hard-data type
-        without depending on the real reco data.
-        - We embed each hard type: shape => (B, nHard_i, feats) -> (B, nHard_i, embed_dim)
-        - Concatenate along the particle axis => (B, sum(nHard_i), embed_dim)
-        - Build a key_padding_mask => shape (B, sum(nHard_i)), True=ignore
-        - Pass through self.transformer.encoder(...) to get the ENCODER output
-        - Slice back into each type chunk => (B, nHard_i, embed_dim)
-
-        Returns:
-        context_list: a list of length == len(hard_data_list),
-                        each => (B, nHard_i, embed_dim)
-        """
-        device = hard_data_list[0].device
-        # 1) embed each type -> shape (B, nHard_i, embed_dim), zero out missing with mask
-        embedded_types = []
-        mask_types     = []
-        for i in range(len(hard_data_list)):
-            x_i = hard_data_list[i]             # shape (B, nHard_i, feats)
-            m_i = hard_mask_list[i]            # shape (B, nHard_i)  => 1=exists,0=missing
-            e_i = self.hard_embeddings[i](x_i)  # => (B, nHard_i, embed_dim)
-            e_i = e_i * m_i.unsqueeze(-1)       # zero out where mask=0
-            embedded_types.append(e_i)
-            mask_types.append(m_i)
-
-        # 2) concatenate along the particle axis
-        embed_cat = torch.cat(embedded_types, dim=1)  # (B, sum_nHard, embed_dim)
-        mask_cat  = torch.cat(mask_types, dim=1)      # (B, sum_nHard)
-
-        # 3) build key_padding_mask => True=ignore in PyTorch Transformers
-        # If mask_cat=1 => means "exists," so we do "False=keep" => ~mask_cat.bool()
-        key_pad = ~mask_cat.bool()  # shape (B, sum_nHard)
-
-        # 4) run the ENCODER
-        # We do NOT call the full self.transformer(...) since that also does a decoder pass.
-        # Instead, we call self.transformer.encoder(...) directly:
-        encoder_out = self.transformer.encoder(
-            src=embed_cat,                  # shape (B, sum_nHard, embed_dim)
-            src_key_padding_mask=key_pad    # shape (B, sum_nHard)
-        )
-        # encoder_out => shape (B, sum_nHard, embed_dim)
-
-        # 5) slice them back into each type
-        slices = np.cumsum([0] + self.n_hard_particles_per_type)  # e.g. [0,6,7] if [6,1]
-        context_list = []
-        for i in range(len(hard_data_list)):
-            start = slices[i]
-            end   = slices[i+1]
-            c_i   = encoder_out[:, start:end, :]  # shape => (B, nHard_i, embed_dim)
-            context_list.append(c_i)
-        return context_list
-
     def sample(self, batch, steps=10):
         """
-        Euler bridging from x(0)=hard data => x(1). 
-        We'll produce final "reco-like" data for each type. 
+        Euler stepping from x(0)=N(0,1) => x(1)=reco features, but we only produce
+        the bridging features. If you want the full "unpacked" features, you would
+        do an 'inverse' or something else. This is just a simple demonstration.
         """
-        hard_data_list = batch["hard"]["data"]  # list of length=2 if you have [partons, neutrinos]
-        hard_mask_list = batch["hard"]["mask"]
+        hard_data = batch["hard"]["data"]
+        hard_mask = batch["hard"]["mask"]
+        reco_data = batch["reco"]["data"]
+        reco_mask = batch["reco"]["mask"]
 
-        # 1) get the encoder context for each type i => shape (B, nHard_i, embed_dim)
-        context_list = self.gen_only_context(hard_data_list, hard_mask_list)
+        # 1) Transformer context => shape (B, sum_reco+1, embed_dim)
+        transformer_out = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)
+        context = transformer_out[:, 1:, :]  # skip null => (B, sum_reco, embed_dim)
 
-        x_t_list = []
-        for i, x0 in enumerate(hard_data_list):
-            x_t = x0.clone()       # shape (B, n_i, feats)
-            c_i = context_list[i]  # shape (B, n_i, embed_dim)
-            dt = 1.0 / steps
+        # 2) x_t from prior => Normal(0,1)
+        x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)
+        B, sum_reco_tokens, len_flow_feats = x_real.shape
+        x_t = torch.randn_like(x_real)
 
-            for step_i in range(steps):
-                t_ = step_i * dt
-                v_t = self.compute_velocity_for_type(i, x_t, t_, c_i)
-                idxs = self.flow_indices[i]  # select only flow features
-                x_t[..., idxs] = x_t[..., idxs] + dt * v_t  # update only the relevant features
+        dt = 1.0 / steps
+        for step_i in range(steps):
+            t_ = step_i * dt
+            v_t = self.compute_velocity(context, x_t, t_)
+            x_t = x_t + dt * v_t
 
-            x_t_list.append(x_t)
-        return x_t_list
+        # We now have a final x_t that is an approximate sample from the bridging distribution.
+        # If you want to "unpack" them into separate jets/met arrays, you'd do the inverse
+        # of pack_reco_features.
+        return x_t
 
-    def compute_velocity_for_type(self, i, x_t, t_, c_i):
+    def compute_velocity(self, context, x_t, t_):
         """
-        i: which type index
-        x_t: (B, n_i, feats)
-        t_: scalar float
-        c_i: (B, n_i, embed_dim)
-        => returns velocity => shape (B, n_i, feats)
+        Evaluate velocity_net.  context: (B, sum_reco, embed_dim)
+        x_t: (B, sum_reco, len_flow_feats)
+        t_: float in [0,1].
         """
-        # 1) gather only the flow feats
-        idxs = self.flow_indices[i]  # e.g. [0,1,2] for (pt,eta,phi)
-        x_t_select = x_t[..., idxs]   # shape => (B, n_i, 3)
-        B, n_i, feats = x_t_select.shape
-
-        # 2) flatten
-        c_flat  = c_i.reshape(B*n_i, self.embed_dim) # (B*n_i, 64)
-        x_flat  = x_t_select.reshape(B*n_i, feats) # (B*n_i, 3)
-        t_tensor= torch.full((B*n_i, 1), t_, device=x_t.device)
-
-        # cat => shape => (B*n_i, embed_dim + feats + 1)
-        inp = torch.cat([c_flat, x_flat, t_tensor], dim=1)  
-        # e.g. if embed_dim=64, feats=3 => 64+3+1=68
-
-        v_flat = self.vel_nets[i](inp)  # => (B*n_i, feats)
-        v_t = v_flat.view(B, n_i, feats)
-        return v_t
+        B, sum_reco, F = x_t.shape
+        net_in = torch.cat([
+            context.reshape(B * sum_reco, -1),
+            x_t.reshape(B * sum_reco, F),
+            torch.full((B * sum_reco, 1), t_, device=x_t.device),
+        ], dim=1)
+        v_flat = self.velocity_net(net_in)
+        return v_flat.view(B, sum_reco, F)
