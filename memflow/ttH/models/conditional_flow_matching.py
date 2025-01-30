@@ -23,6 +23,7 @@ def pad_t_like_x(t, x):
         t = t.unsqueeze(-1)
     return t
 
+
 class TransferCFM(L.LightningModule):
     """
     A fully 'global' Conditional Flow-Matching model, but now with a
@@ -69,6 +70,7 @@ class TransferCFM(L.LightningModule):
         self.reco_particle_type_names = reco_particle_type_names
 
         self.flow_input_features = flow_input_features
+        self.len_flow_feats = max(len(flow_feats) for flow_feats in self.flow_input_features)
         self.process_names = process_names
 
         self.sigma = sigma
@@ -76,10 +78,14 @@ class TransferCFM(L.LightningModule):
         self._scheduler_config = scheduler_config
 
         self.onehot_encoding = onehot_encoding
-        # If you do want actual one-hot vectors, you can build them here:
-        # (Below is just an illustration; you’d need the sum of reco dims, etc.)
-        # self.onehot_tensors = [...]
-        # <You can implement exactly as in TransferFlow if needed.>
+        if self.onehot_encoding:
+            # Initialize one-hot tensors for each reco type
+            # Assuming each reco type has a known number of categories
+            # For illustration, assuming two reco types with 3 and 2 categories respectively
+            # Adjust accordingly based on your reco types
+            self.onehot_tensors = nn.ParameterList([
+                nn.Parameter(torch.eye(len(features)), requires_grad=False) for features in self.flow_input_features
+            ])
 
         # Handle attention masks
         if reco_mask_attn is None:
@@ -110,7 +116,7 @@ class TransferCFM(L.LightningModule):
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
 
         # Velocity net for bridging
-        d_in = self.embed_dim + len(self.flow_input_features) + 1  # [context + x(t) + t]
+        d_in = self.embed_dim + self.len_flow_feats + 1  # [context + x(t) + t]
 
         d_hid = 128
         self.velocity_net = nn.Sequential(
@@ -118,8 +124,16 @@ class TransferCFM(L.LightningModule):
             nn.SiLU(),
             nn.Linear(d_hid, d_hid),
             nn.SiLU(),
-            nn.Linear(d_hid, len(self.flow_input_features)),
+            nn.Linear(d_hid, self.len_flow_feats),
         )
+
+        self.flow_indices = []
+        self.global_flow_features = []
+        for i,(n,reco_features,flow_features) in enumerate(zip(self.n_reco_particles_per_type,self.reco_input_features_per_type,self.flow_input_features)):
+            assert len(set(flow_features).intersection(set(reco_features))) == len(flow_features), f'Not all flow features {flow_features} found in reco_features for particle set #{i} ({reco_features})'
+            indices = [reco_features.index(feature) for feature in flow_features]
+            self.flow_indices.append(indices)
+            self.global_flow_features.extend([feat for feat in flow_features if feat not in self.global_flow_features])
 
 
     def make_embeddings(self, input_features_per_type):
@@ -141,11 +155,14 @@ class TransferCFM(L.LightningModule):
             embs.append(nn.Sequential(*layers))
         return embs
 
+
     def set_optimizer(self, optimizer):
         self._optimizer = optimizer
 
+
     def set_scheduler_config(self, scheduler_config):
         self._scheduler_config = scheduler_config
+
 
     def configure_optimizers(self):
         if self._optimizer is None:
@@ -160,6 +177,7 @@ class TransferCFM(L.LightningModule):
                 "optimizer": opt,
                 "lr_scheduler": self._scheduler_config,
             }
+
 
     def conditioning(self,hard_data,hard_mask_exist,reco_data,reco_mask_exist):
         # Add null token to first reco object #
@@ -271,160 +289,227 @@ class TransferCFM(L.LightningModule):
 
         return bridging
 
+
+    def compute_velocity(self, context, x_t, t_):
+        """
+        Compute velocity using the velocity_net.
+
+        Args:
+            context: Tensor of shape [B, sum_reco, embed_dim]
+            x_t: Tensor of shape [B, sum_reco, len_flow_feats]
+            t_: Scalar or tensor representing the current time step
+
+        Returns:
+            v_t: Tensor of shape [B, sum_reco, len_flow_feats]
+        """
+        B, sum_reco_tokens, _ = context.shape
+        # Prepare net_in
+        net_in = torch.cat([
+            context.reshape(B * sum_reco_tokens, -1),          # [B*sum_reco, embed_dim]
+            x_t.reshape(B * sum_reco_tokens, self.len_flow_feats), # [B*sum_reco, len_flow_feats]
+            t_.repeat_interleave(sum_reco_tokens).unsqueeze(-1),# [B*sum_reco, 1]
+        ], dim=1)  # [B*sum_reco, embed_dim + len_flow_feats + 1]
+
+        # Predict velocity
+        v_pred = self.velocity_net(net_in).reshape(B, sum_reco_tokens, self.len_flow_feats)  # [B, sum_reco, len_flow_feats]
+
+        return v_pred
+
+
     def cfm_loss(self, batch):
         """
+        Compute the Conditional Flow-Matching loss.
+
+        Steps:
         1) Transformer => shape (B, sum_reco+1, embed_dim)
-        2) Flatten all reco tokens (except the null) => shape (B, sum_reco, embed_dim)
-        3) Gather only 'flow_input_features' from each reco token => bridging from prior => real
-        4) velocity_net => MSE vs. target velocity
-        5) If some features don't exist in a token type, mask them out.
-        6) Optionally log per-process or other metrics.
+        2) Remove null token => shape (B, sum_reco, embed_dim)
+        3) Pack reco features => x_real: [B, sum_reco, len_flow_feats], feat_mask: [B, sum_reco, len_flow_feats]
+        4) Initialize bridging distribution: x0, x1, t
+        5) Compute velocity_net input and predict velocity
+        6) Euler stepping
+        7) Unpack samples and compute loss
         """
         hard_data = batch["hard"]["data"]
         hard_mask = batch["hard"]["mask"]
         reco_data = batch["reco"]["data"]
         reco_mask = batch["reco"]["mask"]
 
-        # 1) Transformer => shape (B, sum_reco+1, embed_dim)
-        transformer_out = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)
+        # 1. Transformer Output
+        transformer_out = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)  # [B, sum_reco+1, embed_dim]
 
-        # 2) The 1st token in the decoder is "null"; skip it
-        context = transformer_out[:, 1:, :]
+        # 2. Remove Null Token
+        context = transformer_out[:, 1:, :]  # [B, sum_reco, embed_dim]
 
-        # print(f"DEBUG: context: shape {context.shape}, min {context.min()}, max {context.max()}")
-        # if torch.isnan(context).any():
-        #     print("NaNs detected in context")
-        # if torch.isinf(context).any():
-        #     print("Infs detected in context")
-
-            # 3) Build the bridging distribution
-        x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)
+        # 3. Pack Reco Features
+        x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)  # [B, sum_reco, len_flow_feats]
         B, sum_reco_tokens, len_flow_feats = x_real.shape
-        # if torch.isnan(x_real).any():
-        #     print("NaNs detected in x_real")
-        # if torch.isinf(x_real).any():
-        #     print("Infs detected in x_real")
 
-        x0 = torch.randn_like(x_real)
+        # 4. Initialize Bridging Distribution
+        x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
         x1 = x_real
-        t = torch.rand(B, device=x_real.device)
-        x_t = self.bridging_distribution(x0, x1, t)
-        # if torch.isnan(x_t).any():
-        #     print("NaNs detected in x_t")
-        # if torch.isinf(x_t).any():
-        #     print("Infs detected in x_t")
+        t = torch.rand(B, device=x_real.device)  # [B]
 
-        # 4) velocity net input = [context, x_t, t]
-        # print(f"DEBUG: embed_dim = {self.embed_dim}")
-        # print(f"DEBUG: len_flow_feats = {len_flow_feats}")
-        # print(f"DEBUG: x_t shape = {x_t.shape}")  # Expected: (B, sum_reco, len_flow_feats)
+        x_t = self.bridging_distribution(x0, x1, t)  # [B, sum_reco, len_flow_feats]
 
-        net_in = torch.cat([
-            context.reshape(B * sum_reco_tokens, -1),
-            x_t.reshape(B * sum_reco_tokens, len_flow_feats),
-            t.repeat_interleave(sum_reco_tokens).unsqueeze(-1),
-        ], dim=1)
-        # print(f"DEBUG: net_in: shape {net_in.shape}, min {net_in.min()}, max {net_in.max()}")
-        # if torch.isnan(net_in).any():
-        #     print("NaNs detected in net_in")
-        # if torch.isinf(net_in).any():
-        #     print("Infs detected in net_in")
+        # 5. Compute Velocity
+        v_pred = self.compute_velocity(context, x_t, t)  # [B, sum_reco, len_flow_feats]
 
-        v_pred = self.velocity_net(net_in).reshape(B, sum_reco_tokens, len_flow_feats)
-        # print(f"DEBUG: v_pred: shape {v_pred.shape}, min {v_pred.min()}, max {v_pred.max()}")
-        # if torch.isnan(v_pred).any():
-        #     print("NaNs detected in v_pred")
-        # if torch.isinf(v_pred).any():
-        #     print("Infs detected in v_pred")
+        # 6. Compute True Velocity
+        v_true = x1 - x0  # [B, sum_reco, len_flow_feats]
 
-        v_true = x1 - x0
-        diff = (v_pred - v_true)**2 * feat_mask
-
-        loss_per_event = diff.mean(dim=(1,2))
-        loss = loss_per_event.mean(dim=0)
+        # 7. Compute Loss
+        diff = (v_pred - v_true) ** 2 * feat_mask  # [B, sum_reco, len_flow_feats]
+        loss_per_event = diff.mean(dim=(1, 2))  # [B]
+        loss = loss_per_event.mean(dim=0)  # Scalar
 
         return loss
 
 
     def pack_reco_features(self, reco_data, reco_mask):
+        """
+        Pack reco features into a flat tensor with masking.
+
+        Args:
+            reco_data: List of tensors, one per reco type, shape [B, P_j, F_j]
+            reco_mask: List of tensors, one per reco type, shape [B, P_j]
+
+        Returns:
+            x_real: Tensor of shape [B, sum_reco, len_flow_feats]
+            feat_mask: Tensor of shape [B, sum_reco, len_flow_feats]
+            sum_reco: Total number of reco particles
+        """
         B = reco_data[0].shape[0]
         n_tokens_each = [rd.shape[1] for rd in reco_data]
         sum_reco = sum(n_tokens_each)
 
         # Flattened list of all flow features
-        flow_features_flat = self.flow_input_features  # ["pt", "eta", "phi"]
-        len_flow_feats = len(flow_features_flat)  # 3
+        flow_features_flat = self.flow_input_features  # List of lists
+        len_flow_feats = self.len_flow_feats  # Maximum number of flow features across reco types
 
         # Initialize tensors
         x_real = torch.zeros((B, sum_reco, len_flow_feats), device=reco_data[0].device)
         feat_mask = torch.zeros((B, sum_reco, len_flow_feats), device=reco_data[0].device)
 
         offset = 0
-        for type_i in range(len(self.n_reco_particles_per_type)):
-            rd_i = reco_data[type_i]      # shape: (B, n_i, F_i)
-            mask_i = reco_mask[type_i]    # shape: (B, n_i)
-            feat_list_i = self.reco_input_features_per_type[type_i]  # e.g., ["pt", "phi"]
+        for type_i, n in enumerate(self.n_reco_particles_per_type):
+            rd_i = reco_data[type_i]      # shape: [B, P_j, F_j]
+            mask_i = reco_mask[type_i]    # shape: [B, P_j]
+            feat_list_i = self.flow_input_features[type_i]  # e.g., ["pt", "phi"]
 
-            for feat_k, feat_name in enumerate(flow_features_flat):
+            for feat_j, feat_name in enumerate(self.flow_input_features[type_i]):
                 if feat_name in feat_list_i:
                     col_idx = feat_list_i.index(feat_name)
-                    x_real[:, offset:offset + rd_i.shape[1], feat_k] = rd_i[:, :, col_idx]
-                    feat_mask[:, offset:offset + rd_i.shape[1], feat_k] = mask_i
-                else:
-                    # Feature not present for this reco type; leave as zero and mask=0
-                    pass
+                    # Assign the feature value to the corresponding position
+                    # Since flow_input_features is per reco type, map to global position
+                    # Here, assuming len_flow_feats >= len(feat_list_i)
+                    x_real[:, offset:offset + n, feat_j] = rd_i[:, :, col_idx]
+                    feat_mask[:, offset:offset + n, feat_j] = mask_i
 
-            offset += rd_i.shape[1]
+            # For features not present in this reco type, they remain zero and masked
+            offset += n
 
         return x_real, feat_mask, sum_reco
 
+    def unpack_reco_samples(self, x_t, reco_mask_exist):
+        """
+        Unpack the flat x_t tensor into per reco type tensors.
+
+        Args:
+            x_t: Tensor of shape [B, sum_reco, len_flow_feats]
+            reco_mask_exist: List of tensors, one per reco type, shape [B, P_j]
+
+        Returns:
+            reco_samples: List of tensors, one per reco type, shape [B, P_j, F_j]
+        """
+        reco_samples = []
+        offset = 0
+        for type_i, n in enumerate(self.n_reco_particles_per_type):
+            P_j = n
+            flow_features = self.flow_input_features[type_i]
+            F_j = len(flow_features)
+
+            # Extract features for this reco type
+            sample_i = x_t[:, offset:offset + P_j, :F_j]  # [B, P_j, F_j]
+            reco_samples.append(sample_i)
+
+            # Update offset
+            offset += P_j
+
+        return reco_samples
 
 
     def forward(self, batch):
         return self.cfm_loss(batch)
 
-    def training_step(self, batch, batch_idx):
 
+    def training_step(self, batch, batch_idx):
         loss = self.forward(batch)
         self.log("train_loss", loss, prog_bar=True)
         return loss
+
 
     def validation_step(self, batch, batch_idx):
         loss = self.forward(batch)
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
-    def compute_velocity(self, context, x_t, t_):
-        B, sum_reco, F = x_t.shape
-        net_in = torch.cat([
-            context.reshape(B * sum_reco, -1),
-            x_t.reshape(B * sum_reco, F),
-            torch.full((B * sum_reco, 1), t_, device=x_t.device),
-        ], dim=1)
-        v_flat = self.velocity_net(net_in)
-        return v_flat.view(B, sum_reco, F)
 
-    def sample(self, batch, steps=10):
+    def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10):
         """
-        Euler stepping from x(0)=N(0,1) => x(1)=reco features,
-        using your velocity field.
+        Generate N_sample independent samples.
+
+        Args:
+            hard_data: List of tensors, one per hard particle type, shape [B, P_i, F]
+            hard_mask_exist: List of tensors, one per hard particle type, shape [B, P_i]
+            reco_data: List of tensors, one per reco particle type, shape [B, P_j, F_j]
+            reco_mask_exist: List of tensors, one per reco particle type, shape [B, P_j]
+            N_sample: Number of samples to generate
+            steps: Number of Euler steps for bridging
+
+        Returns:
+            samples: List of tensors, one per reco type, shape [N_sample, B, P_j, F_j]
         """
-        hard_data = batch["hard"]["data"]
-        hard_mask = batch["hard"]["mask"]
-        reco_data = batch["reco"]["data"]
-        reco_mask = batch["reco"]["mask"]
+        N_reco = len(reco_data)
+        B = reco_data[0].shape[0]
+        samples = [ [] for _ in range(N_reco) ]  # Initialize list for each reco type
 
-        transformer_out = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)
-        context = transformer_out[:, 1:, :]
+        for s in range(N_sample):
+            # 1. Obtain Conditioning
+            conditions = self.conditioning(hard_data, hard_mask_exist, reco_data, reco_mask_exist)  # [B, sum_reco+1, embed_dim]
 
-        x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)
-        B, sum_reco_tokens, len_flow_feats = x_real.shape
-        x_t = torch.randn_like(x_real)
+            # 2. Remove Null Token
+            context = conditions[:, 1:, :]  # [B, sum_reco, embed_dim]
 
-        dt = 1.0 / steps
-        for step_i in range(steps):
-            t_ = step_i * dt
-            v_t = self.compute_velocity(context, x_t, t_)
-            x_t = x_t + dt * v_t
+            # 3. Pack Reco Features
+            x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
+            B, sum_reco_tokens, len_flow_feats = x_real.shape
 
-        return x_t
+            # 4. Initialize Bridging Distribution
+            x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
+            x1 = x_real
+            t = torch.rand(B, device=x_real.device)  # [B]
+
+            x_t = self.bridging_distribution(x0, x1, t)  # [B, sum_reco, len_flow_feats]
+
+            # 5. Compute Velocity
+            v_pred = self.compute_velocity(context, x_t, t)  # [B, sum_reco, len_flow_feats]
+
+            # 6. Euler Stepping for Bridging
+            dt = 1.0 / steps
+            for step_i in range(steps):
+                t_value = step_i * dt
+                t_ = torch.full((B,), t_value, device=x_t.device)  # [B]
+                v_t = self.compute_velocity(context, x_t, t_)  # [B, sum_reco, len_flow_feats]
+                x_t = x_t + dt * v_t  # [B, sum_reco, len_flow_feats]
+
+            # 7. Unpack Samples per Reco Type
+            reco_samples = self.unpack_reco_samples(x_t, reco_mask_exist)  # List of [B, P_j, F_j]
+
+            # 8. Append Samples
+            for i in range(N_reco):
+                samples[i].append(reco_samples[i])  # Append [B, P_j, F_j] to list for reco type i
+
+        # 9. Stack Samples per Reco Type
+        samples = [torch.stack(s, dim=0) for s in samples]  # List of [N_sample, B, P_j, F_j]
+
+        return samples

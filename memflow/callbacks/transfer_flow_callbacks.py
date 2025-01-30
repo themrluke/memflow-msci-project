@@ -116,6 +116,7 @@ class SamplingCallback(Callback):
         return fig
 
     def make_sampling_plots(self,model,show=False):
+        print("Starting the sampling plots function")
         # Select device #
         if self.device is None:
             device = model.device
@@ -606,6 +607,3 @@ class BiasCallback(Callback):
                 step = trainer.current_epoch,
             )
             plt.close(figure)
-
-
-
