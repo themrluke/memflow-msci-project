@@ -606,6 +606,3 @@ class BiasCallback(Callback):
                 step = trainer.current_epoch,
             )
             plt.close(figure)
-
-
-
