@@ -16,9 +16,6 @@ class torch_wrapper(torch.nn.Module):
         return self.model(torch.cat([x, t.repeat(x.shape[0])[:, None]], 1))
 
 
-# models/utils.py
-import matplotlib.pyplot as plt
-
 def compare_distributions(real_data, gen_data, feat_idx=0, nbins=50, feat_name="Feature"):
     """
     Compare histograms of real vs. generated data for a single feature.
@@ -128,19 +125,80 @@ def plot_sampling_distributions(real_data, gen_data_samples, feat_names, event_i
 
 
 
-def plot_trajectories(traj):
+def plot_trajectories_2d(
+        all_traj: torch.Tensor,
+        model,
+        type_idx=0,
+        feat_idx_x=0,
+        feat_idx_y=1,
+        max_points=2000,
+        num_events=5,
+):
     """
-    Example from your code snippet that plots a trajectory in 2D.
-    Typically used for 2D or 3D flows. 
-    Could adapt for bridging distribution. 
-    """
-    n = 2000
-    plt.figure(figsize=(6,6))
-    plt.scatter(traj[0, :n, 0], traj[0, :n, 1], s=10, alpha=0.8, c="black")
-    plt.scatter(traj[:, :n, 0], traj[:, :n, 1], s=0.2, alpha=0.2, c="olive")
-    plt.scatter(traj[-1, :n, 0], traj[-1, :n, 1], s=4, alpha=1, c="blue")
-    plt.legend(["Start", "Flow steps", "End"])
-    plt.xticks([])
-    plt.yticks([])
-    plt.show()
+    2D scatter from x0->x1 for the chosen type and features.
+    Each point on scatter plot represents a specific particle at a designated time step.
+    The whole plots includes multiple particles (of same type) across multiple events.
 
+    Args:
+        all_traj: shape (N_sample, steps+1, B, sum_reco, len_flow_feats)
+            The full trajectory data (each step) from model.sample(..., store_trajectories=True).
+        model: the trained CFM model, with attributes:
+            model.n_reco_particles_per_type
+            model.flow_input_features
+            model.reco_particle_type_names
+        type_idx: Which reco particle type to visualize (0 for jets, 1 for MET, etc.)
+        feat_idx_x, feat_idx_y: which feature indices to plot on x,y axes
+        event_id: optional integer or string to add in the plot title
+        max_points: subsample if the total #points is too large.
+    """
+    # N_sample = Number of independent samples generated
+    # steps_plus_1 = Number of timesteps along trajectory
+    # B = Batch size (number of events)
+    N_sample, steps_plus_1, B, sum_reco, len_flow_feats = all_traj.shape
+
+    num_events = min(num_events, B) # Ensure num_events doesn't exceed batch size
+
+    # The user specifies the index of the desired type of particle to plot
+    # The correct section of data is extracted from all_traj
+    # E.g. If type_idx=0 => offset=0
+    # If type_idx=1 => offset = n_reco_particles_per_type[0]
+    offset = sum(model.n_reco_particles_per_type[:type_idx])
+    n_type = model.n_reco_particles_per_type[type_idx] # Number of that type of particle
+
+    # Slice out that type and portion of events
+    sub_traj = all_traj[:, :, :num_events, offset : offset + n_type, :] # shape => [N_sample, steps+1, num_events, n_type, len_flow_feats]
+
+    # Pick the 2 features to plot
+    sub_traj_2d = sub_traj[..., [feat_idx_x, feat_idx_y]] # => shape [N_sample, steps+1, num_events, n_type, 2]
+
+    # Flatten B,n_type => a single dimension
+    sub_traj_2d = sub_traj_2d.reshape(N_sample, steps_plus_1, -1, 2) # => shape [N_sample, steps+1, B*n_type, 2]
+
+    # Select the first sample for plotting
+    sample_idx = 0
+    traj = sub_traj_2d[sample_idx]  # shape [steps+1, B*n_type, 2]
+
+    # sub-sample if too large to ensure readability
+    if traj.shape[1] > max_points:
+        traj = traj[:, :max_points, :]
+
+    # Extract feature names for the axis labels
+    chosen_features = model.flow_input_features[type_idx]
+    x_label = chosen_features[feat_idx_x]
+    y_label = chosen_features[feat_idx_y]
+
+    # Dynamically select particle name
+    particle_name = model.reco_particle_type_names[type_idx]
+
+    # Make the plot
+    plt.figure(figsize=(6,6))
+    plt.scatter(traj[0, :, 0], traj[0, :, 1], s=10, c="black", alpha=0.8, label="Start") # Start points
+    for i in range(traj.shape[1]): # Plot intermediate points as trajectory lines
+        plt.plot(traj[:, i, 0], traj[:, i, 1], c="olive", alpha=0.2, linewidth=0.8)  # Connect points with a line
+    plt.scatter(traj[-1, :, 0], traj[-1, :, 1], s=20, c="blue", alpha=1.0, label="End")# end
+
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(f"Trajectory for {particle_name}")
+    plt.legend()
+    plt.show()

@@ -300,6 +300,11 @@ class BaseCFM(L.LightningModule):
         return condition
 
 
+    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Placeholder function in base class which subclasses will override."""
+        raise NotImplementedError("Child classes need to override this bridging_distribution function.")
+
+
     def compute_velocity(self, context, x_t, t_):
         """
         Compute velocity vector using the `velocity_net` network.
@@ -415,10 +420,6 @@ class BaseCFM(L.LightningModule):
         return reco_samples
 
 
-    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """Placeholder function in base class which subclasses will override."""
-        raise NotImplementedError("Child classes need to override this bridging_distribution function.")
-
     def forward(self, batch):
             """Compute the Conditional Flow-Matching loss."""
             hard_data = batch["hard"]["data"]
@@ -464,7 +465,7 @@ class BaseCFM(L.LightningModule):
             return loss
 
 
-    def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10):
+    def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10, store_trajectories=False):
         """
         Generate N_sample new saomples by evolving the bridging distribution using the learned velocity field.
 
@@ -475,32 +476,41 @@ class BaseCFM(L.LightningModule):
             reco_mask_exist: List of tensors, 1 per reco particle type, shape [batch_size, particles, features]
             N_sample: Number of samples to generate
             steps: Number of Euler integration steps for bridging
+            store_trajectories: bool, If True, record intermediate states for plotting
 
         Returns:
-            samples: List of tensors, one per reco type, shape [N_sample, batch_size, particles, features]
+            samples: List of tensors, one per reco type, final samples for each reco type, shape [N_sample, batch_size, particles, features]
+            trajectories: Tensor, intermediate states 2D, shape [N_sample, steps+1, B, sum_reco, 2]
         """
         N_reco = len(reco_data) # number of reco particle types
-        B = reco_data[0].shape[0] # Batch size
-        samples = [ [] for _ in range(N_reco) ]  # Initialize list for each reco type
+
+        samples = [ [] for _ in range(N_reco) ]  # Initialize list of final samples for each reco type
+
+        # We'll store the entire trajectory for each sample, over time steps
+        all_trajectories = [] if store_trajectories else None
 
         for s in range(N_sample):
             # Get transformer conditions
             conditions = self.conditioning(hard_data, hard_mask_exist, reco_data, reco_mask_exist)  # [B, sum_reco+1, embed_dim]
-
-            # Remove null token
-            context = conditions[:, 1:, :]  # [B, sum_reco, embed_dim]
+            context = conditions[:, 1:, :] # Remove null token, shape [B, sum_reco, embed_dim]
 
             # Pack the reco features
-            x_real, _, _ = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
-            B = x_real.shape[0]
+            x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
+            B, sum_reco_tokens, len_flow_feats = x_real.shape
 
             # Initialize the bridging distribution
             x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
+            # ====== NEW =======
             x1 = x_real
             t = torch.rand(B, device=x_real.device)
-
-            # Transform from Gaussian noise to reco data, conditioned on hard data
             x_t = self.bridging_distribution(x0, x1, t)  # [B, sum_reco, len_flow_feats]
+            # # We'll do Euler steps from t=0..1 for velocity-based updates
+            # x_t = x0.clone()
+            # ====== NEW =======
+
+            # (optional) store states at each step if we want trajectories
+            if store_trajectories:
+                traj_states = [x_t.detach().cpu().clone()]
 
             # Euler integration stepping for the bridging process
             dt = 1.0 / steps
@@ -510,20 +520,34 @@ class BaseCFM(L.LightningModule):
                 v_t = self.compute_velocity(context, x_t, t_)  # [B, sum_reco, len_flow_feats]
                 x_t = x_t + dt * v_t  # [B, sum_reco, len_flow_feats]
 
+                if store_trajectories:
+                    # record partial features for plotting
+                    traj_states.append(x_t.detach().cpu().clone())
+
+           # If storing, stack the states: shape [steps+1, B, sum_reco, 2]
+            if store_trajectories:
+                traj_states = torch.stack(traj_states, dim=0)  # [steps+1, B, sum_reco, 2]
+                all_trajectories.append(traj_states)
+
             # Unpack samples
             reco_samples = self.unpack_reco_samples(x_t, reco_mask_exist)  # List of [B, particles, features]
-
             for i in range(N_reco): # Append samples
                 samples[i].append(reco_samples[i])  # Append [B, particles, features] to list for reco particle type i
 
-        # 9. Stack Samples per Reco Type
+        # Stack Samples per Reco Type
         samples = [torch.stack(s, dim=0) for s in samples]  # List of [N_sample, B, particles, features]
 
-        return samples
+        # If we collected trajectories
+        if store_trajectories:
+            # shape [N_sample, steps+1, B, sum_reco, 2]
+            all_trajectories = torch.stack(all_trajectories, dim=0)
+            return samples, all_trajectories
+        else:
+            return samples
 
 
 
-class OriginalCFM(BaseCFM):
+class StandardCFM(BaseCFM):
     """
     Child class which uses a standard bridging distribution:
         x(t) = (1 - t)*x0 + t*x1 + sigma*eps
@@ -548,7 +572,7 @@ class ExactOptimalTransportCFM(BaseCFM):
             *args,
             sigma: Union[float, int] = 0.0,
             ot_method="exact",
-            ot_reg:float=0.0,
+            ot_reg: float=0.0,
             **kwargs,
     ):
 
@@ -556,11 +580,16 @@ class ExactOptimalTransportCFM(BaseCFM):
         # Create an OTPlanSampler. Use exact method by default
         self.ot_sampler = OTPlanSampler(method=ot_method, reg=ot_reg)
 
-    def bridging_distribution(self, x0, x1, t):
-        """Re-pair x0, x1 with an exact Optimal Transport plan and perform bridging."""
+        # Store precomputed transport plans to avoid constant re-pairing
+        self.paired_x0 = None
+        self.paired_x1 = None
 
-        # Sample from plan
-        paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1)
+    def bridging_distribution(self, x0, x1, t):
+        """Re-pair x0, x1 with an Optimal Transport plan and perform bridging."""
+
+        # Compute OT pairing only once, then reuse
+        if self.paired_x0 is None or self.paired_x1 is None:
+            paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1)
 
         # Now do the original CFM bridging
         eps = torch.randn_like(paired_x0)
@@ -640,6 +669,5 @@ class VariancePreservingCFM(BaseCFM):
         cos_part = torch.cos((math.pi / 2) * t)
         sin_part = torch.sin((math.pi / 2) * t)
 
-        x_t = cos_part * x0 + sin_part * x1 + self.sigma * eps # ORIGINAL APPROACH DID NOT USE NOISE TERM
-
+        x_t = cos_part * x0 + sin_part * x1 + self.sigma * eps
         return x_t
