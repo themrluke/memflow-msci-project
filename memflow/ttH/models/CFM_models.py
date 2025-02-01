@@ -5,10 +5,13 @@ import lightning as L
 import math
 import numpy as np
 import torch.optim as optim
-from typing import Optional, Dict, Any, List
+from typing import Optional, Union, Dict, Any, List
 from zuko.distributions import DiagNormal
+import warnings
 
+from .optimal_transport import OTPlanSampler
 from memflow.models.utils import lowercase_recursive
+
 
 
 def pad_t_like_x(t, x):
@@ -18,10 +21,16 @@ def pad_t_like_x(t, x):
     return t.reshape(-1, *([1] * (x.dim() - 1)))
 
 
-class TransferCFM(L.LightningModule):
+class BaseCFM(L.LightningModule):
     """
-    Conditional Flow Matching model operating in a 'global' mode.
-    Includes conditioning using a Transformer architecture.
+    Base class for Conditional Flow Matching models operating in a 'global' mode.
+    Serves as a parent class for other methods.
+    Subclasses can override the bridging logic.
+    Handles:
+        - Transformer-based conditioning
+        - Feature packing/unpacking
+        - Velocity network
+        - Data flow in forward()
     """
     def __init__(
         self,
@@ -39,7 +48,7 @@ class TransferCFM(L.LightningModule):
         dropout=0.0,
         process_names=None, # HERE, LOOK AT SHARED EVAL FUNC IN TRANSFER FLOW
         transformer_args={},
-        sigma=0.1,
+        sigma: Union[float, int] = 0.0,
         optimizer=None,
         scheduler_config=None,
         onehot_encoding=False,
@@ -87,7 +96,7 @@ class TransferCFM(L.LightningModule):
         assert len(n_hard_particles_per_type) == len(hard_input_features_per_type), f'{len(n_hard_particles_per_type)} sets of hard particles but got {len(hard_input_features_per_type)} sets of input features'
         assert len(flow_input_features) == len(reco_input_features_per_type), f'Number of reco features ({len(reco_input_features_per_type)}) != number of flow features ({len(flow_input_features)})'
 
-        # Make onehot encoded vectors #
+        # Make onehot encoded vectors
         if self.onehot_encoding:
             onehot_dim = sum(self.n_reco_particles_per_type) + 1 # Total num of reco particles for event (+1 null particle) 
             onehot_matrix = F.one_hot(torch.arange(onehot_dim)) # A one-hot vector for each particle stored in matrix
@@ -119,7 +128,7 @@ class TransferCFM(L.LightningModule):
         self.max_reco_len = sum(self.n_reco_particles_per_type) + 1
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
 
-        # Velocity net for bridging
+        # Learned velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
         d_hidden = 128
         self.velocity_net = nn.Sequential(
@@ -291,18 +300,6 @@ class TransferCFM(L.LightningModule):
         return condition
 
 
-    def bridging_distribution(self, x0, x1, t):
-        """
-        Defines bridging distribution used in flow matching to interpolate between x0 and x1.
-        Adds Gaussian noise scaled by sigma
-        """
-        eps = torch.randn_like(x0) # Random gaussian noise
-        t = pad_t_like_x(t, x0)
-        xt = (1.0 - t) * x0 + t * x1 + self.sigma * eps
-
-        return xt
-
-
     def compute_velocity(self, context, x_t, t_):
         """
         Compute velocity vector using the `velocity_net` network.
@@ -418,6 +415,10 @@ class TransferCFM(L.LightningModule):
         return reco_samples
 
 
+    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Placeholder function in base class which subclasses will override."""
+        raise NotImplementedError("Child classes need to override this bridging_distribution function.")
+
     def forward(self, batch):
             """Compute the Conditional Flow-Matching loss."""
             hard_data = batch["hard"]["data"]
@@ -519,3 +520,126 @@ class TransferCFM(L.LightningModule):
         samples = [torch.stack(s, dim=0) for s in samples]  # List of [N_sample, B, particles, features]
 
         return samples
+
+
+
+class OriginalCFM(BaseCFM):
+    """
+    Child class which uses a standard bridging distribution:
+        x(t) = (1 - t)*x0 + t*x1 + sigma*eps
+    """
+    def bridging_distribution(self, x0, x1, t):
+        """
+        Defines bridging distribution used in flow matching to interpolate between x0 and x1.
+        Adds Gaussian noise scaled by sigma
+        """
+        eps = torch.randn_like(x0) # Random gaussian noise
+        t = pad_t_like_x(t, x0)
+        xt = (1.0 - t) * x0 + t * x1 + self.sigma * eps
+
+        return xt
+
+
+
+class ExactOptimalTransportCFM(BaseCFM):
+    """Child class for bridging that uses exact Optimal Transport to re-pair x0 <-> x1."""
+    def __init__(
+            self,
+            *args,
+            sigma: Union[float, int] = 0.0,
+            ot_method="exact",
+            ot_reg:float=0.0,
+            **kwargs,
+    ):
+
+        super().__init__(*args, sigma=sigma, **kwargs)
+        # Create an OTPlanSampler. Use exact method by default
+        self.ot_sampler = OTPlanSampler(method=ot_method, reg=ot_reg)
+
+    def bridging_distribution(self, x0, x1, t):
+        """Re-pair x0, x1 with an exact Optimal Transport plan and perform bridging."""
+
+        # Sample from plan
+        paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1)
+
+        # Now do the original CFM bridging
+        eps = torch.randn_like(paired_x0)
+        t = pad_t_like_x(t, paired_x0)
+        x_t = (1 - t) * paired_x0 + t * paired_x1 + self.sigma * eps
+        return x_t
+
+
+
+class TargetBridgingCFM(BaseCFM):
+    """
+    A subclass which inherits the BaseCFM and that implements Lipman et al. (ICLR 2023)
+    style target Optimal Transport CFM. Sets the bridging distribution to:
+        x(t) ~ N( t * x1, [1 - (1 - sigma)* t]^2 ).
+    It disregards x0 in the bridging step, focusing solely on x1 and time t.
+    """
+
+    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+
+        # Expand t if needed to match x1 shape
+        t = pad_t_like_x(t, x0)
+
+        # Compute the mean and time-dependent std
+        mu_t = t * x1
+        sigma_t = 1.0 - (1.0 - self.sigma) * t  # shape [B, 1, 1,...]
+
+        # Sample noise
+        eps = torch.randn_like(x1)
+
+        # Bridging distribution
+        x_t = mu_t + sigma_t * eps
+        return x_t
+
+
+
+class SchrodingerBridgeCFM(BaseCFM):
+    """
+    Child class for Schrödinger bridge conditional flow matching method.
+    This subclass inherits the BaseCFM parent class.
+    """
+
+    def __init__(self, *args, sigma: Union[float, int] = 0.1, ot_method='exact', **kwargs):
+        super().__init__(*args, sigma=sigma, **kwargs)
+
+        if sigma <= 0:
+            raise ValueError(f"Sigma must be strictly positive, got {sigma}.")
+        elif sigma < 1e-3:
+            warnings.warn("Small sigma values may lead to numerical instability.")
+
+        self.ot_method = ot_method
+        self.ot_sampler = OTPlanSampler(method=ot_method, reg=2 * self.sigma**2)
+
+    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+
+        paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1, replace=True)
+
+        t = pad_t_like_x(t, paired_x0)
+
+        eps = torch.randn_like(paired_x0)
+        mu_t = (1.0 - t) * paired_x0 + t * paired_x1
+        sigma_t = torch.sqrt(t * (1.0 - t)) * self.sigma
+        x_t = mu_t + sigma_t * eps
+
+        return x_t
+
+
+class VariancePreservingCFM(BaseCFM):
+    """
+    Albergo et al. 2023 trigonometric interpolants class
+    [3] Stochastic Interpolants: A Unifying Framework for Flows and Diffusions, Albergo et al.
+    """
+
+    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        t = pad_t_like_x(t, x0)
+        eps = torch.randn_like(x0)
+
+        cos_part = torch.cos((math.pi / 2) * t)
+        sin_part = torch.sin((math.pi / 2) * t)
+
+        x_t = cos_part * x0 + sin_part * x1 + self.sigma * eps # ORIGINAL APPROACH DID NOT USE NOISE TERM
+
+        return x_t
