@@ -589,7 +589,8 @@ class ExactOptimalTransportCFM(BaseCFM):
 
         # Compute OT pairing only once, then reuse
         if self.paired_x0 is None or self.paired_x1 is None:
-            paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1)
+            self.paired_x0, self.paired_x1 = self.ot_sampler.sample_plan(x0, x1)
+        paired_x0, paired_x1 = self.paired_x0, self.paired_x1
 
         # Now do the original CFM bridging
         eps = torch.randn_like(paired_x0)
