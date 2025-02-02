@@ -429,6 +429,14 @@ class BaseCFM(L.LightningModule):
         return reco_samples
 
 
+    def velocity_target(self, x0, x1, x_t, t):
+        """
+        By default, the velocity target used for the loss calculation is (x1 - x0).
+        Child classes can override this to match their bridging distribution's derivative.
+        """
+        return x1 - x0
+
+
     def forward(self, batch):
             """Compute the Conditional Flow-Matching loss."""
             hard_data = batch["hard"]["data"]
@@ -467,7 +475,7 @@ class BaseCFM(L.LightningModule):
             v_pred = self.compute_velocity(context, x_t, t)  # [B, sum_reco, len_flow_feats]
 
             # Calculate the TRUE velocity vector
-            v_true = paired_x1 - paired_x0  # [B, sum_reco, len_flow_feats]
+            v_true = self.velocity_target(paired_x0, paired_x1, x_t, t)
 
             # Get the loss
             diff = (v_pred - v_true) ** 2 * feat_mask  # [B, sum_reco, len_flow_feats]
@@ -570,7 +578,7 @@ class StandardCFM(BaseCFM):
         Adds Gaussian noise scaled by sigma
         """
         eps = torch.randn_like(x0) # Random gaussian noise
-        t = pad_t_like_x(t, x0)
+        t = pad_t_like_x(t, x0) # Expand t if needed to match x1 shape
         xt = (1.0 - t) * x0 + t * x1 + self.sigma * eps
 
         return xt
@@ -620,20 +628,34 @@ class TargetBridgingCFM(BaseCFM):
     It disregards x0 in the bridging step, focusing solely on x1 and time t.
     """
 
-    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def velocity_target(self, x0: torch.Tensor, x1: torch.Tensor, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        For target bridging:
+            x(t) = t * x1 + sigma_t * eps,
+        where:
+            sigma_t = 1 - (1 - sigma) * t.
+        so derivative wrt t is:
+            d/dt x(t) = x1 + d(sigma_t)/dt * eps.
+        Since d(sigma_t)/dt = -(1 - sigma) (a constant), set:
+            v_true = x1 - (1 - sigma) * eps.
+        """
+        dsigma_dt = -(1.0 - self.sigma)
+        v_true = x1 + dsigma_dt * self.last_eps
+        return v_true
 
-        # Expand t if needed to match x1 shape
+
+    def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        # Ignore x0 here
+
         t = pad_t_like_x(t, x0)
 
-        # Compute the mean and time-dependent std
-        mu_t = t * x1
-        sigma_t = 1.0 - (1.0 - self.sigma) * t  # shape [B, 1, 1,...]
+        # Sample noise and store it in self.last_eps for use in the velocity target.
+        self.last_eps = torch.randn_like(x1)
 
-        # Sample noise
-        eps = torch.randn_like(x1)
+        sigma_t = 1.0 - (1.0 - self.sigma) * t # Compute time-dependent std
+        self.last_eps = torch.randn_like(x1) # Sample noise
+        x_t = t * x1 + sigma_t * self.last_eps # Bridging distribution
 
-        # Bridging distribution
-        x_t = mu_t + sigma_t * eps
         return x_t
 
 
@@ -678,6 +700,22 @@ class VariancePreservingCFM(BaseCFM):
     Albergo et al. 2023 trigonometric interpolants class
     [3] Stochastic Interpolants: A Unifying Framework for Flows and Diffusions, Albergo et al.
     """
+
+    def velocity_target(self, x0: torch.Tensor, x1: torch.Tensor, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the true velocity for the variance preserving bridging.
+        For:
+            x(t) = cos((pi/2)*t) * x0 + sin((pi/2)*t) * x1 + sigma * eps,
+        the derivative (ignoring the noise, which is independent of t) is:
+            d/dt x(t) = - (pi/2) * sin((pi/2)*t) * x0 + (pi/2) * cos((pi/2)*t) * x1.
+        """
+        t = pad_t_like_x(t, x0)  # Ensure t has the proper shape.
+        d_cos_dt = - (math.pi / 2) * torch.sin((math.pi / 2) * t)
+        d_sin_dt = (math.pi / 2) * torch.cos((math.pi / 2) * t)
+        v_true = d_cos_dt * x0 + d_sin_dt * x1
+
+        return v_true
+
 
     def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         t = pad_t_like_x(t, x0)
