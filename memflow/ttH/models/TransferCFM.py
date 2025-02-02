@@ -46,7 +46,7 @@ class BaseCFM(L.LightningModule):
         reco_mask_attn,
         hard_mask_attn,
         dropout=0.0,
-        process_names=None, # HERE, LOOK AT SHARED EVAL FUNC IN TRANSFER FLOW
+        process_names=None, # Not used yet (for logging)
         transformer_args={},
         sigma: Union[float, int] = 0.0,
         optimizer=None,
@@ -300,6 +300,15 @@ class BaseCFM(L.LightningModule):
         return condition
 
 
+    def get_bridging_pair(self, x0, x1):
+        """
+        Base version: Returns the same pair (no Optimal Transport pairing).
+        Child processes can override this function if they need to re-pair x0 & x1 via OT
+        and record this change to pass to the loss function calculation.
+        """
+        return x0, x1
+
+
     def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Placeholder function in base class which subclasses will override."""
         raise NotImplementedError("Child classes need to override this bridging_distribution function.")
@@ -448,14 +457,17 @@ class BaseCFM(L.LightningModule):
             x1 = x_real
             t = torch.rand(B, device=x_real.device)  # Each event within a batch gets a random timestep
 
+            # Child classes using OT can perform pairing logic if needed
+            paired_x0, paired_x1 = self.get_bridging_pair(x0, x1)
+
             # We want to transform from Gaussian noise to the reco data, conditioned on hard data:
-            x_t = self.bridging_distribution(x0, x1, t)  # [B, sum_reco, len_flow_feats]
+            x_t = self.bridging_distribution(paired_x0, paired_x1, t)  # [B, sum_reco, len_flow_feats]
 
             # Compute the velocity vector
             v_pred = self.compute_velocity(context, x_t, t)  # [B, sum_reco, len_flow_feats]
 
             # Calculate the TRUE velocity vector
-            v_true = x1 - x0  # [B, sum_reco, len_flow_feats]
+            v_true = paired_x1 - paired_x0  # [B, sum_reco, len_flow_feats]
 
             # Get the loss
             diff = (v_pred - v_true) ** 2 * feat_mask  # [B, sum_reco, len_flow_feats]
@@ -565,37 +577,37 @@ class StandardCFM(BaseCFM):
 
 
 
-class ExactOptimalTransportCFM(BaseCFM):
-    """Child class for bridging that uses exact Optimal Transport to re-pair x0 <-> x1."""
+class OptimalTransportCFM(BaseCFM):
+    """Child class for bridging that uses Optimal Transport to re-pair x0 <-> x1."""
     def __init__(
             self,
             *args,
             sigma: Union[float, int] = 0.0,
             ot_method="exact",
-            ot_reg: float=0.0,
+            ot_reg: float=0.05,
+            normalize_cost=False,
             **kwargs,
     ):
 
         super().__init__(*args, sigma=sigma, **kwargs)
         # Create an OTPlanSampler. Use exact method by default
-        self.ot_sampler = OTPlanSampler(method=ot_method, reg=ot_reg)
+        self.ot_sampler = OTPlanSampler(method=ot_method, reg=ot_reg, normalize_cost=normalize_cost)
 
-        # Store precomputed transport plans to avoid constant re-pairing
-        self.paired_x0 = None
-        self.paired_x1 = None
+
+    def get_bridging_pair(self, x0, x1):
+        # Do OT re-pairing:
+        paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1, replace=True)
+
+        return paired_x0, paired_x1
+
 
     def bridging_distribution(self, x0, x1, t):
         """Re-pair x0, x1 with an Optimal Transport plan and perform bridging."""
 
-        # Compute OT pairing only once, then reuse
-        if self.paired_x0 is None or self.paired_x1 is None:
-            self.paired_x0, self.paired_x1 = self.ot_sampler.sample_plan(x0, x1)
-        paired_x0, paired_x1 = self.paired_x0, self.paired_x1
-
         # Now do the original CFM bridging
-        eps = torch.randn_like(paired_x0)
-        t = pad_t_like_x(t, paired_x0)
-        x_t = (1 - t) * paired_x0 + t * paired_x1 + self.sigma * eps
+        eps = torch.randn_like(x0)
+        t = pad_t_like_x(t, x0)
+        x_t = (1 - t) * x0 + t * x1 + self.sigma * eps
         return x_t
 
 
@@ -643,14 +655,18 @@ class SchrodingerBridgeCFM(BaseCFM):
         self.ot_method = ot_method
         self.ot_sampler = OTPlanSampler(method=ot_method, reg=2 * self.sigma**2)
 
+    def get_bridging_pair(self, x0, x1):
+        # Do OT re-pairing:
+        paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1)
+
+        return paired_x0, paired_x1
+
+
     def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 
-        paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1, replace=True)
-
-        t = pad_t_like_x(t, paired_x0)
-
-        eps = torch.randn_like(paired_x0)
-        mu_t = (1.0 - t) * paired_x0 + t * paired_x1
+        t = pad_t_like_x(t, x0)
+        eps = torch.randn_like(x0)
+        mu_t = (1.0 - t) * x0 + t * x1
         sigma_t = torch.sqrt(t * (1.0 - t)) * self.sigma
         x_t = mu_t + sigma_t * eps
 

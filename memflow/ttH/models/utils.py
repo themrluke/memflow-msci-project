@@ -192,10 +192,10 @@ def plot_trajectories_2d(
 
     # Make the plot
     plt.figure(figsize=(6,6))
-    plt.scatter(traj[0, :, 0], traj[0, :, 1], s=10, c="black", alpha=0.8, label="Start") # Start points
+    plt.scatter(traj[0, :, 0], traj[0, :, 1], s=5, c="black", alpha=0.8, label="Start", zorder=1) # Start points
     for i in range(traj.shape[1]): # Plot intermediate points as trajectory lines
-        plt.plot(traj[:, i, 0], traj[:, i, 1], c="olive", alpha=0.2, linewidth=0.8)  # Connect points with a line
-    plt.scatter(traj[-1, :, 0], traj[-1, :, 1], s=20, c="blue", alpha=1.0, label="End")# end
+        plt.plot(traj[:, i, 0], traj[:, i, 1], c="olive", alpha=0.2, linewidth=0.8, zorder=2)  # Connect points with a line
+    plt.scatter(traj[-1, :, 0], traj[-1, :, 1], s=5, c="royalblue", alpha=1.0, label="End", zorder=3)# end
 
     plt.xlabel(x_label)
     plt.ylabel(y_label)
