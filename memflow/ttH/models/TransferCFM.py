@@ -15,7 +15,7 @@ from memflow.models.utils import lowercase_recursive
 
 
 def pad_t_like_x(t, x):
-    """Reshapes time vector t by the number of x dimensions"""
+    """Reshapes time vector t so it can be broadcast with with the tensor x"""
     if isinstance(t, (float, int)):
         return t
     return t.reshape(-1, *([1] * (x.dim() - 1)))
@@ -43,7 +43,7 @@ class BaseCFM(L.LightningModule):
         reco_particle_type_names,
         reco_input_features_per_type,
         flow_input_features,    # Features used for flow matching
-        reco_mask_attn,
+        reco_mask_attn, # Which particles should contribute to the Transformer attention
         hard_mask_attn,
         dropout=0.0,
         process_names=None, # Not used yet (for logging)
@@ -51,7 +51,7 @@ class BaseCFM(L.LightningModule):
         sigma: Union[float, int] = 0.0,
         optimizer=None,
         scheduler_config=None,
-        onehot_encoding=False,
+        onehot_encoding=False, # One-hot vectors are appended to reco features to help model understand particle type
     ):
         super().__init__()
         if transformer_args is None:
