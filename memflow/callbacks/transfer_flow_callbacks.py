@@ -10,12 +10,14 @@ from lightning.pytorch.callbacks import Callback
 
 
 class SamplingCallback(Callback):
-    def __init__(self,dataset,idx_to_monitor,preprocessing=None,N_sample=1,frequency=1,bins=50,log_scale=False,suffix='',label_names={},device=None):
+    def __init__(self,dataset,idx_to_monitor,preprocessing=None,N_sample=1,steps=20,store_trajectories=False,frequency=1,bins=50,log_scale=False,suffix='',label_names={},device=None):
         super().__init__()
 
         # Attributes #
         self.dataset = dataset
         self.N_sample = N_sample
+        self.steps = steps
+        self.store_trajectories = store_trajectories
         self.frequency = frequency
         self.preprocessing = preprocessing
         self.bins = bins
@@ -130,7 +132,7 @@ class SamplingCallback(Callback):
 
         # Sample #
         with torch.no_grad():
-            samples = model.sample(hard_data,hard_mask_exist,reco_data,reco_mask_exist,self.N_sample)
+            samples = model.sample(hard_data,hard_mask_exist,reco_data,reco_mask_exist,self.N_sample,self.steps,self.store_trajectories)
 
         # Put all on cpu #
         samples = [sample.to('cpu') for sample in samples]
@@ -227,7 +229,7 @@ class SamplingCallback(Callback):
             plt.close(figure)
 
 class BiasCallback(Callback):
-    def __init__(self,dataset,preprocessing=None,N_sample=1,frequency=1,raw=False,bins=50,points=20,log_scale=False,device=None,suffix='',label_names={},N_batch=math.inf,batch_size=1024):
+    def __init__(self,dataset,preprocessing=None,N_sample=1,steps=20,store_trajectories=False,frequency=1,raw=False,bins=50,points=20,log_scale=False,device=None,suffix='',label_names={},N_batch=math.inf,batch_size=1024):
         super().__init__()
 
         # Attributes #
@@ -235,6 +237,8 @@ class BiasCallback(Callback):
         self.loader = DataLoader(dataset,batch_size=batch_size,shuffle=False)
         self.preprocessing = preprocessing
         self.N_sample = N_sample
+        self.steps = steps
+        self.store_trajectories = store_trajectories
         self.N_batch = N_batch
         self.frequency = frequency
         self.bins = bins
@@ -516,7 +520,7 @@ class BiasCallback(Callback):
 
             # Sample #
             with torch.no_grad():
-                batch_samples = model.sample(hard_data,hard_mask_exist,reco_data,reco_mask_exist,self.N_sample)
+                batch_samples = model.sample(hard_data,hard_mask_exist,reco_data,reco_mask_exist,self.N_sample,self.steps,self.store_trajectories)
 
             # Record #
             for i in range(N_reco):

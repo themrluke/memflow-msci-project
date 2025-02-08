@@ -48,14 +48,13 @@ class BaseCFM(L.LightningModule):
         dropout=0.0,
         process_names=None, # Not used yet (for logging)
         transformer_args={},
+        cfm_args={},
         sigma: Union[float, int] = 0.0,
         optimizer=None,
         scheduler_config=None,
         onehot_encoding=False, # One-hot vectors are appended to reco features to help model understand particle type
     ):
         super().__init__()
-        if transformer_args is None:
-            transformer_args = {}
 
         self.dropout = dropout
         self.embed_dims = embed_dims if isinstance(embed_dims, list) else [embed_dims]
@@ -130,14 +129,14 @@ class BaseCFM(L.LightningModule):
 
         # Learned velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
-        d_hidden = 128
-        self.velocity_net = nn.Sequential(
-            nn.Linear(d_in, d_hidden),
-            nn.SiLU(),
-            nn.Linear(d_hidden, d_hidden),
-            nn.SiLU(),
-            nn.Linear(d_hidden, self.len_flow_feats),
-        )
+        d_hidden = cfm_args['dim_feedforward']
+        cfm_layers = []
+        for _ in range(cfm_args['num_layers']):
+            cfm_layers.append(nn.Linear(d_in, d_hidden))
+            cfm_layers.append(cfm_args['activation'])
+            d_in = d_hidden
+        cfm_layers.append(nn.Linear(d_hidden, self.len_flow_feats))
+        self.velocity_net = nn.Sequential(*cfm_layers)
 
         # Map flow features to corresponding indices in reco features
         self.flow_indices = []
@@ -484,6 +483,13 @@ class BaseCFM(L.LightningModule):
 
             return loss
 
+    def rk4_step(self, context, x, t_val, dt):
+        k1 = self.compute_velocity(context, x, t_val)
+        k2 = self.compute_velocity(context, x + 0.5*dt*k1, t_val + 0.5*dt)
+        k3 = self.compute_velocity(context, x + 0.5*dt*k2, t_val + 0.5*dt)
+        k4 = self.compute_velocity(context, x +     dt*k3, t_val +     dt)
+        return x + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
+
 
     def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10, store_trajectories=False):
         """
@@ -521,25 +527,23 @@ class BaseCFM(L.LightningModule):
             # Initialize the bridging distribution
             x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
             # ====== NEW =======
-            x1 = x_real
-            t = torch.rand(B, device=x_real.device)
-            x_t = self.bridging_distribution(x0, x1, t)  # [B, sum_reco, len_flow_feats]
-            # # We'll do Euler steps from t=0..1 for velocity-based updates
-            # x_t = x0.clone()
+            # x1 = x_real
+            # t = torch.rand(B, device=x_real.device)
+            # x_t = self.bridging_distribution(x0, x1, t)  # [B, sum_reco, len_flow_feats]
+            # # # We'll do Euler steps from t=0..1 for velocity-based updates
+            x_t = x0.clone()
             # ====== NEW =======
 
             # (optional) store states at each step if we want trajectories
             if store_trajectories:
                 traj_states = [x_t.detach().cpu().clone()]
 
-            # Euler integration stepping for the bridging process
+            # RK4 ODE solver
             dt = 1.0 / steps
             for step_i in range(steps):
                 t_value = step_i * dt
                 t_ = torch.full((B,), t_value, device=x_t.device)
-                v_t = self.compute_velocity(context, x_t, t_)  # [B, sum_reco, len_flow_feats]
-                x_t = x_t + dt * v_t  # [B, sum_reco, len_flow_feats]
-
+                x_t = self.rk4_step(context, x_t, t_, dt)
                 if store_trajectories:
                     # record partial features for plotting
                     traj_states.append(x_t.detach().cpu().clone())
