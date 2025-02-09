@@ -121,6 +121,7 @@ class BaseCFM(L.LightningModule):
         if "dropout" not in transformer_args:
             transformer_args["dropout"] = self.dropout
         self.transformer = nn.Transformer(batch_first=True, **transformer_args) # By default nn.Transformer expects (seq_length, batch_size, feature_dim)
+        # self.norm = nn.LayerNorm(self.embed_dim)  # Apply LayerNorm after Transformer
 
         # Missing particles across events are padded, therefore able to create one global tgt_mask:
         # (assume sum(n_reco_particles_per_type)+1 is the same for all events)
@@ -130,12 +131,16 @@ class BaseCFM(L.LightningModule):
         # Learned velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
         d_hidden = cfm_args['dim_feedforward']
+        activation_fn = cfm_args['activation']
         cfm_layers = []
         for _ in range(cfm_args['num_layers']):
             cfm_layers.append(nn.Linear(d_in, d_hidden))
-            cfm_layers.append(cfm_args['activation'])
+            cfm_layers.append(nn.BatchNorm1d(d_hidden))   # BatchNorm before activation
+            cfm_layers.append(activation_fn()) # New instance every time
             d_in = d_hidden
         cfm_layers.append(nn.Linear(d_hidden, self.len_flow_feats))
+        cfm_layers.append(nn.BatchNorm1d(self.len_flow_feats))  # Normalize final output
+
         self.velocity_net = nn.Sequential(*cfm_layers)
 
         # Map flow features to corresponding indices in reco features
@@ -295,6 +300,7 @@ class BaseCFM(L.LightningModule):
             memory_key_padding_mask = hard_mask_attn,       # encoder output / memory mask
             tgt_key_padding_mask = reco_mask_attn,          # decoder (reco) mask
         )
+        # condition = self.norm(condition)   # Apply LayerNorm
 
         return condition
 
