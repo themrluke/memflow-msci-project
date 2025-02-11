@@ -16,13 +16,13 @@ class torch_wrapper(torch.nn.Module):
         return self.model(torch.cat([x, t.repeat(x.shape[0])[:, None]], 1))
 
 
-def compare_distributions(real_data, gen_data, feat_idx=0, nbins=50, feat_name="Feature"):
+def compare_distributions(real_data, gen_data, real_feat_idx=0, gen_feat_idx=0, nbins=50, feat_name="Feature"):
     """
     Compare histograms of real vs. generated data for a single feature.
     real_data, gen_data: shape (B, nParticles, nFeatures)
     """
-    real_vals = real_data[..., feat_idx].cpu().numpy().ravel()
-    gen_vals  = gen_data[..., feat_idx].cpu().numpy().ravel()
+    real_vals = real_data[..., real_feat_idx].cpu().numpy().ravel()
+    gen_vals  = gen_data[..., gen_feat_idx].cpu().numpy().ravel()
 
     plt.figure(figsize=(6,4))
     plt.hist(real_vals, bins=nbins, density=True, histtype='step', label="Real")
