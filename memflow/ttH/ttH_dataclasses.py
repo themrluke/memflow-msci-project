@@ -467,11 +467,12 @@ class ttHRecoDataset(ttHBase, RecoDataset):
 
     @property
     def attention_idx(self):
-        return None # Assumes that if event has N jets then attends between N jets when learning
-                    # If there is 1 jet in event, to learn that ones are missing, need to specify [0, 1, 2]
+        # Assumes that if event has N jets then attends between N jets when learning
+        # If there is 1 jet in event, to learn that ones are missing, need to specify [0, 1, 2]
+        return None
         # {
-                # 'met': [0],
-                # 'jets': [0, 1],
+        #         #'met': [0],
+        #         'jets': [0, 1],
 
         #     }
 
@@ -497,8 +498,10 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                 'mass'    : 'cleanedJet_mass',
                 'btag'    : 'cleanedJet_btagDeepFlavB',
             },
+            lambda vec: vec.pt > 0.,
             pad_value = 0.,
         )
+
         met = self.data.make_particles(
             'met',
             {
@@ -549,15 +552,6 @@ class ttHRecoDataset(ttHBase, RecoDataset):
             value = 0.,
             max_no = 6,
         )
-
-        # Number of events in the dataset
-        num_events = len(jets_padded)
-
-        # Number of jets per event (after padding)
-        num_jets_per_event = ak.num(jets_padded, axis=1)
-
-        print(f"Number of Events: {num_events}")
-        print(f"Number of Jets Per Event (after padding): {num_jets_per_event}")
 
         if self.apply_boost:
             raise ValueError('Do not use boost for now')
