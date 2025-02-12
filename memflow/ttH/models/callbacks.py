@@ -1,15 +1,10 @@
-# cfm_sampling_callback.py
+# callbacks.py
+import os
+import lightning as L
 import matplotlib.pyplot as plt
+from lightning.pytorch.callbacks import Callback
 import torch
-from lightning.pytorch.callbacks import Callback
 from torch.utils.data import DataLoader
-from models.utils import compare_distributions
-
-# models/callbacks.py
-
-from lightning.pytorch.callbacks import Callback
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 from .utils import compare_distributions, plot_sampling_distributions
 
 
@@ -75,3 +70,19 @@ class CFMSamplingCallback(Callback):
 
             # Potentially log figure to Comet, etc.
             # trainer.logger.experiment.log_figure(...)
+
+
+class ModelCheckpoint(L.Callback):
+    def __init__(self, save_every_n_epochs=10, save_dir="model_checkpoints"):
+        super().__init__()
+        self.save_every_n_epochs = save_every_n_epochs
+        self.save_dir = save_dir
+        os.makedirs(self.save_dir, exist_ok=True)
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        epoch = trainer.current_epoch  # Zero-indexed epoch
+        # Save after every save_every_n_epochs (adjusting for zero-indexing)
+        if (epoch + 1) % self.save_every_n_epochs == 0:
+            ckpt_path = os.path.join(self.save_dir, f"model_epoch_{epoch+1}.ckpt")
+            trainer.save_checkpoint(ckpt_path)
+            print(f"Checkpoint saved at epoch {epoch+1}: {ckpt_path}")

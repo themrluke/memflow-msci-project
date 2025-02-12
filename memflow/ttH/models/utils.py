@@ -1,9 +1,8 @@
+# utils.py
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
-# Implement some helper functions
-
 
 class torch_wrapper(torch.nn.Module):
     """Wraps model to torchdyn compatible format."""

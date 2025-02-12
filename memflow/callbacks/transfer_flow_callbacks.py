@@ -10,7 +10,7 @@ from lightning.pytorch.callbacks import Callback
 
 
 class SamplingCallback(Callback):
-    def __init__(self,dataset,idx_to_monitor,preprocessing=None,N_sample=1,steps=20,store_trajectories=False,frequency=1,bins=50,log_scale=False,suffix='',label_names={},device=None):
+    def __init__(self,dataset,idx_to_monitor,preprocessing=None,N_sample=1,steps=20,store_trajectories=False,frequency=1,bins=50,log_scale=False,suffix='',label_names={},device=None,pt_range=None):
         super().__init__()
 
         # Attributes #
@@ -26,6 +26,7 @@ class SamplingCallback(Callback):
         self.device = device
         self.suffix = suffix
         self.label_names = label_names
+        self.pt_range = pt_range
 
         # Call batch getting #
         self.set_idx(idx_to_monitor)
@@ -63,58 +64,91 @@ class SamplingCallback(Callback):
         self.batch['reco']['data'] = default_collate(self.batch['reco']['data'])
         self.batch['reco']['mask'] = default_collate(self.batch['reco']['mask'])
 
-    def plot_particle(self,sample,reco,features,title):
-        # sample (N,F)
-        # reco (F)
-        assert sample.shape[1] == reco.shape[0]
-        assert reco.shape[0] == len(features)
-        N = len(features)
-        fig,axs = plt.subplots(N,N,figsize=(4*N,3*N))
-        fig.suptitle(title)
-        plt.subplots_adjust(left=0.1,bottom=0.1,right=0.9,top=0.9,hspace=0.3,wspace=0.3)
+    def get_bins(self, feature, sample_vals, reco_val):
+        """
+        Defines the bin bounds for the histogram. For phi and eta, we fix the range to be:
+            phi: [-pi, pi]
+            eta: [-5, 5]
+        For pT, we optionally fix a range around the real value if pt_range is not None.
+        """
+        # Convert to float (in case it's a tensor)
+        reco_val = float(reco_val)
 
-        def get_bins(feature,sample,reco):
-            if feature in ['pt','m','mass']:
-                bins = np.linspace(
-                    0.,
-                    max(torch.quantile(sample,0.9999,interpolation='higher'),reco),
-                    self.bins,
-                )
+        if feature == 'phi':
+            return np.linspace(-np.pi, np.pi, self.bins)
+        elif feature == 'eta':
+            return np.linspace(-5.0, 5.0, self.bins)
+        elif feature in ['pt', 'm', 'mass']:
+            if self.pt_range is not None:
+                half_range = self.pt_range / 2.0
+                lower = max(0.0, reco_val - half_range)
+                upper = max(lower + 1e-3, reco_val + half_range)
+                return np.linspace(lower, upper, self.bins)
             else:
-                bins = np.linspace(
-                    min(sample.min(),reco),
-                    max(sample.max(),reco),
-                    self.bins,
-                )
-            return bins
+                # Old logic: from 0 up to max(quantile, reco)
+                # Convert sample_vals to a CPU NumPy array for quantile
+                s_np = sample_vals.cpu().numpy()
+                qmax = np.quantile(s_np, 0.9999)
+                upper = max(qmax, reco_val)
+                lower = 0.0
+                return np.linspace(lower, upper, self.bins)
+        else:
+            # fallback: min -> max of sample and reco
+            smin = float(sample_vals.min())
+            smax = float(sample_vals.max())
+            lower = min(smin, reco_val)
+            upper = max(smax, reco_val)
+            if abs(upper - lower) < 1e-9:
+                upper = lower + 1.0
+            return np.linspace(lower, upper, self.bins)
 
+    def plot_particle(self, sample, reco, features, title):
+        """
+        sample: shape (N, F)   (N = number of samples, F = #features)
+        reco:   shape (F,)     (#features)
+        features: list of strings (like ["pt", "eta", "phi"])
+        title:   str
+        """
+        import matplotlib
+
+        assert sample.shape[1] == reco.shape[0]
+        N = len(features)
+
+        fig, axs = plt.subplots(N, N, figsize=(4*N, 3*N))
+        fig.suptitle(title)
+        plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.9, hspace=0.3, wspace=0.3)
 
         for i in range(N):
-            bins_x = get_bins(features[i],sample[:,i],reco[i])
-            if features[i] in self.label_names.keys():
-                feature_x_name = self.label_names[features[i]]
-            else:
-                feature_x_name = features[i]
+            # 1D bins for feature i
+            bins_x = self.get_bins(features[i], sample[:, i], reco[i])
+            feature_x_name = self.label_names.get(features[i], features[i])
+
             for j in range(N):
-                if features[j] in self.label_names.keys():
-                    feature_y_name = self.label_names[features[j]]
-                else:
-                    feature_y_name = features[j]
-                bins_y = get_bins(features[j],sample[:,j],reco[j])
+                bins_y = self.get_bins(features[j], sample[:, j], reco[j])
+                feature_y_name = self.label_names.get(features[j], features[j])
+
                 if j > i:
-                    axs[i,j].axis('off')
+                    axs[i, j].axis('off')
                 elif j == i:
-                    axs[i,j].hist(sample[:,i],bins=bins_x)
-                    axs[i,j].axvline(reco[i],color='r')
-                    axs[i,j].set_xlabel(f'${feature_x_name}$',fontsize=16)
+                    # 1D histogram
+                    axs[i, j].hist(sample[:, i].cpu().numpy(), bins=bins_x)
+                    axs[i, j].axvline(float(reco[i]), color='r')
+                    axs[i, j].set_xlabel(f'${feature_x_name}$', fontsize=16)
                     if self.log_scale:
-                        axs[i,j].set_yscale('log')
+                        axs[i, j].set_yscale('log')
                 else:
-                    h = axs[i,j].hist2d(sample[:,i],sample[:,j],bins=(bins_x,bins_y),norm=matplotlib.colors.LogNorm() if self.log_scale else None)
-                    axs[i,j].scatter(reco[i],reco[j],marker='x',color='r',s=40)
-                    axs[i,j].set_xlabel(f'${feature_x_name}$',fontsize=16)
-                    axs[i,j].set_ylabel(f'${feature_y_name}$',fontsize=16)
-                    plt.colorbar(h[3], ax=axs[i,j])
+                    # 2D histogram
+                    h = axs[i, j].hist2d(
+                        sample[:, i].cpu().numpy(),
+                        sample[:, j].cpu().numpy(),
+                        bins=(bins_x, bins_y),
+                        norm=matplotlib.colors.LogNorm() if self.log_scale else None
+                    )
+                    axs[i, j].scatter(float(reco[i]), float(reco[j]), marker='x', color='r', s=40)
+                    axs[i, j].set_xlabel(f'${feature_x_name}$', fontsize=16)
+                    axs[i, j].set_ylabel(f'${feature_y_name}$', fontsize=16)
+                    plt.colorbar(h[3], ax=axs[i, j])
+
         return fig
 
     def make_sampling_plots(self,model,show=False):

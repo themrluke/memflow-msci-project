@@ -96,6 +96,10 @@ class BaseCFM(L.LightningModule):
     ):
         super().__init__()
 
+        self.save_hyperparameters(
+            ignore=["optimizer", "scheduler_config"]  # Don't store these
+        )
+
         self.dropout = dropout
         self.embed_dims = embed_dims if isinstance(embed_dims, list) else [embed_dims]
         self.embed_dim = self.embed_dims[-1]
@@ -168,7 +172,7 @@ class BaseCFM(L.LightningModule):
         if "dropout" not in transformer_args:
             transformer_args["dropout"] = self.dropout
         self.transformer = nn.Transformer(batch_first=True, **transformer_args) # By default nn.Transformer expects (seq_length, batch_size, feature_dim)
-        # self.norm = nn.LayerNorm(self.embed_dim)  # Apply LayerNorm after Transformer
+        self.norm = nn.LayerNorm(self.embed_dim)  # Apply LayerNorm after Transformer
 
         # Missing particles across events are padded, therefore able to create one global tgt_mask:
         # (assume sum(n_reco_particles_per_type)+1 is the same for all events)
@@ -366,7 +370,7 @@ class BaseCFM(L.LightningModule):
             memory_key_padding_mask = hard_mask_attn,       # encoder output / memory mask
             tgt_key_padding_mask = reco_mask_attn,          # decoder (reco) mask
         )
-        # condition = self.norm(condition)   # Apply LayerNorm
+        condition = self.norm(condition)   # Apply LayerNorm
 
         return condition
 
@@ -405,44 +409,61 @@ class BaseCFM(L.LightningModule):
 
     def shared_eval(self, batch, batch_idx, prefix):
         # Compute velocity loss
-        loss = self.forward(batch)  # Forward pass computes MSE loss on velocity fields
+        diff = self.forward(batch)  # Forward pass computes MSE loss on velocity fields
 
-        # Extract masks
-        reco_mask = batch["reco"]["mask"]
+        # 1) Overall loss: average over particles and features, then over batch
+        loss_per_event = diff.mean(dim=(1, 2))  # [B]
+        loss = loss_per_event.mean(dim=0)  # Scalar
+        self.log(f"{prefix}/velocity_loss_tot", loss, prog_bar=True)
+        self.log("val_loss", loss, prog_bar=True)
 
-        # Log per object loss
-        idx = 0
-        for i, n in enumerate(self.n_reco_particles_per_type):
-            for j in range(n):
-                if reco_mask[i][:, j].sum() != 0:  # average over existing particles
-                    self.log(
-                        f"{prefix}/velocity_loss_{self.reco_particle_type_names[i]}_{j}",
-                        loss,
-                        prog_bar=False,
-                    )
-                idx += 1
+        # 2) Per-feature error: average over particles
+        global_offset = 0  # This tracks our current starting index along the object axis.
+        for type_idx, num_obj in enumerate(self.n_reco_particles_per_type):
+            # Determine the effective number of columns for this reco type.
+            effective_count = sum(2 if feat == "phi" else 1 for feat in self.flow_input_features[type_idx])
+            # Extract the slice of diff that corresponds to this reco type:
+            #   diff_type has shape [B, num_obj, effective_count]
+            diff_type = diff[:, global_offset:global_offset + num_obj, :effective_count]
 
-        # Loss per process
-        if "process" in batch.keys():
-            for idx in torch.unique(batch["process"]).sort()[0]:
-                process_idx = torch.where(batch["process"] == idx)[0]
-                process_name = self.process_names[idx] if self.process_names is not None else str(idx.item())
-                self.log(
-                    f"{prefix}/velocity_loss_process_{process_name}",
-                    loss.mean(),  # Averaged over all reco particles
-                    prog_bar=False,
-                )
+            # Now, for each field in the flow features for this reco type, compute its error.
+            local_col = 0  # Tracks column position in the effective representation for this type.
+            for feat in self.flow_input_features[type_idx]:
+                if feat == "phi":
+                    # For phi, two columns represent it.
+                    # We compute the mean error over both columns.
+                    field_slice = diff_type[:, :, local_col:local_col + 2]  # shape: [B, num_obj, 2]
+                    field_error = field_slice.mean()  # overall mean error for phi for this type.
+                    self.log(f"velocity_loss_field_{self.reco_particle_type_names[type_idx]}_{feat}", field_error, prog_bar=False)
+                    local_col += 2
+                else:
+                    # For non-phi features, take one column.
+                    field_slice = diff_type[:, :, local_col:local_col + 1]  # shape: [B, num_obj, 1]
+                    field_error = field_slice.mean()
+                    self.log(f"velocity_loss_field_{self.reco_particle_type_names[type_idx]}_{feat}", field_error, prog_bar=False)
+                    local_col += 1
 
-        # Log total velocity loss
-        self.log(f"{prefix}/velocity_loss_tot", loss.mean(), prog_bar=True)
-        self.log("val_loss", loss.mean(), prog_bar=True)
+            global_offset += num_obj  # Move to the next reco type in the concatenated dimension.
 
-        return loss.mean()
+        # 3) Per-object error: average over features
+        object_error = diff.mean(dim=2)  # [B, sum_reco]
+        mean_object_error = object_error.mean(dim=0)  # [sum_reco]
+        # To log per object by reco type, iterate over types using self.n_reco_particles_per_type
+        offset = 0
+        for type_idx, num_obj in enumerate(self.n_reco_particles_per_type):
+            for j in range(num_obj):
+                # Compute error for object j of type type_idx (averaged over batch)
+                obj_err = mean_object_error[offset + j]
+                self.log(f"velocity_loss_object_{self.reco_particle_type_names[type_idx]}_{j}", obj_err, prog_bar=False)
+            offset += num_obj
+
+        return loss
 
 
     def training_step(self, batch, batch_idx):
         """Defines the training step for each batch and computes the loss."""
         return self.shared_eval(batch, batch_idx, 'train')
+
 
     def validation_step(self, batch, batch_idx):
         """Validation step for each batch, logs validation loss."""
@@ -589,12 +610,11 @@ class BaseCFM(L.LightningModule):
             # Calculate the TRUE velocity vector
             v_true = self.velocity_target(paired_x0, paired_x1, x_t, t)
 
-            # Get the loss
+            # Compute element-wise squared errors, masked by feat_mask
             diff = (v_pred - v_true) ** 2 * feat_mask  # [B, sum_reco, len_flow_feats]
-            loss_per_event = diff.mean(dim=(1, 2))  # [B]
-            loss = loss_per_event.mean(dim=0)  # Scalar
 
-            return loss
+            return diff
+
 
     def rk4_step(self, context, x, t_val, dt):
         k1 = self.compute_velocity(context, x, t_val)
