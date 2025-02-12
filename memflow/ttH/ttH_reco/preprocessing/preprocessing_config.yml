@@ -13,11 +13,12 @@
   scaler_dict:
     pt:
       class: lowercutshift
-      lower_cut: 20
+      lower_cut: 200
 - fields_select:
   - - pt
     - mass
   - - pt
+    - mass
   names:
   - jets
   - met
@@ -29,10 +30,10 @@
 - fields_select:
   - - pt
     - eta
-    - phi
     - mass
   - - pt
-    - phi
+    - eta
+    - mass
   names:
   - jets
   - met
@@ -43,9 +44,6 @@
     mass:
       class: SklearnScaler
       obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_reco/preprocessing/step_3/mass.bin
-    phi:
-      class: SklearnScaler
-      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_reco/preprocessing/step_3/phi.bin
     pt:
       class: SklearnScaler
       obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_reco/preprocessing/step_3/pt.bin

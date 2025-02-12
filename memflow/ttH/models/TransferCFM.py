@@ -21,6 +21,46 @@ def pad_t_like_x(t, x):
     return t.reshape(-1, *([1] * (x.dim() - 1)))
 
 
+
+class CircularEmbedding(nn.Module):
+    """
+    Replaces raw φ values with [sin(φ), cos(φ)].
+    It expects the indices of the raw φ columns in the input.
+    """
+    def __init__(self, in_features, out_features, circular_indices=None, embed_act=None, dropout=0.0):
+        super().__init__()
+        self.circular_indices = circular_indices  # list of indices corresponding to phi
+        # The linear layer expects extra channels for each phi replaced.
+        self.linear = nn.Linear(in_features + (len(circular_indices) if circular_indices else 0), out_features)
+        self.act = embed_act() if embed_act is not None else None
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else None
+
+
+    def forward(self, x):
+        if self.circular_indices is not None:
+            # Extract raw phi columns.
+            circular_vals = x[..., self.circular_indices]
+            sin_phi = torch.sin(circular_vals)
+            cos_phi = torch.cos(circular_vals)
+
+            # Remove the raw phi columns.
+            idx_all = list(range(x.shape[-1]))
+            idx_remaining = [i for i in idx_all if i not in self.circular_indices]
+            x_remaining = x[..., idx_remaining]
+
+            # Concatenate the remaining features with the sin/cos values.
+            x = torch.cat([x_remaining, sin_phi, cos_phi], dim=-1)
+
+        out = self.linear(x)
+        if self.act is not None:
+            out = self.act(out)
+        if self.dropout is not None:
+            out = self.dropout(out)
+
+        return out
+
+
+
 class BaseCFM(L.LightningModule):
     """
     Base class for Conditional Flow Matching models operating in a 'global' mode.
@@ -70,7 +110,11 @@ class BaseCFM(L.LightningModule):
         self.reco_particle_type_names = lowercase_recursive(reco_particle_type_names)
 
         self.flow_input_features = lowercase_recursive(flow_input_features)
-        self.len_flow_feats = max(len(flow_feats) for flow_feats in self.flow_input_features)
+        # For each reco type, count "phi" as two channels.
+        def effective_feature_count(feats):
+            return sum(2 if feat == "phi" else 1 for feat in feats)
+        self.len_flow_feats = max([effective_feature_count(feats) for feats in self.flow_input_features])
+
         self.onehot_encoding = onehot_encoding
         self.process_names = process_names
 
@@ -91,9 +135,12 @@ class BaseCFM(L.LightningModule):
         self.hard_mask_attn = hard_mask_attn
 
         # Safety checks
-        assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features_per_type)} sets of input features'
-        assert len(n_hard_particles_per_type) == len(hard_input_features_per_type), f'{len(n_hard_particles_per_type)} sets of hard particles but got {len(hard_input_features_per_type)} sets of input features'
-        assert len(flow_input_features) == len(reco_input_features_per_type), f'Number of reco features ({len(reco_input_features_per_type)}) != number of flow features ({len(flow_input_features)})'
+        assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), \
+            f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features_per_type)} sets of input features'
+        assert len(n_hard_particles_per_type) == len(hard_input_features_per_type), \
+            f'{len(n_hard_particles_per_type)} sets of hard particles but got {len(hard_input_features_per_type)} sets of input features'
+        assert len(flow_input_features) == len(reco_input_features_per_type), \
+            f'Number of reco features ({len(reco_input_features_per_type)}) != number of flow features ({len(flow_input_features)})'
 
         # Make onehot encoded vectors
         if self.onehot_encoding:
@@ -128,7 +175,7 @@ class BaseCFM(L.LightningModule):
         self.max_reco_len = sum(self.n_reco_particles_per_type) + 1
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
 
-        # Learned velocity network for bridging
+        # Velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
         d_hidden = cfm_args['dim_feedforward']
         activation_fn = cfm_args['activation']
@@ -140,7 +187,6 @@ class BaseCFM(L.LightningModule):
             d_in = d_hidden
         cfm_layers.append(nn.Linear(d_hidden, self.len_flow_feats))
         cfm_layers.append(nn.BatchNorm1d(self.len_flow_feats))  # Normalize final output
-
         self.velocity_net = nn.Sequential(*cfm_layers)
 
         # Map flow features to corresponding indices in reco features
@@ -161,29 +207,49 @@ class BaseCFM(L.LightningModule):
         feature_embeddings = {} # Dict to store embedding layers for different feature sets
         embeddings = nn.ModuleList() # List of PyTorch layers to be registered as part of model
         for features in input_features: # Iterate over each feature set
-            if not isinstance(features,tuple):
+            if not isinstance(features, tuple):
                 features = tuple(features) # Ensure treated as tuples
-            if features not in feature_embeddings.keys(): # Check if an embedding exists for this features set
-                # If this set of features is new, create a new embedding layer
-                layers = []
-                for i in range(len(self.embed_dims)):
-                    layers.append(
-                        nn.Linear(
-                            in_features = len(features)+onehot_dim if i==0 else self.embed_dims[i-1],
-                            out_features = self.embed_dims[i],
-                        )
-                    )
+
+            if 'phi' in features:
+                circular_indices = [i for i, feat in enumerate(features) if feat == 'phi']
+                embedding = CircularEmbedding(
+                    in_features=len(features),
+                    out_features=self.embed_dims[0],
+                    circular_indices=circular_indices,
+                    embed_act=self.embed_act,
+                    dropout=self.dropout
+                )
+                layers = [embedding]
+                for i in range(1, len(self.embed_dims)):
+                    layers.append(nn.Linear(self.embed_dims[i - 1], self.embed_dims[i]))
                     if self.embed_act is not None and i < len(self.embed_dims) - 1:
                         layers.append(self.embed_act())
-                    if self.dropout != 0.:
+                    if self.dropout != 0.0:
                         layers.append(nn.Dropout(self.dropout))
                 embedding = nn.Sequential(*layers)
-                feature_embeddings[features] = embedding
+                key = features
             else:
-                # Reuse embedding for feature sets with the same structure where embedding already exists
-                embedding = feature_embeddings[features]
+                adjusted_features = list(features)
+                key = tuple(adjusted_features)
+                if key not in feature_embeddings: # Check if an embedding exists for this features set
+                    # If this set of features is new, create a new embedding layer
+                    layers = []
+                    in_dim = len(adjusted_features) + onehot_dim
+                    for i, out_dim in enumerate(self.embed_dims):
+                        layers.append(nn.Linear(in_dim if i == 0 else self.embed_dims[i - 1], out_dim))
+                        if self.embed_act is not None and i < len(self.embed_dims) - 1:
+                            layers.append(self.embed_act())
+                        if self.dropout != 0.0:
+                            layers.append(nn.Dropout(self.dropout))
+                    embedding = nn.Sequential(*layers)
+                    feature_embeddings[key] = embedding
+                else:
+                    # Reuse embedding for feature sets with the same structure where embedding already exists
+                    embedding = feature_embeddings[key]
             embeddings.append(embedding)
+
         return embeddings
+
 
     # Methods to set optimizer and scheduler externally after model initialization
     def set_optimizer(self, optimizer):
@@ -384,15 +450,23 @@ class BaseCFM(L.LightningModule):
 
 
     def pack_reco_features(self, reco_data, reco_mask):
-        """Organize the features of the reco-level particles into a single flattened tensor with masking"""
+        """
+        Organize the features of the reco-level particles into a single flattened tensor with masking
+        For the feature "phi", replace the raw value with [sin(φ), cos(φ)].
+        """
         B = reco_data[0].shape[0] # Batch size
         n_each_type = [rd.shape[1] for rd in reco_data] # List of num particles for each reco type
         sum_reco = sum(n_each_type) # Total num of reco particles for a given event (across all types)
-        len_flow_feats = self.len_flow_feats  # Maximum number of flow features across all reco particles
+
+        # Determine the correct number of output feature columns
+        feature_col_count = max(
+            sum(2 if feat == "phi" else 1 for feat in self.flow_input_features[type_i])
+            for type_i in range(len(self.n_reco_particles_per_type))
+        )
 
         # Initialize tensors
-        x_real = torch.zeros((B, sum_reco, len_flow_feats), device=reco_data[0].device) # To store feature values
-        feat_mask = torch.zeros((B, sum_reco, len_flow_feats), device=reco_data[0].device) # Which values are valid
+        x_real = torch.zeros((B, sum_reco, feature_col_count), device=reco_data[0].device) # To store feature values
+        feat_mask = torch.zeros((B, sum_reco, feature_col_count), device=reco_data[0].device) # Which values are valid
 
         offset = 0 # Where in the flat tensor current reco type should be placed
         for type_i, n in enumerate(self.n_reco_particles_per_type):
@@ -400,15 +474,29 @@ class BaseCFM(L.LightningModule):
             # n = number of particles of this particle type (e.g. 15 for jets)
             rd_i = reco_data[type_i]      # Contents for that particle type. Has shape [B, Particles, Features]
             mask_i = reco_mask[type_i]    # Existance mask for the current particle type. Shape: [B, Particles]
-            feat_list_i = self.flow_input_features[type_i]  # Feature names (e.g., ["pt", "phi"]) for this particle type
+            flow_feats = self.flow_input_features[type_i]  
+            reco_feats = self.reco_input_features_per_type[type_i]  # Feature order for this type
 
-            for feat_j, feat_name in enumerate(self.flow_input_features[type_i]): # Loop over each flow feature
-                if feat_name in feat_list_i:
-                    col_idx = feat_list_i.index(feat_name) # Find idx of feat_name in feat_list_i
+            col_offset = 0
+            for feat in flow_feats:
+                if feat not in reco_feats:
+                    raise ValueError(f"Feature '{feat}' not found in reco_features for type {type_i}: {reco_feats}")
+
+                col_idx = reco_feats.index(feat)  # Get the real index of this feature
+                if feat == "phi":
+                    phi_raw = rd_i[:, :, col_idx]
+                    x_real[:, offset:offset+n, col_offset] = torch.sin(phi_raw)
+                    x_real[:, offset:offset+n, col_offset+1] = torch.cos(phi_raw)
+                    feat_mask[:, offset:offset+n, col_offset] = mask_i
+                    feat_mask[:, offset:offset+n, col_offset+1] = mask_i
+                    col_offset += 2  # Use 2 columns for phi
+
+                else:
                     # Assign the value of a feature to the corresponding position
                     # Since flow_input_features is done per reco particle type, map to global position
-                    x_real[:, offset:offset + n, feat_j] = rd_i[:, :, col_idx] # Assigns feature values
-                    feat_mask[:, offset:offset + n, feat_j] = mask_i # Mark valid features
+                    x_real[:, offset:offset+n, col_offset] = rd_i[:, :, col_idx] # Assigns feature values
+                    feat_mask[:, offset:offset+n, col_offset] = mask_i # Mark valid features
+                    col_offset += 1
 
             # For features not present in this reco type, they remain zero and masked
             offset += n # Move pointer for next reco particle type
@@ -417,19 +505,38 @@ class BaseCFM(L.LightningModule):
 
 
     def unpack_reco_samples(self, x_t, reco_mask_exist):
-        """Unpack the flat x_t tensor into per reco type tensors."""
+        """
+        Unpack the flat x_t tensor into per reco type tensors.
+        For the feature "phi", combine [sin(φ), cos(φ)] back into an angle via atan2.
+        Normalise the (sin, cos) pair to ensure they lie on the unit circle.
+        """
         reco_samples = [] # Will contain list of reco particle types
         offset = 0 # Track where in x_t the next particle type starts
         for type_i, n in enumerate(self.n_reco_particles_per_type): # Loop over each particle type
-            flow_features = self.flow_input_features[type_i] # List of features used for this particle type
-            F_j = len(flow_features) # Number of features
+            flow_feats = self.flow_input_features[type_i] # List of features used for this particle type
+            effective_count = sum(2 if feat == "phi" else 1 for feat in flow_feats)
+            sample_i = x_t[:, offset:offset+n, :effective_count]
+            out_features = []
+            col_offset = 0
+            for feat in flow_feats:
+                if feat == "phi":
+                    sin_phi = sample_i[:, :, col_offset]
+                    cos_phi = sample_i[:, :, col_offset+1]
+                    # Normalize the (sin, cos) pair.
+                    norm = torch.sqrt(sin_phi**2 + cos_phi**2 + 1e-6)
+                    sin_phi = sin_phi / norm
+                    cos_phi = cos_phi / norm
+                    phi = torch.atan2(sin_phi, cos_phi).unsqueeze(-1)
+                    out_features.append(phi)
+                    col_offset += 2
+                else:
+                    feat_val = sample_i[:, :, col_offset].unsqueeze(-1)
+                    out_features.append(feat_val)
+                    col_offset += 1
 
-            # Extract portion of x_t for this particle type
-            sample_i = x_t[:, offset:offset + n, :F_j]  # [Batch size, particles, Features]
-            reco_samples.append(sample_i)
-
-            # Update offset
-            offset += n
+            out_sample = torch.cat(out_features, dim=-1)
+            reco_samples.append(out_sample)
+            offset += n # Update offset
 
         return reco_samples
 

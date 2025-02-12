@@ -403,7 +403,6 @@ class ttHHardDataset(ttHBase, HardDataset):
                         scaler_dict={
                             'pt': SklearnScaler(preprocessing.StandardScaler()),
                             'eta': SklearnScaler(preprocessing.StandardScaler()),
-                            'phi': SklearnScaler(preprocessing.StandardScaler()),
                             'mass': SklearnScaler(preprocessing.StandardScaler()),
                         }
                     )
@@ -623,7 +622,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                 PreprocessingStep(
                     names = ['met'],
                     scaler_dict = {
-                        'pt' : lowercutshift(20),
+                        'pt' : lowercutshift(200),
                     },
                 )
             )
@@ -634,10 +633,6 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                         'pt' : logmodulus(),
                         'mass'  : logmodulus(),
                     },
-                    fields_select = [
-                        ('pt','mass'),
-                        ('pt',),
-                    ]
                 )
             )
             self.register_preprocessing_step(
@@ -646,12 +641,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                     scaler_dict = {
                         'pt'   : SklearnScaler(preprocessing.StandardScaler()),
                         'eta'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
-                        'phi'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
                         'mass'    : SklearnScaler(preprocessing.StandardScaler()),
                     },
-                    fields_select = [
-                        ('pt','eta','phi','mass'),
-                        ('pt','phi'),
-                    ]
                 )
             )

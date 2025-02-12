@@ -29,31 +29,24 @@
 - fields_select:
   - - pt
     - eta
-    - phi
     - mass
   - - pt
     - eta
-    - phi
     - mass
   - - pt
     - eta
-    - phi
     - mass
   - - pt
     - eta
-    - phi
     - mass
   - - pt
     - eta
-    - phi
     - mass
   - - pt
     - eta
-    - phi
     - mass
   - - pt
     - eta
-    - phi
     - mass
   names:
   - higgs
@@ -70,9 +63,6 @@
     mass:
       class: SklearnScaler
       obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/mass.bin
-    phi:
-      class: SklearnScaler
-      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/phi.bin
     pt:
       class: SklearnScaler
       obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/pt.bin
