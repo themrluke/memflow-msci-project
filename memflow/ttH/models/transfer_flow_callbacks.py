@@ -9,6 +9,16 @@ import lightning as L
 from lightning.pytorch.callbacks import Callback
 
 
+
+def angle_diff(delta_phi):
+    """
+    Maps any delta_phi into the interval (-pi, pi].
+    delta_phi can be a PyTorch tensor.
+    """
+    return (delta_phi + math.pi) % (2 * math.pi) - math.pi
+
+
+
 class SamplingCallback(Callback):
     def __init__(self,dataset,idx_to_monitor,preprocessing=None,N_sample=1,steps=20,store_trajectories=False,frequency=1,bins=50,log_scale=False,suffix='',label_names={},device=None,pt_range=None):
         super().__init__()
@@ -335,7 +345,6 @@ class BiasCallback(Callback):
         return torch.tensor(modes)
 
 
-
     def plot_particle(self,truth,mask,samples,features,title):
         # truth shape [N,F]
         # mask shape [N]
@@ -356,12 +365,18 @@ class BiasCallback(Callback):
         samples = samples[:,mask,:]
         truth = truth.unsqueeze(0).repeat_interleave(repeats=samples.shape[0],dim=0)
         diff = samples-truth
-        for j in range(N):
+        for j, feat in enumerate(features):
             # Getting feature name #
             if features[j] in self.label_names.keys():
                 feature_name = self.label_names[features[j]]
             else:
                 feature_name = features[j]
+
+            if feat == "phi": # Circular nature of phi demands different error calc
+                samples[..., j] = angle_diff(samples[..., j])
+                truth[..., j]   = angle_diff(truth[..., j])
+                diff[..., j]    = angle_diff(diff[..., j])
+
             # 1D plot #
             diff_max = abs(diff[...,j]).max()
             diff_bins = np.linspace(-diff_max,diff_max,self.bins)
@@ -566,6 +581,12 @@ class BiasCallback(Callback):
         samples = [torch.cat(sample,dim=1) for sample in samples]
         truth   = [torch.cat(t,dim=0) for t in truth]
         mask    = [torch.cat(m,dim=0) for m in mask]
+
+        for i in range(len(truth)):  # Loop over reco particle types
+            for j, feat in enumerate(model.flow_input_features[i]):
+                if feat == "phi":
+                    samples[i][..., j] = angle_diff(samples[i][..., j])
+                    truth[i][..., j] = angle_diff(truth[i][..., j])
 
         # Inverse preprocessing if raw #
         if self.preprocessing is not None:
