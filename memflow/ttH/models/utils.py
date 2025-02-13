@@ -439,47 +439,91 @@ def plot_trajectories_grid(all_traj: torch.Tensor, model, custom_timesteps, type
         axes[0, col].set_xlim(global_x_min, global_x_max)
         axes[0, col].set_ylim(global_y_min, global_y_max)
 
+
+
         # --- Middle row: Vector field ---
-        # Here, use the full state (not just the 2D projection).
-        full_state = sample_traj[t]  # shape: [num_points, model.len_flow_feats]
-        # Compute velocity predictions.
-        N_samples = full_state.shape[0]
-        # Get global context from the batch.
-        hard_data = [d.to(model.device) for d in batch["hard"]["data"]]
-        hard_mask = [m.to(model.device) for m in batch["hard"]["mask"]]
-        reco_data = [d.to(model.device) for d in batch["reco"]["data"]]
-        reco_mask = [m.to(model.device) for m in batch["reco"]["mask"]]
-        conditions = model.conditioning(hard_data, hard_mask, reco_data, reco_mask)
-        context = conditions[:, 1:, :]  # remove null token
-        global_context = context.mean(dim=(0, 1))  # [embed_dim]
-        context_samples = global_context.unsqueeze(0).repeat(N_samples, 1)  # [N_samples, embed_dim]
+        grid_resolution = 20  # adjust resolution as needed
+        grid_bounds = (global_x_min, global_x_max, global_y_min, global_y_max)
+        device = next(model.parameters()).device
+        x_lin = torch.linspace(grid_bounds[0], grid_bounds[1], grid_resolution, device=device)
+        y_lin = torch.linspace(grid_bounds[2], grid_bounds[3], grid_resolution, device=device)
+        grid_X, grid_Y = torch.meshgrid(x_lin, y_lin, indexing='ij')
 
-        t_norm = t / (steps_plus_1 - 1)
-        t_grid = torch.full((N_samples, 1), t_norm, dtype=torch.float32, device=model.device)
+        # Total number of grid points
+        n_grid = grid_X.numel()  # grid_resolution**2
 
-        net_in = torch.cat([context_samples.to(model.device), full_state.to(model.device), t_grid], dim=1)
-        with torch.no_grad():
-            v_pred = model.velocity_net(net_in)  # [N_samples, model.len_flow_feats]
+        # For the chosen type, compute its effective dimension (e.g. phi is 2 channels)
+        effective_dim = sum(2 if feat == "phi" else 1 for feat in model.flow_input_features[type_idx])
 
-        # Extract the two velocity components for plotting.
-        v_xy = v_pred[:, [feat_idx_x, feat_idx_y]].cpu().numpy()
+        # Build a tensor for the grid points with shape [1, n_grid, effective_dim]
+        # We fill only the positions corresponding to the plotting features (feat_idx_x and feat_idx_y)
+        grid_points_effective = torch.zeros((1, n_grid, effective_dim), device=device)
+        grid_points_effective[0, :, feat_idx_x] = grid_X.flatten()
+        grid_points_effective[0, :, feat_idx_y] = grid_Y.flatten()
 
-        # Subsample for clarity.
-        num_points = traj[t].shape[0]
-        subsample_size = min(1000, num_points)
-        indices = np.random.choice(num_points, subsample_size, replace=False)
-        sample_positions = traj[t][indices].cpu().numpy()  # [subsample_size, 2]
-        sample_velocities = v_xy[indices]  # [subsample_size, 2]
+        # The velocity network expects an input of size [B, n, model.len_flow_feats]
+        # If effective_dim is less than model.len_flow_feats, pad with zeros
+        if effective_dim < model.len_flow_feats:
+            pad_size = model.len_flow_feats - effective_dim
+            pad = torch.zeros((1, n_grid, pad_size), device=device)
+            grid_points_full = torch.cat([grid_points_effective, pad], dim=-1)
+        else:
+            grid_points_full = grid_points_effective
 
-        q = axes[1, col].quiver(sample_positions[:, 0], sample_positions[:, 1],
-                                sample_velocities[:, 0], sample_velocities[:, 1],
-                                angles='xy', scale_units='xy', scale=5, width=0.01, cmap='coolwarm')
-        fig.colorbar(q, ax=axes[1, col], label="Velocity magnitude")
+        # Obtain a context from a single event if a batch is provided.
+        if batch is not None:
+            # Select the single event (in single_event mode)
+            hard_data = [hd[event_idx:event_idx+1] for hd in batch["hard"]["data"]]
+            hard_mask = [hm[event_idx:event_idx+1] for hm in batch["hard"]["mask"]]
+            reco_data = [rd[event_idx:event_idx+1] for rd in batch["reco"]["data"]]
+            reco_mask = [rm[event_idx:event_idx+1] for rm in batch["reco"]["mask"]]
+            cond = model.conditioning(hard_data, hard_mask, reco_data, reco_mask)
+            context_full = cond[:, 1:, :]  # remove the null token → shape: [1, sum_reco, embed_dim]
+            # Average over the reco tokens to get a single global context vector.
+            context_global = context_full.mean(dim=1, keepdim=True)  # [1, 1, embed_dim]
+        else:
+            context_global = torch.zeros((1, 1, model.embed_dim), device=device)
+
+        # Expand the global context to all grid points: shape becomes [1, n_grid, embed_dim]
+        context_grid = context_global.expand(1, n_grid, model.embed_dim)
+
+        # Compute the time value corresponding to the current timestep.
+        t_val = t / (steps_plus_1 - 1)
+        t_tensor = torch.tensor([t_val], device=device)
+
+        # Compute the velocity prediction at each grid point.
+        # The network expects x_t with shape [B, n_grid, model.len_flow_feats]
+        v_pred = model.compute_velocity(context_grid, grid_points_full, t_tensor)  # shape: [1, n_grid, model.len_flow_feats]
+
+        # Select the two components for plotting.
+        # (We assume feat_idx_x and feat_idx_y correspond to the desired velocity components.)
+        v_pred_x = v_pred[0, :, feat_idx_x].reshape(grid_resolution, grid_resolution)
+        v_pred_y = v_pred[0, :, feat_idx_y].reshape(grid_resolution, grid_resolution)
+
+        # Compute the magnitude for color mapping.
+        magnitude = torch.sqrt(v_pred[0, :, 0]**2 + v_pred[0, :, 1]**2).reshape(grid_resolution, grid_resolution)
+        magnitude_np = magnitude.cpu().detach().numpy()
+
+        # Convert grid_X and grid_Y to numpy for plotting.
+        grid_X_np = grid_X.cpu().numpy()
+        grid_Y_np = grid_Y.cpu().numpy()
+
+        Q = axes[1, col].quiver(
+            grid_X_np, grid_Y_np,
+            v_pred_x.cpu().detach().numpy(), v_pred_y.cpu().detach().numpy(),
+            magnitude_np,  # Use velocity magnitude to determine color.
+            cmap='coolwarm',  # "coolwarm" goes from blue (low) to red (high).
+            scale=5, # Bigger to shrink
+            scale_units='xy',
+            angles='xy',
+            width=0.01
+        )
+        #plt.colorbar(Q, ax=axes[1, col], label="Velocity Magnitude")
+        axes[1, col].set_title(f"Velocity Field at t = {t_val:.2f}")
         axes[1, col].set_xlabel(x_label)
         axes[1, col].set_ylabel(y_label)
-        axes[1, col].set_xlim(global_x_min, global_x_max)
-        axes[1, col].set_ylim(global_y_min, global_y_max)
-
+        axes[1, col].set_xlim(grid_bounds[0], grid_bounds[1])
+        axes[1, col].set_ylim(grid_bounds[2], grid_bounds[3])
 
 
 
@@ -503,8 +547,6 @@ def plot_trajectories_grid(all_traj: torch.Tensor, model, custom_timesteps, type
 
     plt.tight_layout()
     plt.show()
-
-
 
 
 def save_samples(samples, filename):
