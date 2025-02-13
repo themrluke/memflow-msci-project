@@ -1,6 +1,7 @@
 # utils.py
 
 import matplotlib.pyplot as plt
+from scipy.interpolate import griddata
 import numpy as np
 import torch
 import os
@@ -270,10 +271,18 @@ def plot_trajectories_2d(
     else:
         raise ValueError("Invalid mode. Choose 'multiple_events' or 'single_event'.")
 
+    feature_names = {
+        "pt": r"$p_T$ [GeV]",
+        "eta": r"$\eta$",
+        "phi": r"$\phi$ [rad]"
+    }
     # Extract feature names for the axis labels
     chosen_features = model.flow_input_features[type_idx]
     x_label = chosen_features[feat_idx_x]
     y_label = chosen_features[feat_idx_y]
+    # Replace labels if they exist in the mapping
+    x_label = feature_names.get(x_label, x_label)
+    y_label = feature_names.get(y_label, y_label)
     particle_name = model.reco_particle_type_names[type_idx] # Select particle name
 
     # Make the plot
@@ -297,6 +306,205 @@ def plot_trajectories_2d(
     plt.title(f"Trajectory for {particle_name} ({mode})")
     plt.legend()
     plt.show()
+
+
+def plot_trajectories_grid(all_traj: torch.Tensor, model, custom_timesteps, type_idx: int = 0,
+                           feat_idx_x: int = 0, feat_idx_y: int = 1, max_points: int = 2000,
+                           mode: str = "multiple_events", event_idx: int = 0, object_idx: int = 0,
+                           preprocessing=None, batch=None):
+    """
+    Plots a grid of subplots showing, for each custom timestep:
+      - Top row: Density heatmap of points at that timestep.
+      - Middle row: Vector field computed from the differences (i.e. approximate velocities).
+      - Bottom row: Trajectories (full paths) for a small subset of particles, with the current
+        position at the custom timestep highlighted in red.
+
+    Args:
+        all_traj: Tensor of shape (N_sample, steps+1, B, sum_reco, len_flow_feats)
+                  (typically from model.sample(..., store_trajectories=True))
+        model: The trained CFM model. Must have attributes:
+               - n_reco_particles_per_type (list of ints)
+               - flow_input_features (list of lists of feature names)
+               - reco_particle_type_names (list of strings)
+               - reco_input_features_per_type (list of lists of feature names)
+               Optionally:
+               - flow_indices (list of lists of indices)
+        custom_timesteps: list of timestep indices at which to plot (e.g. [10, 20, 30])
+        type_idx: Which reco particle type to visualize (e.g., 0 for jets, 1 for MET, etc.)
+        feat_idx_x, feat_idx_y: Which features (columns) to use for the x and y axes.
+        max_points: Maximum number of points (after flattening events and objects) to consider.
+        mode: Either "multiple_events" (default) or "single_event".
+        event_idx: For single_event mode, the event index to use.
+        object_idx: For single_event mode, the object index within the selected type.
+        preprocessing: (Optional) Preprocessing object with an inverse() method. If provided,
+                       the full feature set is inverse transformed before selecting the two features.
+
+    Note:
+        In "multiple_events" mode, the function flattens the event and particle dimensions.
+        In "single_event" mode, it selects a single event and object, then transposes the sample
+        and time dimensions so that the output shape becomes [steps+1, N_sample, len_flow_feats].
+    """
+    # Unpack the trajectory shape.
+    N_sample, steps_plus_1, B, sum_reco, len_flow_feats = all_traj.shape
+    # Determine offset and number of particles for the chosen type.
+    offset = sum(model.n_reco_particles_per_type[:type_idx])
+    n_type = model.n_reco_particles_per_type[type_idx]
+
+    if mode == "multiple_events":
+        # Use all events.
+        sub_traj = all_traj[:, :, :B, offset: offset+n_type, :]  # shape: [N_sample, steps+1, B, n_type, len_flow_feats]
+        # Use the first sample.
+        sample_traj = sub_traj[0]  # shape: [steps+1, B, n_type, len_flow_feats]
+        # Flatten the event and particle dimensions.
+        sample_traj = sample_traj.reshape(steps_plus_1, -1, len_flow_feats)  # shape: [steps+1, (B*n_type), len_flow_feats]
+    elif mode == "single_event":
+        # Ensure indices are in range.
+        if event_idx >= B:
+            event_idx = B - 1
+        if object_idx >= n_type:
+            object_idx = 0
+        # Select one event.
+        sub_traj = all_traj[:, :, event_idx:event_idx+1, offset: offset+n_type, :]  # shape: [N_sample, steps+1, 1, n_type, len_flow_feats]
+        # Select the desired object.
+        sample_traj = sub_traj[:, :, 0, object_idx, :]  # shape: [N_sample, steps+1, len_flow_feats]
+        # Transpose so that time is the first dimension.
+        sample_traj = sample_traj.transpose(0, 1)  # shape: [steps+1, N_sample, len_flow_feats]
+    else:
+        raise ValueError("Invalid mode. Choose 'multiple_events' or 'single_event'.")
+
+    # Optionally, apply inverse preprocessing.
+    if preprocessing is not None:
+        fields = model.reco_input_features_per_type[type_idx]
+        if hasattr(model, 'flow_indices'):
+            desired_num = len(model.flow_indices[type_idx])
+            if sample_traj.shape[-1] != desired_num:
+                indices = model.flow_indices[type_idx]
+                indices_tensor = torch.tensor(indices, device=sample_traj.device)
+                sample_traj = sample_traj.index_select(dim=-1, index=indices_tensor)
+            flow_fields = [fields[idx] for idx in model.flow_indices[type_idx]]
+        else:
+            flow_fields = fields
+        inv_mask = torch.ones(sample_traj.shape[0], sample_traj.shape[1], device=sample_traj.device)
+        name = model.reco_particle_type_names[type_idx]
+        sample_traj, _ = preprocessing.inverse(name=name, x=sample_traj, mask=inv_mask, fields=flow_fields)
+    # Now select only the two features.
+    traj = sample_traj[..., [feat_idx_x, feat_idx_y]]  # shape: [steps+1, num_points, 2]
+    if traj.shape[1] > max_points:
+        traj = traj[:, :max_points, :]
+
+    # Compute global x/y limits from the trajectory (use all points)
+    global_x_min = traj[:, :, 0].min().item()
+    global_x_max = traj[:, :, 0].max().item()
+    global_y_min = traj[:, :, 1].min().item()
+    global_y_max = traj[:, :, 1].max().item()
+
+    # Set up the grid: 3 rows (density, vector field, trajectories) x n_cols columns.
+    n_cols = len(custom_timesteps)
+    fig, axes = plt.subplots(3, n_cols, figsize=(5 * n_cols, 15))
+    if n_cols == 1:
+        axes = axes[:, None]
+
+    feature_names = {
+        "pt": r"$p_T$ [GeV]",
+        "eta": r"$\eta$",
+        "phi": r"$\phi$ [rad]"
+    }
+    # Extract feature names for the axis labels
+    chosen_features = model.flow_input_features[type_idx]
+    x_label = chosen_features[feat_idx_x]
+    y_label = chosen_features[feat_idx_y]
+    # Replace labels if they exist in the mapping
+    x_label = feature_names.get(x_label, x_label)
+    y_label = feature_names.get(y_label, y_label)
+    particle_name = model.reco_particle_type_names[type_idx] # Select particle name
+
+    # Loop over custom timesteps (each column)
+    for col, t in enumerate(custom_timesteps):
+        # Ensure the timestep index is an integer.
+        t = int(round(t))
+        if t < 0 or t >= steps_plus_1:
+            print(f"Skipping timestep {t} (out of range)")
+            continue
+
+        # --- Top row: Density heatmap ---
+        points = traj[t].cpu().numpy()  # shape: [num_points, 2]
+        axes[0, col].hist2d(points[:, 0], points[:, 1],
+                            bins=50,
+                            density=True,
+                            cmap="viridis",
+                            range=[[global_x_min, global_x_max], [global_y_min, global_y_max]])
+        axes[0, col].set_title(f"T = {t}")
+        axes[0, col].set_xlabel(x_label)
+        axes[0, col].set_ylabel(y_label)
+        axes[0, col].set_xlim(global_x_min, global_x_max)
+        axes[0, col].set_ylim(global_y_min, global_y_max)
+
+        # --- Middle row: Vector field ---
+        # Here, use the full state (not just the 2D projection).
+        full_state = sample_traj[t]  # shape: [num_points, model.len_flow_feats]
+        # Compute velocity predictions.
+        N_samples = full_state.shape[0]
+        # Get global context from the batch.
+        hard_data = [d.to(model.device) for d in batch["hard"]["data"]]
+        hard_mask = [m.to(model.device) for m in batch["hard"]["mask"]]
+        reco_data = [d.to(model.device) for d in batch["reco"]["data"]]
+        reco_mask = [m.to(model.device) for m in batch["reco"]["mask"]]
+        conditions = model.conditioning(hard_data, hard_mask, reco_data, reco_mask)
+        context = conditions[:, 1:, :]  # remove null token
+        global_context = context.mean(dim=(0, 1))  # [embed_dim]
+        context_samples = global_context.unsqueeze(0).repeat(N_samples, 1)  # [N_samples, embed_dim]
+
+        t_norm = t / (steps_plus_1 - 1)
+        t_grid = torch.full((N_samples, 1), t_norm, dtype=torch.float32, device=model.device)
+
+        net_in = torch.cat([context_samples.to(model.device), full_state.to(model.device), t_grid], dim=1)
+        with torch.no_grad():
+            v_pred = model.velocity_net(net_in)  # [N_samples, model.len_flow_feats]
+
+        # Extract the two velocity components for plotting.
+        v_xy = v_pred[:, [feat_idx_x, feat_idx_y]].cpu().numpy()
+
+        # Subsample for clarity.
+        num_points = traj[t].shape[0]
+        subsample_size = min(1000, num_points)
+        indices = np.random.choice(num_points, subsample_size, replace=False)
+        sample_positions = traj[t][indices].cpu().numpy()  # [subsample_size, 2]
+        sample_velocities = v_xy[indices]  # [subsample_size, 2]
+
+        q = axes[1, col].quiver(sample_positions[:, 0], sample_positions[:, 1],
+                                sample_velocities[:, 0], sample_velocities[:, 1],
+                                angles='xy', scale_units='xy', scale=5, width=0.01, cmap='coolwarm')
+        fig.colorbar(q, ax=axes[1, col], label="Velocity magnitude")
+        axes[1, col].set_xlabel(x_label)
+        axes[1, col].set_ylabel(y_label)
+        axes[1, col].set_xlim(global_x_min, global_x_max)
+        axes[1, col].set_ylim(global_y_min, global_y_max)
+
+
+
+
+
+        # --- Bottom row: Trajectories ---
+        num_traj = traj.shape[1]
+        idx = np.random.choice(num_traj, size=min(10000, num_traj), replace=False) # How many trajectories to plot
+        for i in idx:
+            axes[2, col].scatter(traj[0, i, 0].cpu().numpy(), traj[0, i, 1].cpu().numpy(),
+                                s=7, color="black", alpha=0.8, zorder=1)
+            # axes[2, col].plot(traj[:t+1, i, 0].cpu().numpy(), traj[:t+1, i, 1].cpu().numpy(),
+            #                   color="olive", alpha=0.5, linewidth=0.8, zorder=2)
+            axes[2, col].plot(traj[:, i, 0].cpu().numpy(), traj[:, i, 1].cpu().numpy(),
+                              color="olive", alpha=0.5, linewidth=0.8, zorder=2)
+            axes[2, col].scatter(traj[t, i, 0].cpu().numpy(), traj[t, i, 1].cpu().numpy(),
+                                s=7, color="blue", alpha=1.0, zorder=3)
+        axes[2, col].set_xlabel(x_label)
+        axes[2, col].set_ylabel(y_label)
+        axes[2, col].set_xlim(global_x_min, global_x_max)
+        axes[2, col].set_ylim(global_y_min, global_y_max)
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 
 def save_samples(samples, filename):
