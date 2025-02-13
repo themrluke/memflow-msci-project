@@ -659,13 +659,7 @@ class BaseCFM(L.LightningModule):
 
             # Initialize the bridging distribution
             x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
-            # ====== NEW =======
-            # x1 = x_real
-            # t = torch.rand(B, device=x_real.device)
-            # x_t = self.bridging_distribution(x0, x1, t)  # [B, sum_reco, len_flow_feats]
-            # # # We'll do Euler steps from t=0..1 for velocity-based updates
             x_t = x0.clone()
-            # ====== NEW =======
 
             # (optional) store states at each step if we want trajectories
             if store_trajectories:
