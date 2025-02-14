@@ -2,7 +2,7 @@
 
 import matplotlib
 import matplotlib.pyplot as plt
-from scipy.interpolate import griddata
+from matplotlib.lines import Line2D
 import numpy as np
 import torch
 import os
@@ -26,13 +26,16 @@ def compare_distributions(real_data, gen_data, real_feat_idx=0, gen_feat_idx=0, 
     real_vals = real_data[..., real_feat_idx].cpu().numpy().ravel()
     gen_vals  = gen_data[..., gen_feat_idx].cpu().numpy().ravel()
 
-    plt.figure(figsize=(6,4))
-    plt.hist(real_vals, bins=nbins, density=True, histtype='step', label="Real")
-    plt.hist(gen_vals,  bins=nbins, density=True, histtype='step', label="Generated")
-    plt.xlabel(feat_name)
-    plt.ylabel("Density")
-    plt.title(f"{feat_name}: Real vs Generated")
-    plt.legend()
+    plt.figure(figsize=(6,4), dpi=300)
+    plt.hist(real_vals, bins=nbins, density=True, histtype='step', label="Real", linewidth=1.5)
+    plt.hist(gen_vals,  bins=nbins, density=True, histtype='step', label="Generated", linewidth=1.5)
+    plt.xlabel(feat_name, fontsize=14)
+    plt.ylabel("Density", fontsize=14)
+    legend_lines = [
+        Line2D([0], [0], color='#1f77b4', lw=2, label="Real"),
+        Line2D([0], [0], color="orange", lw=2, label="Generated"),
+    ]
+    plt.legend(handles=legend_lines)
     plt.show()
 
 
@@ -444,135 +447,115 @@ def plot_trajectories_grid(
     offset_obj = offset + object_idx
     obj_context = context_full[:, offset_obj : offset_obj+1, :]  # => [1, 1, embed_dim]
 
-    # Loop over custom timesteps (each column)
+    # --- Middle row: Vector field ---
+    Nx = grid_size
+    Ny = grid_size
+    xs = np.linspace(global_x_min, global_x_max, Nx)
+    ys = np.linspace(global_y_min, global_y_max, Ny)
+    gx, gy = np.meshgrid(xs, ys, indexing="ij")  # shape [Nx, Ny]
+
+    # Flatten => shape [Nx*Ny, 2]
+    points_2d = torch.from_numpy(
+        np.stack([gx.ravel(), gy.ravel()], axis=-1)
+    ).float().to(device)
+
+    # Precompute global vector field magnitudes for all timesteps
+    all_mags = []
+    for t in custom_timesteps:
+        t = int(round(t))
+        if t < 0 or t >= steps_plus_1:
+            continue
+        t_val = t / (steps_plus_1 - 1)
+        t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
+
+        # Prepare 4D points (assume sinφ=0, cosφ=1)
+        sin_phi = torch.zeros_like(points_2d[:, 0])
+        cos_phi = torch.ones_like(points_2d[:, 0])
+        points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
+
+        # Replicate context and build network input
+        cflat = obj_context.reshape(1, -1)  # obj_context from your code above
+        c_rep = cflat.repeat(points_2d.shape[0], 1)
+        net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
+
+        with torch.no_grad():
+            v_pred_4 = model.velocity_net(net_in)
+        v_pred = v_pred_4[:, [0, 1]].cpu().numpy()  # shape: [N_points, 2]
+        mag = np.sqrt(v_pred[:, 0]**2 + v_pred[:, 1]**2)
+        all_mags.append(mag)
+
+    global_max = np.max([m.max() for m in all_mags])
+    global_min = np.min([m.min() for m in all_mags])
+    # Create a shared normalization object
+    shared_norm = matplotlib.colors.Normalize(vmin=global_min, vmax=global_max)
+
+    # Now loop over custom timesteps for plotting
     for col, t in enumerate(custom_timesteps):
-        # Ensure the timestep index is an integer.
         t = int(round(t))
         if t < 0 or t >= steps_plus_1:
             print(f"Skipping timestep {t} (out of range)")
             continue
 
-        # --- Top row: Density heatmap ---
-        points = traj[t].cpu().numpy()  # shape: [num_points, 2]
+        fontsize = 20
+        # --- Top row: Density heatmap (same as before) ---
+        points = traj[t].cpu().numpy()
         axes[0, col].hist2d(points[:, 0], points[:, 1],
                             bins=50,
                             density=True,
                             cmap="viridis",
                             range=[[global_x_min, global_x_max], [global_y_min, global_y_max]])
-        axes[0, col].set_title(f"T = {t}")
-        axes[0, col].set_xlabel(x_label)
-        axes[0, col].set_ylabel(y_label)
+        axes[0, col].set_title(f"T = {t / (steps_plus_1 - 1)}", fontsize=25)
+        axes[0, col].set_xlabel(x_label, fontsize=fontsize)
+        axes[0, col].set_ylabel(y_label, fontsize=fontsize)
         axes[0, col].set_xlim(global_x_min, global_x_max)
         axes[0, col].set_ylim(global_y_min, global_y_max)
 
         # --- Middle row: Vector field ---
-        Nx = grid_size
-        Ny = grid_size
-        xs = np.linspace(global_x_min, global_x_max, Nx)
-        ys = np.linspace(global_y_min, global_y_max, Ny)
-        gx, gy = np.meshgrid(xs, ys, indexing="ij")  # shape [Nx, Ny]
+        # (Reuse the grid we already computed: points_2d)
+        t_val = t / (steps_plus_1 - 1)
+        t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
+        sin_phi = torch.zeros_like(points_2d[:, 0])
+        cos_phi = torch.ones_like(points_2d[:, 0])
+        points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
+        cflat = obj_context.reshape(1, -1)
+        c_rep = cflat.repeat(points_2d.shape[0], 1)
+        net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
 
-        # Flatten => shape [Nx*Ny, 2]
-        points_2d = torch.from_numpy(
-            np.stack([gx.ravel(), gy.ravel()], axis=-1)
-        ).float().to(device)
+        with torch.no_grad():
+            v_pred_4 = model.velocity_net(net_in)
+        v_pred = v_pred_4[:, [0, 1]].cpu().numpy()
+        vx = v_pred[:, 0].reshape(Nx, Ny)
+        vy = v_pred[:, 1].reshape(Nx, Ny)
+        mag = np.sqrt(vx**2 + vy**2)
 
-        # Precompute global vector field magnitudes for all timesteps
-        all_mags = []
-        for t in custom_timesteps:
-            t = int(round(t))
-            if t < 0 or t >= steps_plus_1:
-                continue
-            t_val = t / (steps_plus_1 - 1)
-            t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
+        ax_mid = axes[1, col]
+        # Pass shared_norm to quiver for consistent coloring
+        Q = ax_mid.quiver(gx, gy, vx, vy, mag, pivot='mid', cmap='coolwarm', 
+                        scale=3, scale_units='xy', angles='xy', width=0.02, norm=shared_norm)
+        ax_mid.set_xlim(global_x_min, global_x_max)
+        ax_mid.set_ylim(global_y_min, global_y_max)
+        ax_mid.set_xlabel(x_label, fontsize=fontsize)
+        ax_mid.set_ylabel(y_label, fontsize=fontsize)
+        # Use the shared norm for the colorbar
+        # fig.colorbar(Q, ax=ax_mid, label="|velocity|", norm=shared_norm)
 
-            # Prepare 4D points (assume sinφ=0, cosφ=1)
-            sin_phi = torch.zeros_like(points_2d[:, 0])
-            cos_phi = torch.ones_like(points_2d[:, 0])
-            points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
+        # --- Bottom row: Trajectories (same as before) ---
+        num_traj = traj.shape[1]
+        idx = np.random.choice(num_traj, size=min(10000, num_traj), replace=False)
+        for i in idx:
+            axes[2, col].scatter(traj[0, i, 0].cpu().numpy(), traj[0, i, 1].cpu().numpy(),
+                                s=7, color="black", alpha=0.8, zorder=1)
+            axes[2, col].plot(traj[:t+1, i, 0].cpu().numpy(), traj[:t+1, i, 1].cpu().numpy(),
+                            color="olive", alpha=0.5, linewidth=0.8, zorder=2)
+            axes[2, col].scatter(traj[t, i, 0].cpu().numpy(), traj[t, i, 1].cpu().numpy(),
+                                s=7, color="blue", alpha=1.0, zorder=3)
+        axes[2, col].set_xlabel(x_label, fontsize=fontsize)
+        axes[2, col].set_ylabel(y_label, fontsize=fontsize)
+        axes[2, col].set_xlim(global_x_min, global_x_max)
+        axes[2, col].set_ylim(global_y_min, global_y_max)
 
-            # Replicate context and build network input
-            cflat = obj_context.reshape(1, -1)  # obj_context from your code above
-            c_rep = cflat.repeat(points_2d.shape[0], 1)
-            net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
-
-            with torch.no_grad():
-                v_pred_4 = model.velocity_net(net_in)
-            v_pred = v_pred_4[:, [0, 1]].cpu().numpy()  # shape: [N_points, 2]
-            mag = np.sqrt(v_pred[:, 0]**2 + v_pred[:, 1]**2)
-            all_mags.append(mag)
-
-        global_max = np.max([m.max() for m in all_mags])
-        global_min = np.min([m.min() for m in all_mags])
-        # Create a shared normalization object
-        shared_norm = matplotlib.colors.Normalize(vmin=global_min, vmax=global_max)
-
-        # Now loop over custom timesteps for plotting
-        for col, t in enumerate(custom_timesteps):
-            t = int(round(t))
-            if t < 0 or t >= steps_plus_1:
-                print(f"Skipping timestep {t} (out of range)")
-                continue
-
-            # --- Top row: Density heatmap (same as before) ---
-            points = traj[t].cpu().numpy()
-            axes[0, col].hist2d(points[:, 0], points[:, 1],
-                                bins=50,
-                                density=True,
-                                cmap="viridis",
-                                range=[[global_x_min, global_x_max], [global_y_min, global_y_max]])
-            axes[0, col].set_title(f"T = {t}")
-            axes[0, col].set_xlabel(x_label)
-            axes[0, col].set_ylabel(y_label)
-            axes[0, col].set_xlim(global_x_min, global_x_max)
-            axes[0, col].set_ylim(global_y_min, global_y_max)
-
-            # --- Middle row: Vector field ---
-            # (Reuse the grid we already computed: points_2d)
-            t_val = t / (steps_plus_1 - 1)
-            t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
-            sin_phi = torch.zeros_like(points_2d[:, 0])
-            cos_phi = torch.ones_like(points_2d[:, 0])
-            points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
-            cflat = obj_context.reshape(1, -1)
-            c_rep = cflat.repeat(points_2d.shape[0], 1)
-            net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
-
-            with torch.no_grad():
-                v_pred_4 = model.velocity_net(net_in)
-            v_pred = v_pred_4[:, [0, 1]].cpu().numpy()
-            vx = v_pred[:, 0].reshape(Nx, Ny)
-            vy = v_pred[:, 1].reshape(Nx, Ny)
-            mag = np.sqrt(vx**2 + vy**2)
-
-            ax_mid = axes[1, col]
-            # Pass shared_norm to quiver for consistent coloring
-            Q = ax_mid.quiver(gx, gy, vx, vy, mag, pivot='mid', cmap='coolwarm', 
-                            scale=8, scale_units='xy', angles='xy', width=0.015, norm=shared_norm)
-            ax_mid.set_xlim(global_x_min, global_x_max)
-            ax_mid.set_ylim(global_y_min, global_y_max)
-            ax_mid.set_xlabel(x_label)
-            ax_mid.set_ylabel(y_label)
-            # Use the shared norm for the colorbar
-            fig.colorbar(Q, ax=ax_mid, label="|velocity|", norm=shared_norm)
-
-            # --- Bottom row: Trajectories (same as before) ---
-            num_traj = traj.shape[1]
-            idx = np.random.choice(num_traj, size=min(10000, num_traj), replace=False)
-            for i in idx:
-                axes[2, col].scatter(traj[0, i, 0].cpu().numpy(), traj[0, i, 1].cpu().numpy(),
-                                    s=7, color="black", alpha=0.8, zorder=1)
-                axes[2, col].plot(traj[:t+1, i, 0].cpu().numpy(), traj[:t+1, i, 1].cpu().numpy(),
-                                color="olive", alpha=0.5, linewidth=0.8, zorder=2)
-                axes[2, col].scatter(traj[t, i, 0].cpu().numpy(), traj[t, i, 1].cpu().numpy(),
-                                    s=7, color="blue", alpha=1.0, zorder=3)
-            axes[2, col].set_xlabel(x_label)
-            axes[2, col].set_ylabel(y_label)
-            axes[2, col].set_xlim(global_x_min, global_x_max)
-            axes[2, col].set_ylim(global_y_min, global_y_max)
-
-        plt.tight_layout()
-        plt.show()
+    plt.tight_layout()
+    plt.show()
 
 
 def save_samples(samples, filename):

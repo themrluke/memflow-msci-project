@@ -248,8 +248,8 @@ class SamplingCallback(Callback):
             else:
                 hh = ax_main.hist2d(xvals, yvals, bins=[bins_x, bins_y])
 
-            ax_main.set_xlabel(label_x, fontsize=12)
-            ax_main.set_ylabel(label_y, fontsize=12)
+            ax_main.set_xlabel(label_x, fontsize=15)
+            ax_main.set_ylabel(label_y, fontsize=15)
 
             # Top marginal histogram
             ax_top.hist(xvals, bins=bins_x, color="mediumpurple", alpha=0.9)
@@ -528,13 +528,23 @@ class BiasCallback(Callback):
             # 1D plot #
             diff_max = abs(diff[...,j]).max()
             diff_bins = np.linspace(-diff_max,diff_max,self.bins)
-            axs[0,j].hist(
-                diff[...,j].ravel(),
-                bins = diff_bins,
-                histtype = 'step',
-                color = 'b',
+            axs[0, j].hist(
+                diff[..., j].ravel(),
+                bins=diff_bins,
+                color='red',
+                alpha=0.35,
+                edgecolor='none'  # Remove the default edges
             )
-            axs[0,j].set_xlabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$')
+            axs[0, j].hist(
+                diff[..., j].ravel(),
+                bins=diff_bins,
+                histtype='step',  # Step outline
+                color='grey',
+                linewidth=1.5
+            )
+
+            axs[0,j].set_xlabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$', fontsize=15)
+            axs[0,j].set_ylabel('Frequency', fontsize=15)
             if self.log_scale:
                 axs[0,j].set_yscale('log')
 
@@ -566,8 +576,8 @@ class BiasCallback(Callback):
                 bins = (scale_bins,scale_bins),
                 norm = matplotlib.colors.LogNorm() if self.log_scale else None,
             )
-            axs[1,j].set_xlabel(f'${feature_name}$ (true)')
-            axs[1,j].set_ylabel(f'${feature_name}$ (sampled)')
+            axs[1,j].set_xlabel(f'${feature_name}$ (true)', fontsize=15)
+            axs[1,j].set_ylabel(f'${feature_name}$ (sampled)', fontsize=15)
             plt.colorbar(h[3],ax=axs[1,j])
 
             # Bias plot #
@@ -639,11 +649,11 @@ class BiasCallback(Callback):
             cov_max = abs(coverages).max()
             axs[2,j].set_ylim(-cov_max,cov_max)
             axs[2,j].legend(loc='upper right',facecolor='white',framealpha=1)
-            axs[2,j].set_xlabel(f'${feature_name}$ (true)')
+            axs[2,j].set_xlabel(f'${feature_name}$ (true)', fontsize=15)
             if relative:
-                axs[2,j].set_ylabel(fr'$\frac{{{feature_name} \text{{ (sampled)}} - {feature_name}(true)}}{{{feature_name} \text{{ (true)}}}}$')
+                axs[2,j].set_ylabel(fr'$\frac{{{feature_name} \text{{ (sampled)}} - {feature_name}(true)}}{{{feature_name} \text{{ (true)}}}}$', fontsize=15)
             else:
-                axs[2,j].set_ylabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$')
+                axs[2,j].set_ylabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$', fontsize=15)
 
         return fig
 
