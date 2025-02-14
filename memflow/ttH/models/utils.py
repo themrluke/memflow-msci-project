@@ -514,8 +514,9 @@ def plot_trajectories_grid(
         vy = v_pred[:, 1].reshape(Nx, Ny)
 
         ax_mid = axes[1, col]
-        Q = ax_mid.quiver(gx, gy, vx, vy, pivot='mid', cmap='coolwarm', 
-                          scale=5, scale_units='xy', angles='xy', width=0.01)
+        mag = np.sqrt(vx**2 + vy**2)
+        Q = ax_mid.quiver(gx, gy, vx, vy, mag, pivot='mid', cmap='coolwarm', 
+                          scale=8, scale_units='xy', angles='xy', width=0.015)
         ax_mid.set_xlim(global_x_min, global_x_max)
         ax_mid.set_ylim(global_y_min, global_y_max)
         ax_mid.set_title(f"t = {t}: velocity")

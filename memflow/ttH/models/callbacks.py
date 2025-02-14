@@ -1,4 +1,5 @@
 # callbacks.py
+
 import os
 import math
 from tqdm import tqdm
@@ -251,17 +252,17 @@ class SamplingCallback(Callback):
             ax_main.set_ylabel(label_y, fontsize=12)
 
             # Top marginal histogram
-            ax_top.hist(xvals, bins=bins_x, color="mediumpurple", alpha=0.7)
+            ax_top.hist(xvals, bins=bins_x, color="mediumpurple", alpha=0.9)
             ax_top.axvline(realx, color='r', linestyle='dashed', linewidth=2)  # Add vertical red line
-            ax_top.set_yscale('log')
+            ax_top.set_yscale('log' if self.log_scale is True else 'linear')
 
             # Right marginal histogram
-            ax_right.hist(yvals, bins=bins_y, orientation="horizontal", color="mediumseagreen", alpha=0.7)
+            ax_right.hist(yvals, bins=bins_y, orientation="horizontal", color="mediumseagreen", alpha=0.9)
             ax_right.axhline(realy, color='r', linestyle='dashed', linewidth=2)
-            ax_right.set_xscale('log')
+            ax_right.set_xscale('log' if self.log_scale is True else 'linear')
 
             # Overplot real value
-            ax_main.scatter(realx, realy, c='r', marker='x', s=100, linewidths=2.5)
+            ax_main.scatter(realx, realy, c='r', marker='x', s=75, linewidths=2)
 
             # Add colorbar BELOW the main plot
             cbar_ax = fig.add_axes([ax_main.get_position().x0,   # Left align with main plot

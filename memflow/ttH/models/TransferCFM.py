@@ -624,8 +624,7 @@ class BaseCFM(L.LightningModule):
         return x + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
 
 
-    def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist,
-               N_sample=1, steps=10, store_trajectories=False):
+    def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10, store_trajectories=False):
         """
         Generate N_sample new saomples by evolving the bridging distribution using the learned velocity field.
 
@@ -658,7 +657,7 @@ class BaseCFM(L.LightningModule):
             x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
             B, sum_reco_tokens, len_flow_feats = x_real.shape
 
-            # Initialize the bridging distribution.
+            # Initialize the bridging distribution
             x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
             x_t = x0.clone()
 
