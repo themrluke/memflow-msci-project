@@ -189,10 +189,6 @@ def plot_trajectories_2d(
             sample_idx = 0 # Select the first sample for plotting
             traj = sub_traj_2d[sample_idx]  # shape [steps+1, B*n_type, 2]
 
-            # sub-sample if too large to ensure readability
-            if traj.shape[1] > max_points:
-                traj = traj[:, :max_points, :]
-
         else:
             # In inverse mode, perform the inverse transformation on the full feature set.
             full_traj = sub_traj[0]  # shape: [steps+1, num_events, n_type, len_flow_feats]
@@ -223,15 +219,15 @@ def plot_trajectories_2d(
             )
             # Now select the desired two features for plotting.
             traj = inv_data[..., [feat_idx_x, feat_idx_y]]
-            if traj.shape[1] > max_points:
-                traj = traj[:, :max_points, :]
 
     elif mode == "single_event":
         # Ensure event and object indices are within range.
+        # Ensure indices are in range.
         if event_idx >= B:
-            event_idx = B - 1
+            raise ValueError(f'Event index ({event_idx}) larger than batch_size ({B})')
         if object_idx >= n_type:
-            object_idx = 0
+            raise ValueError(f'Object index ({object_idx}) out of range {n_type})')
+
         # Slice out the chosen event and type.
         # This yields shape: [N_sample, steps+1, 1, n_type, len_flow_feats]
         sub_traj = all_traj[:, :, event_idx:event_idx+1, offset: offset+n_type, :]
@@ -248,6 +244,7 @@ def plot_trajectories_2d(
             inv_data = sub_traj.reshape(N_sample_local * T, F_full).unsqueeze(1)  # shape: [N_sample_local*T, 1, F_full]
             # If the full feature dimension doesn't match the expected number, use flow_indices to select the correct features.
             fields = model.reco_input_features_per_type[type_idx]
+            print('fields', fields)
             if hasattr(model, 'flow_indices'):
                 desired_num = len(model.flow_indices[type_idx])
                 if inv_data.shape[-1] != desired_num:
@@ -308,88 +305,76 @@ def plot_trajectories_2d(
     plt.show()
 
 
-def plot_trajectories_grid(all_traj: torch.Tensor, model, custom_timesteps, type_idx: int = 0,
-                           feat_idx_x: int = 0, feat_idx_y: int = 1, max_points: int = 2000,
-                           mode: str = "multiple_events", event_idx: int = 0, object_idx: int = 0,
-                           preprocessing=None, batch=None):
+def plot_trajectories_grid(
+        all_traj: torch.Tensor,
+        model,
+        custom_timesteps,
+        type_idx: int = 0,
+        feat_idx_x: int = 0,
+        feat_idx_y: int = 1,
+        max_points: int = 2000,
+        event_idx: int = 0,
+        object_idx: int = 0,
+        batch=None,
+        grid_size=20
+    ):
     """
-    Plots a grid of subplots showing, for each custom timestep:
-      - Top row: Density heatmap of points at that timestep.
-      - Middle row: Vector field computed from the differences (i.e. approximate velocities).
-      - Bottom row: Trajectories (full paths) for a small subset of particles, with the current
-        position at the custom timestep highlighted in red.
+    Plots a 3-row grid (per time t):
+      1) Top row: 2D density (hist2d) at that time step
+      2) Middle row: Velocity field (quiver) from compute_velocity(...) or velocity_net
+      3) Bottom row: Full trajectories, highlighting the current position
 
     Args:
-        all_traj: Tensor of shape (N_sample, steps+1, B, sum_reco, len_flow_feats)
-                  (typically from model.sample(..., store_trajectories=True))
-        model: The trained CFM model. Must have attributes:
-               - n_reco_particles_per_type (list of ints)
-               - flow_input_features (list of lists of feature names)
-               - reco_particle_type_names (list of strings)
-               - reco_input_features_per_type (list of lists of feature names)
-               Optionally:
-               - flow_indices (list of lists of indices)
-        custom_timesteps: list of timestep indices at which to plot (e.g. [10, 20, 30])
-        type_idx: Which reco particle type to visualize (e.g., 0 for jets, 1 for MET, etc.)
-        feat_idx_x, feat_idx_y: Which features (columns) to use for the x and y axes.
-        max_points: Maximum number of points (after flattening events and objects) to consider.
-        mode: Either "multiple_events" (default) or "single_event".
-        event_idx: For single_event mode, the event index to use.
-        object_idx: For single_event mode, the object index within the selected type.
-        preprocessing: (Optional) Preprocessing object with an inverse() method. If provided,
-                       the full feature set is inverse transformed before selecting the two features.
-
-    Note:
-        In "multiple_events" mode, the function flattens the event and particle dimensions.
-        In "single_event" mode, it selects a single event and object, then transposes the sample
-        and time dimensions so that the output shape becomes [steps+1, N_sample, len_flow_feats].
+        all_traj: shape (N_sample, steps+1, B, sum_reco, 2)
+                  The 2D trajectories for (x,y), typically from model.sample(..., store_trajectories=True).
+        model: A CFM model with .conditioning(...) and .velocity_net (or compute_velocity(...)).
+        custom_timesteps: List of integer time indices in [0..steps].
+        type_idx: Which reco type to look at (if you have multiple).
+        feat_idx_x, feat_idx_y: The indices in your 2D sub-trajectory corresponding to “x” and “y”.
+        max_points: Not used here but kept for consistency.
+        mode: "single_event" in this example (plot one event).
+        event_idx: Which event from the batch to plot.
+        object_idx: Which object within that type to plot.
+        preprocessing: If you want to inverse-transform the points for plotting in raw space. (Optional)
+        batch: The original dictionary: {"hard": {"data": [...], "mask": [...]}, "reco": {"data": [...], "mask": [...]}}.
+        grid_size: The resolution in each axis for the velocity quiver grid.
     """
+    device = model.device
+
+    # Data needed for the velocity vector field calculation
+    single_event_batch = {
+        "hard": {
+            "data": [d[event_idx : event_idx+1].to(device) for d in batch["hard"]["data"]],
+            "mask": [m[event_idx : event_idx+1].to(device) for m in batch["hard"]["mask"]],
+        },
+        "reco": {
+            "data": [d[event_idx : event_idx+1].to(device) for d in batch["reco"]["data"]],
+            "mask": [m[event_idx : event_idx+1].to(device) for m in batch["reco"]["mask"]],
+        }
+    }
+
     # Unpack the trajectory shape.
     N_sample, steps_plus_1, B, sum_reco, len_flow_feats = all_traj.shape
     # Determine offset and number of particles for the chosen type.
     offset = sum(model.n_reco_particles_per_type[:type_idx])
     n_type = model.n_reco_particles_per_type[type_idx]
 
-    if mode == "multiple_events":
-        # Use all events.
-        sub_traj = all_traj[:, :, :B, offset: offset+n_type, :]  # shape: [N_sample, steps+1, B, n_type, len_flow_feats]
-        # Use the first sample.
-        sample_traj = sub_traj[0]  # shape: [steps+1, B, n_type, len_flow_feats]
-        # Flatten the event and particle dimensions.
-        sample_traj = sample_traj.reshape(steps_plus_1, -1, len_flow_feats)  # shape: [steps+1, (B*n_type), len_flow_feats]
-    elif mode == "single_event":
-        # Ensure indices are in range.
-        if event_idx >= B:
-            event_idx = B - 1
-        if object_idx >= n_type:
-            object_idx = 0
-        # Select one event.
-        sub_traj = all_traj[:, :, event_idx:event_idx+1, offset: offset+n_type, :]  # shape: [N_sample, steps+1, 1, n_type, len_flow_feats]
-        # Select the desired object.
-        sample_traj = sub_traj[:, :, 0, object_idx, :]  # shape: [N_sample, steps+1, len_flow_feats]
-        # Transpose so that time is the first dimension.
-        sample_traj = sample_traj.transpose(0, 1)  # shape: [steps+1, N_sample, len_flow_feats]
-    else:
-        raise ValueError("Invalid mode. Choose 'multiple_events' or 'single_event'.")
+    # Ensure indices are in range.
+    if event_idx >= B:
+        raise ValueError(f'Event index ({event_idx}) larger than batch_size ({B})')
+    if object_idx >= n_type:
+        raise ValueError(f'Object index ({object_idx}) out of range {n_type})')
+    # Select one event.
+    sub_traj = all_traj[:, :, event_idx:event_idx+1, offset: offset+n_type, :]  # shape: [N_sample, steps+1, 1, n_type, len_flow_feats]
+    # Select the desired object.
+    sample_traj = sub_traj[:, :, 0, object_idx, :]  # shape: [N_sample, steps+1, len_flow_feats]
+    # Transpose so that time is the first dimension.
+    sample_traj = sample_traj.transpose(0, 1)  # shape: [steps+1, N_sample, len_flow_feats]
 
-    # Optionally, apply inverse preprocessing.
-    if preprocessing is not None:
-        fields = model.reco_input_features_per_type[type_idx]
-        if hasattr(model, 'flow_indices'):
-            desired_num = len(model.flow_indices[type_idx])
-            if sample_traj.shape[-1] != desired_num:
-                indices = model.flow_indices[type_idx]
-                indices_tensor = torch.tensor(indices, device=sample_traj.device)
-                sample_traj = sample_traj.index_select(dim=-1, index=indices_tensor)
-            flow_fields = [fields[idx] for idx in model.flow_indices[type_idx]]
-        else:
-            flow_fields = fields
-        inv_mask = torch.ones(sample_traj.shape[0], sample_traj.shape[1], device=sample_traj.device)
-        name = model.reco_particle_type_names[type_idx]
-        sample_traj, _ = preprocessing.inverse(name=name, x=sample_traj, mask=inv_mask, fields=flow_fields)
     # Now select only the two features.
     traj = sample_traj[..., [feat_idx_x, feat_idx_y]]  # shape: [steps+1, num_points, 2]
     if traj.shape[1] > max_points:
+        print(f'Selecting {max_points} out of {traj.shape[1]} to plot.')
         traj = traj[:, :max_points, :]
 
     # Compute global x/y limits from the trajectory (use all points)
@@ -418,6 +403,21 @@ def plot_trajectories_grid(all_traj: torch.Tensor, model, custom_timesteps, type
     y_label = feature_names.get(y_label, y_label)
     particle_name = model.reco_particle_type_names[type_idx] # Select particle name
 
+    # Get Transformer context for the single event for the velocity vector field
+    with torch.no_grad():
+        cond_out = model.conditioning(
+            single_event_batch["hard"]["data"], single_event_batch["hard"]["mask"],
+            single_event_batch["reco"]["data"], single_event_batch["reco"]["mask"],
+        )
+        # cond_out shape: [1, sum_reco+1, embed_dim]
+        # Remove the null token => [1, sum_reco, embed_dim]
+        context_full = cond_out[:, 1:, :]
+
+    # If you want velocity specifically for the single object_idx in this type:
+    # pick out that slice from context_full.  shape => [1, embed_dim]
+    offset_obj = offset + object_idx
+    obj_context = context_full[:, offset_obj : offset_obj+1, :]  # => [1, 1, embed_dim]
+
     # Loop over custom timesteps (each column)
     for col, t in enumerate(custom_timesteps):
         # Ensure the timestep index is an integer.
@@ -439,98 +439,64 @@ def plot_trajectories_grid(all_traj: torch.Tensor, model, custom_timesteps, type
         axes[0, col].set_xlim(global_x_min, global_x_max)
         axes[0, col].set_ylim(global_y_min, global_y_max)
 
-
-
         # --- Middle row: Vector field ---
-        device = next(model.parameters()).device
-        x_obj = sample_traj[t, 0, :].clone().to(device)  # shape: [len_flow_feats]
+        Nx = grid_size
+        Ny = grid_size
+        xs = np.linspace(global_x_min, global_x_max, Nx)
+        ys = np.linspace(global_y_min, global_y_max, Ny)
+        gx, gy = np.meshgrid(xs, ys, indexing="ij")  # shape [Nx, Ny]
 
-        grid_resolution = 20  # adjust resolution as needed
-        grid_bounds = (global_x_min, global_x_max, global_y_min, global_y_max)
+        # Flatten => shape [Nx*Ny, 2]
+        points_2d = torch.from_numpy(
+            np.stack([gx.ravel(), gy.ravel()], axis=-1)
+        ).float().to(device)
 
-        x_lin = torch.linspace(grid_bounds[0], grid_bounds[1], grid_resolution, device=device)
-        y_lin = torch.linspace(grid_bounds[2], grid_bounds[3], grid_resolution, device=device)
-        grid_X, grid_Y = torch.meshgrid(x_lin, y_lin, indexing='ij')
+        # Convert t_ind to a normalized time t in [0, 1], if your bridging does that:
+        t_val = t / (steps_plus_1 - 1)  # e.g. steps=20 => T=21 => t goes from 0..1
+        t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
 
-        # Total number of grid points
-        n_grid = grid_X.numel()  # grid_resolution**2
+        # -----------------------------------------------------
+        # If your velocity_net expects (embed_dim + 4 + 1) inputs,
+        #   i.e. you have 4 flow features [pt, eta, sinφ, cosφ].
+        #   But here you want to interpret "x=pt, y=eta", then
+        #   sinφ=0, cosφ=1 as a dummy. Adjust as needed if your
+        #   feats differ or if you want actual φ from somewhere!
+        # -----------------------------------------------------
+        # points_2d is [pt, eta], so let's add sinφ=0, cosφ=1
+        # shape => [N_points, 4]
+        sin_phi = torch.zeros_like(points_2d[:, 0])
+        cos_phi = torch.ones_like(points_2d[:, 0])
+        points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
+        # => [N_points, 4]
 
-        # For the chosen type, compute its effective dimension (e.g. phi is 2 channels)
-        effective_dim = sum(2 if feat == "phi" else 1 for feat in model.flow_input_features[type_idx])
+        # Replicate the single-object context => shape [N_points, embed_dim]
+        cflat = obj_context.reshape(1, -1)  # [1, embed_dim]
+        c_rep = cflat.repeat(points_4d.shape[0], 1)  # => [N_points, embed_dim]
 
-        # Build a tensor for the grid points with shape [1, n_grid, effective_dim]
-        # We fill only the positions corresponding to the plotting features (feat_idx_x and feat_idx_y)
-        # grid_points_effective = torch.zeros((1, n_grid, effective_dim), device=device)
-        grid_points_effective = x_obj.unsqueeze(0).unsqueeze(0).expand(1, n_grid, -1).clone()  # [1, n_grid, len_flow_feats]
-        grid_points_effective[0, :, feat_idx_x] = grid_X.flatten()
-        grid_points_effective[0, :, feat_idx_y] = grid_Y.flatten()
+        # Concatenate => shape [N_points, embed_dim + 4 + 1] = e.g. [N_points, 69]
+        net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
 
-        # # The velocity network expects an input of size [B, n, model.len_flow_feats]
-        # # If effective_dim is less than model.len_flow_feats, pad with zeros
-        # if effective_dim < model.len_flow_feats:
-        #     pad_size = model.len_flow_feats - effective_dim
-        #     pad = torch.zeros((1, n_grid, pad_size), device=device)
-        #     grid_points_full = torch.cat([grid_points_effective, pad], dim=-1)
-        # else:
-        #     grid_points_full = grid_points_effective
-        grid_points_full = grid_points_effective
-        # Obtain a context from a single event if a batch is provided.
-        if batch is not None:
-            # Select the single event (in single_event mode)
-            hard_data = [hd[event_idx:event_idx+1] for hd in batch["hard"]["data"]]
-            hard_mask = [hm[event_idx:event_idx+1] for hm in batch["hard"]["mask"]]
-            reco_data = [rd[event_idx:event_idx+1] for rd in batch["reco"]["data"]]
-            reco_mask = [rm[event_idx:event_idx+1] for rm in batch["reco"]["mask"]]
-            cond = model.conditioning(hard_data, hard_mask, reco_data, reco_mask)
-            context_full = cond[:, 1:, :]  # remove the null token → shape: [1, sum_reco, embed_dim]
-            # Average over the reco tokens to get a single global context vector.
-            context_global = context_full.mean(dim=1, keepdim=True)  # [1, 1, embed_dim]
-        else:
-            context_global = torch.zeros((1, 1, model.embed_dim), device=device)
+        # Call velocity_net
+        with torch.no_grad():
+            # Suppose the output is shape [N_points, 4] => d(pt)/dt, d(eta)/dt, d(sinφ)/dt, d(cosφ)/dt
+            v_pred_4 = model.velocity_net(net_in)
 
-        # Expand the global context to all grid points: shape becomes [1, n_grid, embed_dim]
-        context_grid = context_global.expand(1, n_grid, model.embed_dim)
+        # For a 2D quiver, let's just take the first 2 components => d(pt)/dt, d(eta)/dt
+        v_pred = v_pred_4[:, [0, 1]].cpu().numpy()  # shape [N_points, 2]
 
-        # Compute the time value corresponding to the current timestep.
-        t_val = t / (steps_plus_1 - 1)
-        t_tensor = torch.tensor([t_val], device=device)
+        # Reshape for quiver => Nx, Ny
+        vx = v_pred[:, 0].reshape(Nx, Ny)
+        vy = v_pred[:, 1].reshape(Nx, Ny)
 
-        # Compute the velocity prediction at each grid point.
-        # The network expects x_t with shape [B, n_grid, model.len_flow_feats]
-        v_pred = model.compute_velocity(context_grid, grid_points_full, t_tensor)  # shape: [1, n_grid, model.len_flow_feats]
-
-        # Select the two components for plotting.
-        # (We assume feat_idx_x and feat_idx_y correspond to the desired velocity components.)
-        v_pred_x = v_pred[0, :, feat_idx_x].reshape(grid_resolution, grid_resolution)
-        v_pred_y = v_pred[0, :, feat_idx_y].reshape(grid_resolution, grid_resolution)
-
-        # Compute the magnitude for color mapping.
-        magnitude = torch.sqrt(v_pred[0, :, 0]**2 + v_pred[0, :, 1]**2).reshape(grid_resolution, grid_resolution)
-        magnitude_np = magnitude.cpu().detach().numpy()
-
-        # Convert grid_X and grid_Y to numpy for plotting.
-        grid_X_np = grid_X.cpu().numpy()
-        grid_Y_np = grid_Y.cpu().numpy()
-
-        Q = axes[1, col].quiver(
-            grid_X_np, grid_Y_np,
-            v_pred_x.cpu().detach().numpy(), v_pred_y.cpu().detach().numpy(),
-            magnitude_np,  # Use velocity magnitude to determine color.
-            cmap='coolwarm',  # "coolwarm" goes from blue (low) to red (high).
-            scale=5, # Bigger to shrink
-            scale_units='xy',
-            angles='xy',
-            width=0.01
-        )
-        #plt.colorbar(Q, ax=axes[1, col], label="Velocity Magnitude")
-        axes[1, col].set_title(f"Velocity Field at t = {t_val:.2f}")
-        axes[1, col].set_xlabel(x_label)
-        axes[1, col].set_ylabel(y_label)
-        axes[1, col].set_xlim(grid_bounds[0], grid_bounds[1])
-        axes[1, col].set_ylim(grid_bounds[2], grid_bounds[3])
-
-
-
+        ax_mid = axes[1, col]
+        Q = ax_mid.quiver(gx, gy, vx, vy, pivot='mid', cmap='coolwarm', 
+                          scale=5, scale_units='xy', angles='xy', width=0.01)
+        ax_mid.set_xlim(global_x_min, global_x_max)
+        ax_mid.set_ylim(global_y_min, global_y_max)
+        ax_mid.set_title(f"t = {t}: velocity")
+        ax_mid.set_xlabel("X")
+        ax_mid.set_ylabel("Y")
+        fig.colorbar(Q, ax=ax_mid, label="|velocity|")
 
         # --- Bottom row: Trajectories ---
         num_traj = traj.shape[1]
@@ -538,9 +504,7 @@ def plot_trajectories_grid(all_traj: torch.Tensor, model, custom_timesteps, type
         for i in idx:
             axes[2, col].scatter(traj[0, i, 0].cpu().numpy(), traj[0, i, 1].cpu().numpy(),
                                 s=7, color="black", alpha=0.8, zorder=1)
-            # axes[2, col].plot(traj[:t+1, i, 0].cpu().numpy(), traj[:t+1, i, 1].cpu().numpy(),
-            #                   color="olive", alpha=0.5, linewidth=0.8, zorder=2)
-            axes[2, col].plot(traj[:, i, 0].cpu().numpy(), traj[:, i, 1].cpu().numpy(),
+            axes[2, col].plot(traj[:t+1, i, 0].cpu().numpy(), traj[:t+1, i, 1].cpu().numpy(),
                               color="olive", alpha=0.5, linewidth=0.8, zorder=2)
             axes[2, col].scatter(traj[t, i, 0].cpu().numpy(), traj[t, i, 1].cpu().numpy(),
                                 s=7, color="blue", alpha=1.0, zorder=3)
