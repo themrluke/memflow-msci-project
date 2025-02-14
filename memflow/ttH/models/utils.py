@@ -1,5 +1,6 @@
 # utils.py
 
+import matplotlib
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
 import numpy as np
@@ -233,7 +234,7 @@ def plot_trajectories_2d(
         if event_idx >= B:
             raise ValueError(f'Event index ({event_idx}) larger than batch_size ({B})')
         if object_idx >= n_type:
-            raise ValueError(f'Object index ({object_idx}) out of range {n_type})')
+            raise ValueError(f'Object index {object_idx} out of range {n_type}')
 
         # Slice out the chosen event and type.
         # This yields shape: [N_sample, steps+1, 1, n_type, len_flow_feats]
@@ -415,9 +416,9 @@ def plot_trajectories_grid(
         axes = axes[:, None]
 
     feature_names = {
-        "pt": r"$p_T$ [GeV]",
+        "pt": r"$p_T$",
         "eta": r"$\eta$",
-        "phi": r"$\phi$ [rad]"
+        "phi": r"$\phi$"
     }
     # Extract feature names for the axis labels
     chosen_features = model.flow_input_features[type_idx]
@@ -476,71 +477,102 @@ def plot_trajectories_grid(
             np.stack([gx.ravel(), gy.ravel()], axis=-1)
         ).float().to(device)
 
-        # Convert t_ind to a normalized time t in [0, 1], if your bridging does that:
-        t_val = t / (steps_plus_1 - 1)  # e.g. steps=20 => T=21 => t goes from 0..1
-        t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
+        # Precompute global vector field magnitudes for all timesteps
+        all_mags = []
+        for t in custom_timesteps:
+            t = int(round(t))
+            if t < 0 or t >= steps_plus_1:
+                continue
+            t_val = t / (steps_plus_1 - 1)
+            t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
 
-        # -----------------------------------------------------
-        # If your velocity_net expects (embed_dim + 4 + 1) inputs,
-        #   i.e. you have 4 flow features [pt, eta, sinφ, cosφ].
-        #   But here you want to interpret "x=pt, y=eta", then
-        #   sinφ=0, cosφ=1 as a dummy. Adjust as needed if your
-        #   feats differ or if you want actual φ from somewhere!
-        # -----------------------------------------------------
-        # points_2d is [pt, eta], so let's add sinφ=0, cosφ=1
-        # shape => [N_points, 4]
-        sin_phi = torch.zeros_like(points_2d[:, 0])
-        cos_phi = torch.ones_like(points_2d[:, 0])
-        points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
-        # => [N_points, 4]
+            # Prepare 4D points (assume sinφ=0, cosφ=1)
+            sin_phi = torch.zeros_like(points_2d[:, 0])
+            cos_phi = torch.ones_like(points_2d[:, 0])
+            points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
 
-        # Replicate the single-object context => shape [N_points, embed_dim]
-        cflat = obj_context.reshape(1, -1)  # [1, embed_dim]
-        c_rep = cflat.repeat(points_4d.shape[0], 1)  # => [N_points, embed_dim]
+            # Replicate context and build network input
+            cflat = obj_context.reshape(1, -1)  # obj_context from your code above
+            c_rep = cflat.repeat(points_2d.shape[0], 1)
+            net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
 
-        # Concatenate => shape [N_points, embed_dim + 4 + 1] = e.g. [N_points, 69]
-        net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
+            with torch.no_grad():
+                v_pred_4 = model.velocity_net(net_in)
+            v_pred = v_pred_4[:, [0, 1]].cpu().numpy()  # shape: [N_points, 2]
+            mag = np.sqrt(v_pred[:, 0]**2 + v_pred[:, 1]**2)
+            all_mags.append(mag)
 
-        # Call velocity_net
-        with torch.no_grad():
-            # Suppose the output is shape [N_points, 4] => d(pt)/dt, d(eta)/dt, d(sinφ)/dt, d(cosφ)/dt
-            v_pred_4 = model.velocity_net(net_in)
+        global_max = np.max([m.max() for m in all_mags])
+        global_min = np.min([m.min() for m in all_mags])
+        # Create a shared normalization object
+        shared_norm = matplotlib.colors.Normalize(vmin=global_min, vmax=global_max)
 
-        # For a 2D quiver, let's just take the first 2 components => d(pt)/dt, d(eta)/dt
-        v_pred = v_pred_4[:, [0, 1]].cpu().numpy()  # shape [N_points, 2]
+        # Now loop over custom timesteps for plotting
+        for col, t in enumerate(custom_timesteps):
+            t = int(round(t))
+            if t < 0 or t >= steps_plus_1:
+                print(f"Skipping timestep {t} (out of range)")
+                continue
 
-        # Reshape for quiver => Nx, Ny
-        vx = v_pred[:, 0].reshape(Nx, Ny)
-        vy = v_pred[:, 1].reshape(Nx, Ny)
+            # --- Top row: Density heatmap (same as before) ---
+            points = traj[t].cpu().numpy()
+            axes[0, col].hist2d(points[:, 0], points[:, 1],
+                                bins=50,
+                                density=True,
+                                cmap="viridis",
+                                range=[[global_x_min, global_x_max], [global_y_min, global_y_max]])
+            axes[0, col].set_title(f"T = {t}")
+            axes[0, col].set_xlabel(x_label)
+            axes[0, col].set_ylabel(y_label)
+            axes[0, col].set_xlim(global_x_min, global_x_max)
+            axes[0, col].set_ylim(global_y_min, global_y_max)
 
-        ax_mid = axes[1, col]
-        mag = np.sqrt(vx**2 + vy**2)
-        Q = ax_mid.quiver(gx, gy, vx, vy, mag, pivot='mid', cmap='coolwarm', 
-                          scale=8, scale_units='xy', angles='xy', width=0.015)
-        ax_mid.set_xlim(global_x_min, global_x_max)
-        ax_mid.set_ylim(global_y_min, global_y_max)
-        ax_mid.set_title(f"t = {t}: velocity")
-        ax_mid.set_xlabel("X")
-        ax_mid.set_ylabel("Y")
-        fig.colorbar(Q, ax=ax_mid, label="|velocity|")
+            # --- Middle row: Vector field ---
+            # (Reuse the grid we already computed: points_2d)
+            t_val = t / (steps_plus_1 - 1)
+            t_tensor = torch.full((points_2d.shape[0], 1), t_val, device=device)
+            sin_phi = torch.zeros_like(points_2d[:, 0])
+            cos_phi = torch.ones_like(points_2d[:, 0])
+            points_4d = torch.cat([points_2d, sin_phi.unsqueeze(1), cos_phi.unsqueeze(1)], dim=1)
+            cflat = obj_context.reshape(1, -1)
+            c_rep = cflat.repeat(points_2d.shape[0], 1)
+            net_in = torch.cat([c_rep, points_4d, t_tensor], dim=1)
 
-        # --- Bottom row: Trajectories ---
-        num_traj = traj.shape[1]
-        idx = np.random.choice(num_traj, size=min(10000, num_traj), replace=False) # How many trajectories to plot
-        for i in idx:
-            axes[2, col].scatter(traj[0, i, 0].cpu().numpy(), traj[0, i, 1].cpu().numpy(),
-                                s=7, color="black", alpha=0.8, zorder=1)
-            axes[2, col].plot(traj[:t+1, i, 0].cpu().numpy(), traj[:t+1, i, 1].cpu().numpy(),
-                              color="olive", alpha=0.5, linewidth=0.8, zorder=2)
-            axes[2, col].scatter(traj[t, i, 0].cpu().numpy(), traj[t, i, 1].cpu().numpy(),
-                                s=7, color="blue", alpha=1.0, zorder=3)
-        axes[2, col].set_xlabel(x_label)
-        axes[2, col].set_ylabel(y_label)
-        axes[2, col].set_xlim(global_x_min, global_x_max)
-        axes[2, col].set_ylim(global_y_min, global_y_max)
+            with torch.no_grad():
+                v_pred_4 = model.velocity_net(net_in)
+            v_pred = v_pred_4[:, [0, 1]].cpu().numpy()
+            vx = v_pred[:, 0].reshape(Nx, Ny)
+            vy = v_pred[:, 1].reshape(Nx, Ny)
+            mag = np.sqrt(vx**2 + vy**2)
 
-    plt.tight_layout()
-    plt.show()
+            ax_mid = axes[1, col]
+            # Pass shared_norm to quiver for consistent coloring
+            Q = ax_mid.quiver(gx, gy, vx, vy, mag, pivot='mid', cmap='coolwarm', 
+                            scale=8, scale_units='xy', angles='xy', width=0.015, norm=shared_norm)
+            ax_mid.set_xlim(global_x_min, global_x_max)
+            ax_mid.set_ylim(global_y_min, global_y_max)
+            ax_mid.set_xlabel(x_label)
+            ax_mid.set_ylabel(y_label)
+            # Use the shared norm for the colorbar
+            fig.colorbar(Q, ax=ax_mid, label="|velocity|", norm=shared_norm)
+
+            # --- Bottom row: Trajectories (same as before) ---
+            num_traj = traj.shape[1]
+            idx = np.random.choice(num_traj, size=min(10000, num_traj), replace=False)
+            for i in idx:
+                axes[2, col].scatter(traj[0, i, 0].cpu().numpy(), traj[0, i, 1].cpu().numpy(),
+                                    s=7, color="black", alpha=0.8, zorder=1)
+                axes[2, col].plot(traj[:t+1, i, 0].cpu().numpy(), traj[:t+1, i, 1].cpu().numpy(),
+                                color="olive", alpha=0.5, linewidth=0.8, zorder=2)
+                axes[2, col].scatter(traj[t, i, 0].cpu().numpy(), traj[t, i, 1].cpu().numpy(),
+                                    s=7, color="blue", alpha=1.0, zorder=3)
+            axes[2, col].set_xlabel(x_label)
+            axes[2, col].set_ylabel(y_label)
+            axes[2, col].set_xlim(global_x_min, global_x_max)
+            axes[2, col].set_ylim(global_y_min, global_y_max)
+
+        plt.tight_layout()
+        plt.show()
 
 
 def save_samples(samples, filename):
