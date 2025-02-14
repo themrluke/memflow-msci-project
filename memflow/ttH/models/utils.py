@@ -137,7 +137,8 @@ def plot_trajectories_2d(
         mode: str = "multiple_events",
         event_idx: int = 0,
         object_idx: int = 0,
-        preprocessing = None
+        preprocessing = None,
+        batch=None
 ):
     """
     2D scatter from x0->x1 for the chosen type and features.
@@ -162,6 +163,7 @@ def plot_trajectories_2d(
         object_idx: For single_event mode, the object (within the selected type) to plot.
         preprocessing: the preprocessing object to use for the inverse transformation.
     """
+    device = model.device
     # N_sample = Number of independent samples generated
     # steps_plus_1 = Number of timesteps along trajectory
     # B = Batch size (number of events)
@@ -201,14 +203,14 @@ def plot_trajectories_2d(
                 desired_num = len(model.flow_indices[type_idx])
                 if full_traj.shape[-1] != desired_num:
                     indices = model.flow_indices[type_idx]
-                    indices_tensor = torch.tensor(indices, device=full_traj.device)
+                    indices_tensor = torch.tensor(indices, device=device)
                     full_traj = full_traj.index_select(dim=-1, index=indices_tensor)
                 flow_fields = [fields[idx] for idx in model.flow_indices[type_idx]]
             else:
                 flow_fields = fields
 
             # Create a mask of ones.
-            inv_mask = torch.ones(full_traj.shape[0], full_traj.shape[1], device=full_traj.device)
+            inv_mask = torch.ones(full_traj.shape[0], full_traj.shape[1], device=device)
             name = model.reco_particle_type_names[type_idx]
             # Apply inverse preprocessing on the full feature set.
             inv_data, _ = preprocessing.inverse(
@@ -221,6 +223,11 @@ def plot_trajectories_2d(
             traj = inv_data[..., [feat_idx_x, feat_idx_y]]
 
     elif mode == "single_event":
+        reco_data = [d.to(device) for d in batch['reco']['data']]
+        reco_mask_exist = [m.to(device) for m in batch['reco']['mask']]
+        reco_data = [r.cpu() for r in reco_data]
+        reco_mask_exist = [m.cpu() for m in reco_mask_exist]
+
         # Ensure event and object indices are within range.
         # Ensure indices are in range.
         if event_idx >= B:
@@ -239,31 +246,49 @@ def plot_trajectories_2d(
             # Select the two features.
             traj = sub_traj[..., [feat_idx_x, feat_idx_y]]  # shape: [N_sample, steps+1, 2]
 
-        else:
-            N_sample_local, T, F_full = sub_traj.shape
-            inv_data = sub_traj.reshape(N_sample_local * T, F_full).unsqueeze(1)  # shape: [N_sample_local*T, 1, F_full]
-            # If the full feature dimension doesn't match the expected number, use flow_indices to select the correct features.
-            fields = model.reco_input_features_per_type[type_idx]
-            print('fields', fields)
+        else:  # Apply inverse preprocessing
+             # Save a copy of the raw generated samples (after any flow-index reordering) so we can use
+            # non-inversed phi values if needed.
+            raw_traj = sub_traj.clone()
+
+            name = model.reco_particle_type_names[type_idx]
+            fields = list(model.reco_input_features_per_type[type_idx])
             if hasattr(model, 'flow_indices'):
-                desired_num = len(model.flow_indices[type_idx])
-                if inv_data.shape[-1] != desired_num:
-                    indices = model.flow_indices[type_idx]
-                    indices_tensor = torch.tensor(indices, device=inv_data.device)
-                    inv_data = inv_data.index_select(dim=-1, index=indices_tensor)
                 flow_fields = [fields[idx] for idx in model.flow_indices[type_idx]]
+                indices_tensor = torch.tensor(model.flow_indices[type_idx], device=sub_traj.device)
+                sub_traj = sub_traj.index_select(dim=-1, index=indices_tensor)
+                raw_traj = raw_traj.index_select(dim=-1, index=indices_tensor)
             else:
                 flow_fields = fields
-            inv_mask = torch.ones(inv_data.shape[0], 1, device=sub_traj.device)
-            name = model.reco_particle_type_names[type_idx]
-            inv_data, _ = preprocessing.inverse(
-                name=name,
-                x=inv_data,
-                mask=inv_mask,
-                fields=flow_fields
-            )
-            inv_data = inv_data.squeeze(1).reshape(N_sample_local, T, -1)
-            traj = inv_data[..., [feat_idx_x, feat_idx_y]]
+                indices_tensor = None
+
+            # Inverse preprocessing for generated samples.
+            if preprocessing is None:
+                # If no preprocessing is provided, simply select the two features.
+                traj = sub_traj[..., [feat_idx_x, feat_idx_y]]
+            else:
+                N_sample_local, T, F_sel = sub_traj.shape
+                reshaped = sub_traj.reshape(N_sample_local * T, 1, F_sel)  # shape: [N_sample_local*T, 1, F_sel]
+                inv_mask = torch.ones(reshaped.shape[0], 1, device=sub_traj.device)
+                inv_data, _ = preprocessing.inverse(
+                    name=name,
+                    x=reshaped,
+                    mask=inv_mask,
+                    fields=flow_fields
+                )
+                inv_data = inv_data.squeeze(1).reshape(N_sample_local, T, -1)
+                # Start with the inverse-transformed data.
+                traj = inv_data.clone()
+                chosen_features = model.flow_input_features[type_idx]
+                # If the x-axis feature is phi, override it with the raw value.
+                if chosen_features[feat_idx_x] == "phi":
+                    traj[..., feat_idx_x] = raw_traj[..., feat_idx_x]
+                # Similarly, if the y-axis feature is phi, override it.
+                if chosen_features[feat_idx_y] == "phi":
+                    traj[..., feat_idx_y] = raw_traj[..., feat_idx_y]
+                # Finally, select only the two features.
+                traj = traj[..., [feat_idx_x, feat_idx_y]]
+
 
     else:
         raise ValueError("Invalid mode. Choose 'multiple_events' or 'single_event'.")

@@ -402,7 +402,6 @@ class BaseCFM(L.LightningModule):
         ], dim=1)  # [B*sum_reco, embed_dim + len_flow_feats + 1]
 
         # Obtain predicted velocities
-        print(f"net_in.shape: {net_in.shape}")
         v_pred = self.velocity_net(net_in).reshape(B, sum_reco_tokens, self.len_flow_feats)  # [B, sum_reco, len_flow_feats]
 
         return v_pred
@@ -626,8 +625,7 @@ class BaseCFM(L.LightningModule):
 
 
     def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist,
-               N_sample=1, steps=10, store_trajectories=False,
-               grid_mode=False, grid_bounds=None, custom_t=0, feat_idxs=()):
+               N_sample=1, steps=10, store_trajectories=False):
         """
         Generate N_sample new saomples by evolving the bridging distribution using the learned velocity field.
 
@@ -661,50 +659,22 @@ class BaseCFM(L.LightningModule):
             B, sum_reco_tokens, len_flow_feats = x_real.shape
 
             # Initialize the bridging distribution.
-            if grid_mode:
-                if grid_bounds is None:
-                    raise ValueError("When grid_mode is True, grid_bounds must be provided.")
-                min_x, max_x, min_y, max_y = grid_bounds
-                # Determine grid dimensions (assume square grid for simplicity)
-                grid_size = int(math.sqrt(N_sample))
-                if grid_size ** 2 != N_sample:
-                    raise ValueError("N_sample should be a perfect square when using grid_mode.")
-
-                # Create a meshgrid and flatten it so that we have N_sample grid points of shape [2]
-                grid_x, grid_y = torch.meshgrid(torch.linspace(min_x, max_x, grid_size), torch.linspace(min_y, max_y, grid_size), indexing='ij')
-                grid_points = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1)  # Shape: [N_sample, 2]
-                grid_point = grid_points[s]  # Shape: [2]
-
-                # Expand the grid point to match the dimensions of x_real: [B, sum_reco, len_flow_feats]
-                x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
-                feat_idx_x, feat_idx_y = feat_idxs
-                x0[..., feat_idx_x] = grid_point[0]
-                x0[..., feat_idx_y] = grid_point[1]
-                x0 = x0.to(x_real.device)
-
-                dt = 1.0 / steps
-                t = torch.full((B,), float(custom_t), device=x0.device)
-                x_t = self.bridging_distribution(x0, x_real, t)  # [B, sum_reco, len_flow_feats]
-
-            else:
-                # Initialize the bridging distribution
-                x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
-                x_t = x0.clone()
+            x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
+            x_t = x0.clone()
 
             # (optional) store states at each step if we want trajectories
             if store_trajectories:
                 traj_states = [x_t.detach().cpu().clone()]
 
-            if not grid_mode:
-                # RK4 ODE solver
-                dt = 1.0 / steps
-                for step_i in range(steps):
-                    t_value = step_i * dt
-                    t_ = torch.full((B,), t_value, device=x_t.device)
-                    x_t = self.rk4_step(context, x_t, t_, dt)
-                    if store_trajectories:
-                        # record partial features for plotting
-                        traj_states.append(x_t.detach().cpu().clone())
+            # RK4 ODE solver
+            dt = 1.0 / steps
+            for step_i in range(steps):
+                t_value = step_i * dt
+                t_ = torch.full((B,), t_value, device=x_t.device)
+                x_t = self.rk4_step(context, x_t, t_, dt)
+                if store_trajectories:
+                    # record partial features for plotting
+                    traj_states.append(x_t.detach().cpu().clone())
 
            # If storing, stack the states: shape [steps+1, B, sum_reco, 2]
             if store_trajectories:
