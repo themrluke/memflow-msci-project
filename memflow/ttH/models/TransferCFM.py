@@ -811,18 +811,26 @@ class SchrodingerBridgeCFM(BaseCFM):
     def get_bridging_pair(self, x0, x1):
         # Do OT re-pairing:
         paired_x0, paired_x1 = self.ot_sampler.sample_plan(x0, x1)
-
         return paired_x0, paired_x1
 
+    def velocity_target(self, x0: torch.Tensor, x1: torch.Tensor, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        t = pad_t_like_x(t, x0)
+        # Compute the derivative of the deterministic part.
+        v_det = x1 - x0
+        # Compute the derivative of the noise term.
+        # Adding a small epsilon for stability.
+        denom = 2 * torch.sqrt(t * (1.0 - t) + 1e-6)
+        v_noise = self.sigma * self.last_eps * (1.0 - 2.0 * t) / denom
+        v_true = v_det + v_noise
+        return v_true
 
     def bridging_distribution(self, x0: torch.Tensor, x1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 
         t = pad_t_like_x(t, x0)
-        eps = torch.randn_like(x0)
+        self.last_eps = torch.randn_like(x0)
         mu_t = (1.0 - t) * x0 + t * x1
         sigma_t = torch.sqrt(t * (1.0 - t)) * self.sigma
-        x_t = mu_t + sigma_t * eps
-
+        x_t = mu_t + sigma_t * self.last_eps
         return x_t
 
 

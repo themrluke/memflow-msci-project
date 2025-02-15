@@ -211,7 +211,7 @@ class SamplingCallback(Callback):
 
         num_pairs = len(pairs)
 
-        fig = plt.figure(figsize=(6 * num_pairs, 5))
+        fig = plt.figure(figsize=(6 * num_pairs, 5), dpi=300)
         fig.suptitle(title)
         gs_row = fig.add_gridspec(1, num_pairs, wspace=0.3)
 
