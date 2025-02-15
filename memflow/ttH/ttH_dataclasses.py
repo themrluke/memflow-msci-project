@@ -172,99 +172,44 @@ class ttHHardDataset(ttHBase, HardDataset):
             'higgs', # This name to be later used in the registration step
             # The below names match the branch keys in self.data
             {
-                'pt'  : [
-                    'higgs_pt',
-                ],
-                'eta'  : [
-                    'higgs_eta',
-                ],
-                'phi'  : [
-                    'higgs_phi',
-                ],
-                'mass'  : [
-                    'higgs_mass',
-                ],
-                'pdgId'  : [
-                    'higgs_pdgId',
-                ],
+                'pt' : ['higgs_pt'],
+                'eta' : ['higgs_eta'],
+                'phi' : ['higgs_phi'],
+                'mass' : ['higgs_mass'],
+                'pdgId' : ['higgs_pdgId'],
             },
         )
 
         tops = self.data.make_particles(
             'tops',
             {
-                'pt'  : [
-                    'top_pt',
-                    'antitop_pt',
-                ],
-                'eta'  : [
-                    'top_eta',
-                    'antitop_eta',
-                ],
-                'phi'  : [
-                    'top_phi',
-                    'antitop_phi',
-                ],
-                'mass'  : [
-                    'top_mass',
-                    'antitop_mass',
-                ],
-                'pdgId'  : [
-                    'top_pdgId',
-                    'antitop_pdgId',
-                ],
+                'pt' : ['top_pt','antitop_pt'],
+                'eta' : ['top_eta','antitop_eta'],
+                'phi' : ['top_phi','antitop_phi'],
+                'mass' : ['top_mass','antitop_mass'],
+                'pdgId' : ['top_pdgId','antitop_pdgId'],
             },
         )
 
         bottoms = self.data.make_particles(
             'bottoms',
             {
-                'pt'  : [
-                    'bottom_pt',
-                    'antibottom_pt',
-                ],
-                'eta'  : [
-                    'bottom_eta',
-                    'antibottom_eta',
-                ],
-                'phi'  : [
-                    'bottom_phi',
-                    'antibottom_phi',
-                ],
-                'mass'  : [
-                    'bottom_mass',
-                    'antibottom_mass',
-                ],
-                'pdgId'  : [
-                    'bottom_pdgId',
-                    'antibottom_pdgId',
-                ],
+                'pt' : ['bottom_pt','antibottom_pt'],
+                'eta' : ['bottom_eta','antibottom_eta'],
+                'phi' : ['bottom_phi','antibottom_phi'],
+                'mass' : ['bottom_mass','antibottom_mass'],
+                'pdgId' : ['bottom_pdgId','antibottom_pdgId'],
             },
         )
 
         Ws = self.data.make_particles(
             'Ws',
             {
-                'pt'  : [
-                    'W_plus_from_top_pt',
-                    'W_minus_from_antitop_pt',
-                ],
-                'eta'  : [
-                    'W_plus_from_top_eta',
-                    'W_minus_from_antitop_eta',
-                ],
-                'phi'  : [
-                    'W_plus_from_top_phi',
-                    'W_minus_from_antitop_phi',
-                ],
-                'mass'  : [
-                    'W_plus_from_top_mass',
-                    'W_minus_from_antitop_mass',
-                ],
-                'pdgId'  : [
-                    'W_plus_from_top_pdgId',
-                    'W_minus_from_antitop_pdgId',
-                ],
+                'pt' : ['W_plus_from_top_pt','W_minus_from_antitop_pt'],
+                'eta' : ['W_plus_from_top_eta','W_minus_from_antitop_eta'],
+                'phi' : ['W_plus_from_top_phi','W_minus_from_antitop_phi'],
+                'mass' : ['W_plus_from_top_mass','W_minus_from_antitop_mass'],
+                'pdgId' : ['W_plus_from_top_pdgId','W_minus_from_antitop_pdgId'],
             },
         )
 
@@ -308,42 +253,22 @@ class ttHHardDataset(ttHBase, HardDataset):
         Zs = self.data.make_particles(
             'Zs',
             {
-                'pt'  : [
-                    'Z_from_higgs_pt',
-                ],
-                'eta'  : [
-                    'Z_from_higgs_eta',
-                ],
-                'phi'  : [
-                    'Z_from_higgs_phi',
-                ],
-                'mass'  : [
-                    'Z_from_higgs_mass',
-                ],
-                'pdgId'  : [
-                    'Z_from_higgs_pdgId',
-                ],
+                'pt' : ['Z_from_higgs_pt'],
+                'eta'  : ['Z_from_higgs_eta'],
+                'phi'  : ['Z_from_higgs_phi'],
+                'mass'  : ['Z_from_higgs_mass'],
+                'pdgId'  : ['Z_from_higgs_pdgId'],
             },
         )
 
         neutrinos = self.data.make_particles(
             'neutrinos',
             {
-                'pt'  : [
-                    'neutrinos_from_Z_pt',
-                ],
-                'eta'  : [
-                    'neutrinos_from_Z_eta',
-                ],
-                'phi'  : [
-                    'neutrinos_from_Z_phi',
-                ],
-                'mass'  : [
-                    'neutrinos_from_Z_mass',
-                ],
-                'pdgId'  : [
-                    'neutrinos_from_Z_pdgId',
-                ],
+                'pt'  : ['neutrinos_from_Z_pt'],
+                'eta'  : ['neutrinos_from_Z_eta'],
+                'phi'  : ['neutrinos_from_Z_phi'],
+                'mass'  : ['neutrinos_from_Z_mass'],
+                'pdgId'  : ['neutrinos_from_Z_pdgId'],
             },
         )
 
@@ -478,7 +403,6 @@ class ttHHardDataset(ttHBase, HardDataset):
                         scaler_dict={
                             'pt': SklearnScaler(preprocessing.StandardScaler()),
                             'eta': SklearnScaler(preprocessing.StandardScaler()),
-                            'phi': SklearnScaler(preprocessing.StandardScaler()),
                             'mass': SklearnScaler(preprocessing.StandardScaler()),
                         }
                     )
@@ -542,11 +466,12 @@ class ttHRecoDataset(ttHBase, RecoDataset):
 
     @property
     def attention_idx(self):
-        return None # Assumes that if event has N jets then attends between N jets when learning
-                    # If there is 1 jet in event, to learn that ones are missing, need to specify [0, 1, 2]
+        # Assumes that if event has N jets then attends between N jets when learning
+        # If there is 1 jet in event, to learn that ones are missing, need to specify [0, 1, 2]
+        return None
         # {
-                # 'met': [0],
-                # 'jets': [0, 1],
+        #         #'met': [0],
+        #         'jets': [0, 1],
 
         #     }
 
@@ -572,8 +497,10 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                 'mass'    : 'cleanedJet_mass',
                 'btag'    : 'cleanedJet_btagDeepFlavB',
             },
+            lambda vec: vec.pt > 0.,
             pad_value = 0.,
         )
+
         met = self.data.make_particles(
             'met',
             {
@@ -603,25 +530,27 @@ class ttHRecoDataset(ttHBase, RecoDataset):
         #     mask = <array_mask>,
         # )
 
-        # 1) Sort the jets by btag DESC
-        #    ak.argsort(...) returns an array of indices
-        #    then we use fancy indexing to reorder
-        sorted_jets = jets[ak.argsort(jets['btag'], axis=-1, ascending=False)]
+        # First, sort jets by btag descending
+        idx_btag = ak.argsort(jets.btag, ascending=False)
+        jets_btag_sorted = jets[idx_btag]
+
+        # Now, take the first two jets (already highest btag)
+        top2 = jets_btag_sorted[:, :2]
+
+        # And sort the rest of the jets (from position 2 onward) by pt descending
+        remaining_jets = jets_btag_sorted[:, 2:]
+        idx_pt = ak.argsort(remaining_jets.pt, ascending=False)
+        rest_pt_sorted = remaining_jets[idx_pt]
+
+        # Finally, concatenate the two sub-arrays along axis=1 (per event)
+        sorted_jets = ak.concatenate([top2, rest_pt_sorted], axis=1)
+
 
         jets_padded, jets_mask = self.reshape(
             input = sorted_jets,
             value = 0.,
-            #max_no = 6,
+            max_no = 6,
         )
-
-        # Number of events in the dataset
-        num_events = len(jets_padded)
-
-        # Number of jets per event (after padding)
-        num_jets_per_event = ak.num(jets_padded, axis=1)
-
-        print(f"Number of Events: {num_events}")
-        print(f"Number of Jets Per Event (after padding): {num_jets_per_event}")
 
         if self.apply_boost:
             raise ValueError('Do not use boost for now')
@@ -693,7 +622,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                 PreprocessingStep(
                     names = ['met'],
                     scaler_dict = {
-                        'pt' : lowercutshift(20),
+                        'pt' : lowercutshift(200),
                     },
                 )
             )
@@ -704,10 +633,6 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                         'pt' : logmodulus(),
                         'mass'  : logmodulus(),
                     },
-                    fields_select = [
-                        ('pt','mass'),
-                        ('pt',),
-                    ]
                 )
             )
             self.register_preprocessing_step(
@@ -716,12 +641,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
                     scaler_dict = {
                         'pt'   : SklearnScaler(preprocessing.StandardScaler()),
                         'eta'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
-                        'phi'  : SklearnScaler(preprocessing.MinMaxScaler(feature_range=(-1, 1), clip=True)),
                         'mass'    : SklearnScaler(preprocessing.StandardScaler()),
                     },
-                    fields_select = [
-                        ('pt','eta','phi','mass'),
-                        ('pt','phi'),
-                    ]
                 )
             )
