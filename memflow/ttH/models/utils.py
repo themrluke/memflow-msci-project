@@ -18,25 +18,148 @@ class torch_wrapper(torch.nn.Module):
         return self.model(torch.cat([x, t.repeat(x.shape[0])[:, None]], 1))
 
 
-def compare_distributions(real_data, gen_data, real_feat_idx=0, gen_feat_idx=0, nbins=50, feat_name="Feature"):
+def compare_distributions(model, real_data, gen_data, ptype_idx,
+                                     real_feat_idx=0, gen_feat_idx=0,
+                                     nbins=50, feat_name="Feature",
+                                     preprocessing=None,
+                                     real_mask=None,
+                                     log_scale=False):
     """
-    Compare histograms of real vs. generated data for a single feature.
-    real_data, gen_data: shape (B, nParticles, nFeatures)
+    Compare histograms of real vs. generated data for a single feature with a ratio subplot.
+
+    Parameters
+    ----------
+    model : object
+        Must have:
+          - reco_particle_type_names: list of str
+          - reco_input_features_per_type: list (per particle type) of list of str
+          - flow_indices: list (per particle type) of list of int
+    real_data, gen_data : torch.Tensor
+        Real data should have shape (B, nParticles, nFeatures).
+        gen_data may have an extra sample dimension, e.g. (N_sample, B, nParticles, nFeatures).
+    ptype_idx : int
+        Particle type index (to select the proper field names).
+    real_feat_idx, gen_feat_idx : int
+        The feature indices (in the real and generated data) to compare.
+    nbins : int, optional
+        Number of histogram bins.
+    feat_name : str, optional
+        Label for the x-axis (e.g. r"$p_T$").
+    preprocessing : object, optional
+        A preprocessing object with an inverse() method.
+    real_mask : torch.Tensor, optional
+        A mask for the real data; if provided, it is used in the inverse() call.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The created figure.
     """
+    # Retrieve full field names from the model.
+    real_fields = model.reco_input_features_per_type[ptype_idx]  # e.g. ["pt", "eta", "phi", "E"]
+    # For generated data, pick the corresponding fields using flow indices.
+    gen_fields = [real_fields[idx] for idx in model.flow_indices[ptype_idx]]
+
+    if preprocessing is not None:
+        name = model.reco_particle_type_names[ptype_idx]
+        # Move data to CPU.
+        real_data = real_data.cpu()
+        gen_data = gen_data.cpu()
+        # If gen_data has 4 dimensions (e.g. [N_sample, B, nParticles, nFeatures]),
+        # reshape it to (N_sample * B, nParticles, nFeatures)
+        if gen_data.ndim == 4:
+            gen_data = gen_data.reshape(gen_data.shape[0] * gen_data.shape[1],
+                                        gen_data.shape[2],
+                                        gen_data.shape[3])
+        # For the real data, use the provided mask or create a dummy one.
+        if real_mask is not None:
+            real_mask = real_mask.cpu()
+        else:
+            real_mask = torch.ones(real_data.shape[0], real_data.shape[1], dtype=torch.bool)
+        # Create a dummy mask for gen_data of shape [batch, nParticles]
+        gen_mask = torch.ones(gen_data.shape[0], gen_data.shape[1], dtype=torch.bool)
+
+        # Apply inverse preprocessing.
+        real_data, _ = preprocessing.inverse(
+            name=name,
+            x=real_data,
+            mask=real_mask,
+            fields=real_fields
+        )
+        gen_data, _ = preprocessing.inverse(
+            name=name,
+            x=gen_data,
+            mask=gen_mask,
+            fields=gen_fields
+        )
+
+    # --- Extract and flatten the feature values ---
     real_vals = real_data[..., real_feat_idx].cpu().numpy().ravel()
     gen_vals  = gen_data[..., gen_feat_idx].cpu().numpy().ravel()
 
-    plt.figure(figsize=(5,4), dpi=300)
-    plt.hist(real_vals, bins=nbins, density=True, histtype='step', label="Real", linewidth=1.8)
-    plt.hist(gen_vals,  bins=nbins, density=True, histtype='step', label="Generated", linewidth=1.8)
-    plt.xlabel(feat_name, fontsize=14)
-    plt.ylabel("Density", fontsize=14)
-    legend_lines = [
-        Line2D([0], [0], color='#1f77b4', lw=2.2, label="Real"),
-        Line2D([0], [0], color="orange", lw=2.2, label="Generated"),
-    ]
-    plt.legend(handles=legend_lines, loc='upper left')
+    # --- Compute histogram bins ---
+    bins = np.linspace(min(real_vals.min(), gen_vals.min()),
+                       max(real_vals.max(), gen_vals.max()),
+                       nbins + 1)
+
+    # --- Compute density-normalized histograms ---
+    hist_real, _ = np.histogram(real_vals, bins=bins, density=True)
+    hist_gen, _ = np.histogram(gen_vals, bins=bins, density=True)
+
+    # --- Compute Poisson uncertainties (scaled for density) ---
+    real_counts, _ = np.histogram(real_vals, bins=bins)
+    gen_counts, _ = np.histogram(gen_vals, bins=bins)
+    bin_widths = np.diff(bins)
+    total_real = np.sum(real_counts)
+    total_gen = np.sum(gen_counts)
+    real_errors = np.sqrt(real_counts) / (total_real * bin_widths)
+    gen_errors = np.sqrt(gen_counts) / (total_gen * bin_widths)
+
+    # --- Compute the ratio (Gen/Real) and propagate uncertainties ---
+    ratio = np.divide(hist_gen, hist_real, where=hist_real > 0)
+    ratio_uncertainty = ratio * np.sqrt((gen_errors / hist_gen)**2 +
+                                        (real_errors / hist_real)**2)
+
+    # --- Create the figure with two subplots ---
+    fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1], 'hspace': 0},
+                            sharex=True, figsize=(6, 5), dpi=300)
+    plt.subplots_adjust(hspace=0)  # Ensures no gap between plots
+
+    axs[0].step(bins[:-1], hist_real, where="post",
+                label="Truth", linewidth=1.8, color='#1f77b4')
+    axs[0].fill_between(bins[:-1], hist_real - real_errors, hist_real + real_errors,
+                        step="post", color='#1f77b4', alpha=0.3)
+    axs[0].step(bins[:-1], hist_gen, where="post",
+                label="Generated", linewidth=1.8, color='#ff7f0e')
+    axs[0].fill_between(bins[:-1], hist_gen - gen_errors, hist_gen + gen_errors,
+                    step="post", color='#ff7f0e', alpha=0.3)
+    axs[0].set_ylabel("Density", fontsize=16)
+    axs[0].legend(fontsize=12)
+    axs[0].tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+
+    # Enable logarithmic scale if specified
+    if log_scale:
+        axs[0].set_yscale("log")
+        axs[0].set_xlim(200, 1200)
+        axs[0].set_ylim(1e-7,1e-2)
+
+
+    axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
+    axs[1].step(bins[:-1], ratio, where="post",
+                color='#ff7f0e', linewidth=1.5, label=r"$\frac{Gen}{Truth}$")
+    axs[1].fill_between(bins[:-1],
+                        ratio - ratio_uncertainty,
+                        ratio + ratio_uncertainty,
+                        step="post", color='#1f77b4', alpha=0.3)
+    axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
+    axs[1].set_xlabel(feat_name, fontsize=16)
+    axs[1].set_ylim(0.2, 1.8)
+
+    plt.tight_layout()
     plt.show()
+
+    return None
 
 
 def plot_sampling_distributions(real_data, gen_data_samples, feat_names, event_idx=0, object_name="jets"):
