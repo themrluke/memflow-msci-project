@@ -27,8 +27,8 @@ def compare_distributions(real_data, gen_data, real_feat_idx=0, gen_feat_idx=0, 
     gen_vals  = gen_data[..., gen_feat_idx].cpu().numpy().ravel()
 
     plt.figure(figsize=(5,4), dpi=300)
-    plt.hist(real_vals, bins=nbins, density=True, histtype='step', label="Real", linewidth=2.2)
-    plt.hist(gen_vals,  bins=nbins, density=True, histtype='step', label="Generated", linewidth=2.2)
+    plt.hist(real_vals, bins=nbins, density=True, histtype='step', label="Real", linewidth=1.8)
+    plt.hist(gen_vals,  bins=nbins, density=True, histtype='step', label="Generated", linewidth=1.8)
     plt.xlabel(feat_name, fontsize=14)
     plt.ylabel("Density", fontsize=14)
     legend_lines = [
