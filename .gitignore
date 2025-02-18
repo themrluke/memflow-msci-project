@@ -143,3 +143,5 @@ src/*/_version.py
 
 *.pt
 *.zip
+
+memflow/comet_logs/*
