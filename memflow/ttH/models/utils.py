@@ -2,8 +2,8 @@
 
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 import numpy as np
+import math
 import torch
 import os
 
@@ -19,7 +19,7 @@ class torch_wrapper(torch.nn.Module):
 
 
 def compare_distributions(model, real_data, gen_data, ptype_idx,
-                                     real_feat_idx=0, gen_feat_idx=0,
+                                     feat_idx=0,
                                      nbins=50, feat_name="Feature",
                                      preprocessing=None,
                                      real_mask=None,
@@ -39,7 +39,7 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
         gen_data may have an extra sample dimension, e.g. (N_sample, B, nParticles, nFeatures).
     ptype_idx : int
         Particle type index (to select the proper field names).
-    real_feat_idx, gen_feat_idx : int
+    feat_idx : int
         The feature indices (in the real and generated data) to compare.
     nbins : int, optional
         Number of histogram bins.
@@ -55,13 +55,19 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     fig : matplotlib.figure.Figure
         The created figure.
     """
+
+    real_data = real_data[ptype_idx]
+    real_mask = real_mask[ptype_idx]
+    gen_data = gen_data[ptype_idx]
+
     # Retrieve full field names from the model.
     real_fields = model.reco_input_features_per_type[ptype_idx]  # e.g. ["pt", "eta", "phi", "E"]
     # For generated data, pick the corresponding fields using flow indices.
     gen_fields = [real_fields[idx] for idx in model.flow_indices[ptype_idx]]
-
+    
     if preprocessing is not None:
         name = model.reco_particle_type_names[ptype_idx]
+        
         # Move data to CPU.
         real_data = real_data.cpu()
         gen_data = gen_data.cpu()
@@ -94,8 +100,13 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
         )
 
     # --- Extract and flatten the feature values ---
-    real_vals = real_data[..., real_feat_idx].cpu().numpy().ravel()
-    gen_vals  = gen_data[..., gen_feat_idx].cpu().numpy().ravel()
+    real_data = real_data[real_mask.bool()]
+
+    if ptype_idx == 1 and feat_idx == 1: # For MET, phi is at different element in sample data
+        real_vals = real_data[..., feat_idx+1].cpu().numpy().ravel()
+    else:
+        real_vals = real_data[..., feat_idx].cpu().numpy().ravel()
+    gen_vals  = gen_data[..., feat_idx].cpu().numpy().ravel()
 
     # --- Compute histogram bins ---
     bins = np.linspace(min(real_vals.min(), gen_vals.min()),
@@ -117,8 +128,7 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
 
     # --- Compute the ratio (Gen/Real) and propagate uncertainties ---
     ratio = np.divide(hist_gen, hist_real, where=hist_real > 0)
-    ratio_uncertainty = ratio * np.sqrt((gen_errors / hist_gen)**2 +
-                                        (real_errors / hist_real)**2)
+    real_uncertainty = real_errors / hist_real
 
     # --- Create the figure with two subplots ---
     fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1], 'hspace': 0},
@@ -137,24 +147,42 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     axs[0].legend(fontsize=12)
     axs[0].tick_params(axis='x', which='both', length=0, labelbottom=False)
 
-
-    # Enable logarithmic scale if specified
-    if log_scale:
-        axs[0].set_yscale("log")
-        axs[0].set_xlim(200, 1200)
-        axs[0].set_ylim(1e-7,1e-2)
-
-
     axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
     axs[1].step(bins[:-1], ratio, where="post",
                 color='#ff7f0e', linewidth=1.5, label=r"$\frac{Gen}{Truth}$")
     axs[1].fill_between(bins[:-1],
-                        ratio - ratio_uncertainty,
-                        ratio + ratio_uncertainty,
+                        1 - real_uncertainty,
+                        1 + real_uncertainty,
                         step="post", color='#1f77b4', alpha=0.3)
     axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
     axs[1].set_xlabel(feat_name, fontsize=16)
-    axs[1].set_ylim(0.2, 1.8)
+
+    # Enable logarithmic scale if specified
+    if log_scale:
+        axs[0].set_yscale("log")
+        if ptype_idx == 0: # Jets
+            if feat_idx == 0: # pT
+                axs[0].set_xlim(30, 1500)
+                axs[0].set_ylim(2e-8,1e-2)
+                axs[1].set_ylim(0.5, 1.5)
+            elif feat_idx == 1: # eta
+                axs[0].set_xlim(-5, 5)
+                axs[0].set_ylim(3e-4,1e0)
+                axs[1].set_ylim(0.8, 1.2)
+        if ptype_idx == 1: # MET
+            if feat_idx == 0: #pT
+                axs[0].set_xlim(200, 1200)
+                axs[0].set_ylim(3e-7,1e-2)
+                axs[1].set_ylim(0.5, 1.5)
+    else:
+        axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
+    
+    if ptype_idx == 0 and feat_idx == 2: # Jets phi
+            axs[0].set_xlim(-math.pi, math.pi)
+            #axs[1].set_ylim(0.95, 1.05)
+    if ptype_idx == 1 and feat_idx == 1: # MET phi
+            axs[0].set_xlim(-math.pi, math.pi)
+            #axs[1].set_ylim(0.95, 1.05)
 
     plt.tight_layout()
     plt.show()
