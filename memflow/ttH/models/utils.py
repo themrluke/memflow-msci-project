@@ -2,7 +2,6 @@
 
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 import numpy as np
 import math
 import torch
@@ -162,23 +161,30 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     # Enable logarithmic scale if specified
     if log_scale:
         axs[0].set_yscale("log")
-        # if ptype_idx == 0: # Jets
-        #     if feat_idx == 0: # pT
-        #         # axs[0].set_xlim(30, 1400)
-        #         # axs[0].set_ylim(2e-8,1e-2)
-        #         axs[1].set_ylim(0.5, 4)
-        #     if feat_idx == 1: # eta
-        #         axs[0].set_xlim(-5, 5)
-        #         axs[1].set_ylim(0.8, 1.8)
-        #     else: # phi
-        #         axs[0].set_xlim(-math.pi, math.pi)
-        # if ptype_idx == 1: # MET
-        #     if feat_idx == 0: #pT
-        #         axs[0].set_xlim(200, 1200)
-        #         axs[0].set_ylim(3e-7,1e-2)
-        #         axs[1].set_ylim(0.5, 1.5)
-        #     else: # phi
-        #         axs[0].set_xlim(-math.pi, math.pi)
+        if ptype_idx == 0: # Jets
+            if feat_idx == 0: # pT
+                axs[0].set_xlim(30, 1500)
+                axs[0].set_ylim(2e-8,1e-2)
+                axs[1].set_ylim(0.5, 4)
+            elif feat_idx == 1: # eta
+                axs[0].set_xlim(-5, 5)
+                axs[0].set_ylim(3e-4,1e0)
+                axs[1].set_ylim(0.8, 1.5)
+        if ptype_idx == 1: # MET
+            if feat_idx == 0: #pT
+                axs[0].set_xlim(200, 1200)
+                axs[0].set_ylim(3e-7,1e-2)
+                axs[1].set_ylim(0.5, 1.5)
+    else:
+        axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
+    
+    if ptype_idx == 0 and feat_idx == 2: # Jets phi
+            axs[0].set_xlim(-math.pi, math.pi)
+            axs[1].set_ylim(0.95, 1.05)
+    if ptype_idx == 1 and feat_idx == 1: # MET phi
+            axs[0].set_xlim(-math.pi, math.pi)
+            axs[1].set_ylim(0.9, 1.1)
+
     plt.tight_layout()
     plt.show()
 
