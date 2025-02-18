@@ -128,8 +128,7 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
 
     # --- Compute the ratio (Gen/Real) and propagate uncertainties ---
     ratio = np.divide(hist_gen, hist_real, where=hist_real > 0)
-    ratio_uncertainty = ratio * np.sqrt((gen_errors / hist_gen)**2 +
-                                        (real_errors / hist_real)**2)
+    real_uncertainty = real_errors / hist_real
 
     # --- Create the figure with two subplots ---
     fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1], 'hspace': 0},
@@ -152,8 +151,8 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     axs[1].step(bins[:-1], ratio, where="post",
                 color='#ff7f0e', linewidth=1.5, label=r"$\frac{Gen}{Truth}$")
     axs[1].fill_between(bins[:-1],
-                        ratio - ratio_uncertainty,
-                        ratio + ratio_uncertainty,
+                        1 - real_uncertainty,
+                        1 + real_uncertainty,
                         step="post", color='#1f77b4', alpha=0.3)
     axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
     axs[1].set_xlabel(feat_name, fontsize=16)
@@ -165,11 +164,11 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
             if feat_idx == 0: # pT
                 axs[0].set_xlim(30, 1500)
                 axs[0].set_ylim(2e-8,1e-2)
-                axs[1].set_ylim(0.5, 4)
+                axs[1].set_ylim(0.5, 1.5)
             elif feat_idx == 1: # eta
                 axs[0].set_xlim(-5, 5)
                 axs[0].set_ylim(3e-4,1e0)
-                axs[1].set_ylim(0.8, 1.5)
+                axs[1].set_ylim(0.8, 1.2)
         if ptype_idx == 1: # MET
             if feat_idx == 0: #pT
                 axs[0].set_xlim(200, 1200)
@@ -180,10 +179,10 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     
     if ptype_idx == 0 and feat_idx == 2: # Jets phi
             axs[0].set_xlim(-math.pi, math.pi)
-            axs[1].set_ylim(0.95, 1.05)
+            #axs[1].set_ylim(0.95, 1.05)
     if ptype_idx == 1 and feat_idx == 1: # MET phi
             axs[0].set_xlim(-math.pi, math.pi)
-            axs[1].set_ylim(0.9, 1.1)
+            #axs[1].set_ylim(0.95, 1.05)
 
     plt.tight_layout()
     plt.show()
