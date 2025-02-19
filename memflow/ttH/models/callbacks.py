@@ -260,7 +260,8 @@ class SamplingCallback(Callback):
                     xvals, yvals,
                     gridsize=self.bins,
                     extent=extent,
-                    mincnt=1
+                    mincnt=1,
+                    cmap='BuGn'
                 )
             
             # Extract a color from the main hist to use for marginal hist
@@ -569,15 +570,15 @@ class BiasCallback(Callback):
             axs[0, j].hist(
                 diff[..., j].ravel(),
                 bins=diff_bins,
-                color='red',
-                alpha=0.35,
-                edgecolor='none'  # Remove the default edges
+                color='#7fb3d5',
+                edgecolor='none',  # Remove the default edges
+                #linewidth=0.1
             )
             axs[0, j].hist(
                 diff[..., j].ravel(),
                 bins=diff_bins,
                 histtype='step',  # Step outline
-                color='grey',
+                color='#1f618d',
                 linewidth=1.5
             )
 
@@ -613,6 +614,7 @@ class BiasCallback(Callback):
                 samples[...,j].ravel(),
                 bins = (scale_bins,scale_bins),
                 norm = matplotlib.colors.LogNorm() if self.log_scale else None,
+                cmap='viridis'
             )
             axs[1,j].set_xlabel(f'${feature_name}$ (true)', fontsize=15)
             axs[1,j].set_ylabel(f'${feature_name}$ (sampled)', fontsize=15)
