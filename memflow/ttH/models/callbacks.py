@@ -17,7 +17,7 @@ from .utils import compare_distributions, plot_sampling_distributions
 
 def angle_diff(delta_phi):
     """
-    Maps any delta_phi into the interval (-pi, pi].
+    Maps any delta_phi into the interval [-pi, pi].
     delta_phi can be a PyTorch tensor.
     """
     return (delta_phi + math.pi) % (2 * math.pi) - math.pi
@@ -154,7 +154,8 @@ class SamplingCallback(Callback):
         reco_val = float(reco_val)
 
         if feature == 'phi':
-            return np.linspace(-math.pi, math.pi, self.bins)
+            #return np.linspace(-math.pi, math.pi, self.bins)
+            return np.linspace(sample_vals.min(), sample_vals.max(), self.bins)
         elif feature == 'eta':
             return np.linspace(-5.0, 5.0, self.bins)
         elif feature in ['pt', 'm', 'mass']:
@@ -224,54 +225,91 @@ class SamplingCallback(Callback):
                 subplot_spec=parent_spec,
                 width_ratios=[4,1],
                 height_ratios=[1,4],
-                wspace=0.05,
-                hspace=0.05
+                wspace=0,
+                hspace=0,
             )
 
             ax_main  = fig.add_subplot(sub_gs[1,0])
             ax_top   = fig.add_subplot(sub_gs[0,0], sharex=ax_main)
             ax_right = fig.add_subplot(sub_gs[1,1], sharey=ax_main)
 
+            ax_main.xaxis.set_tick_params(labelbottom=True)
+            ax_main.yaxis.set_tick_params(labelleft=True)
+            ax_main.tick_params(direction="in")
+            ax_main.set_xlabel(label_x, fontsize=15)
+            ax_main.set_ylabel(label_y, fontsize=15)
+
             # Hide tick labels for top & right
             plt.setp(ax_top.get_xticklabels(), visible=False)
             plt.setp(ax_right.get_yticklabels(), visible=False)
 
-            # Make ticks appear inside the plot
-            ax_main.tick_params(direction="in")
-            ax_top.tick_params(direction="in")
-            ax_right.tick_params(direction="in")
+            # Compute the extent from the provided bin arrays
+            extent = [bins_x[0], bins_x[-1], bins_y[0], bins_y[-1]]
 
             if self.log_scale:
-                hh = ax_main.hist2d(xvals, yvals,
-                                    bins=[bins_x, bins_y],
-                                    norm=matplotlib.colors.LogNorm())
+                hb = ax_main.hexbin(
+                    xvals, yvals,
+                    gridsize=self.bins,
+                    extent=extent,
+                    norm=matplotlib.colors.LogNorm(),
+                    mincnt=1,  # Only show hexagons with at least one count
+                    cmap='BuGn'
+                )
             else:
-                hh = ax_main.hist2d(xvals, yvals, bins=[bins_x, bins_y])
-
-            ax_main.set_xlabel(label_x, fontsize=15)
-            ax_main.set_ylabel(label_y, fontsize=15)
+                hb = ax_main.hexbin(
+                    xvals, yvals,
+                    gridsize=self.bins,
+                    extent=extent,
+                    mincnt=1
+                )
+            
+            # Extract a color from the main hist to use for marginal hist
+            main_cmap = plt.get_cmap('BuGn')
+            marginal_color = main_cmap(0.5)
 
             # Top marginal histogram
-            ax_top.hist(xvals, bins=bins_x, color="mediumpurple", alpha=0.9)
+            ax_top.hist(xvals, bins=bins_x, color=marginal_color, edgecolor='white', linewidth=0.1)
             ax_top.axvline(realx, color='r', linestyle='dashed', linewidth=2)  # Add vertical red line
             ax_top.set_yscale('log' if self.log_scale is True else 'linear')
 
             # Right marginal histogram
-            ax_right.hist(yvals, bins=bins_y, orientation="horizontal", color="mediumseagreen", alpha=0.9)
+            ax_right.hist(yvals, bins=bins_y, orientation="horizontal", color=marginal_color, edgecolor='white', linewidth=0.1)
             ax_right.axhline(realy, color='r', linestyle='dashed', linewidth=2)
             ax_right.set_xscale('log' if self.log_scale is True else 'linear')
-
+            
+            remove_borders = True
+            if remove_borders:
+                # Remove only the tick labels (and spines) for the marginal plots,
+                for ax in [ax_top, ax_right]:
+                    for spine in ax.spines.values():
+                        spine.set_visible(False)  # Hide the spines (borders)
+                    ax_top.spines['bottom'].set_visible(True)
+                    ax_right.spines['left'].set_visible(True)
+                    # Hide tick labels only, not the ticks
+                    plt.setp(ax.get_xticklabels(), visible=False)
+                    plt.setp(ax.get_yticklabels(), visible=False)
+                    ax.tick_params(axis='both', which='both', length=0, width=0, colors='none')   
+                    # Clear any axis labels on the marginal plots
+                    ax.set_xlabel('')
+                    ax.set_ylabel('')
+            else:
+                # Make ticks appear inside the plot
+                ax_top.tick_params(direction="in")
+                ax_right.tick_params(direction="in")
+                
             # Overplot real value
             ax_main.scatter(realx, realy, c='r', marker='x', s=75, linewidths=2)
 
-            # Add colorbar BELOW the main plot
-            cbar_ax = fig.add_axes([ax_main.get_position().x0,   # Left align with main plot
-                                    ax_main.get_position().y0 - 0.15,  # Slightly below main plot
-                                    ax_main.get_position().width,  # Same width as main plot
-                                    0.02])  # Height of colorbar
+            # Add a colorbar BELOW the main plot
+            cbar_ax = fig.add_axes([
+                ax_main.get_position().x0,                    # Left align with main plot
+                ax_main.get_position().y0 - 0.15,               # Place slightly below main plot
+                ax_main.get_position().width,                 # Same width as main plot
+                0.02                                          # Height of the colorbar
+            ])
+            fig.colorbar(hb, cax=cbar_ax, orientation="horizontal")
 
-            fig.colorbar(hh[3], cax=cbar_ax, orientation="horizontal", label='Frequency')
-
+            
         # Fill each pair
         for c, (iF, jF) in enumerate(pairs):
             featX = features[iF]
