@@ -362,7 +362,7 @@ class BaseCFM(L.LightningModule):
         # Transformer processing
         condition = self.transformer(
             src = hard_data,                                # encoder (hard) input
-            tgt = reco_data_null,                           # decorder (reco) input
+            tgt = reco_data_null,                           # decoder (reco) input
             tgt_mask = self.tgt_mask.to(hard_data.device),  # triangular (causality) mask
             src_key_padding_mask = hard_mask_attn,          # encoder (hard) mask
             memory_key_padding_mask = hard_mask_attn,       # encoder output / memory mask

@@ -180,6 +180,7 @@ class BaseCFM(L.LightningModule):
         # Create a projection layer to map the current state (of shape [B, sum_reco, len_flow_feats])
         # to the transformer’s embedding space (of dimension self.embed_dim)
         self.state_proj = nn.Linear(self.len_flow_feats, self.embed_dim)
+        self.time_proj = nn.Linear(1, self.embed_dim)
 
         # Velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
@@ -194,6 +195,10 @@ class BaseCFM(L.LightningModule):
         cfm_layers.append(nn.Linear(d_hidden, self.len_flow_feats))
         cfm_layers.append(nn.BatchNorm1d(self.len_flow_feats))  # Normalize final output
         self.velocity_net = nn.Sequential(*cfm_layers)
+
+        #self.velocity_net = nn.Linear(self.embed_dim + self.len_flow_feats + 1, self.len_flow_feats)
+
+
 
         # Map flow features to corresponding indices in reco features
         self.flow_indices = []
@@ -278,23 +283,20 @@ class BaseCFM(L.LightningModule):
             }
 
 
-    def conditioning(self, hard_data, hard_mask_exist, current_state, reco_mask_exist):
+    def conditioning(self, hard_data, hard_mask_exist, current_state, reco_mask_exist, t):
         """
-        Time-dependent conditioning.
-        Instead of using a fixed reco_data, we use the current diffusion state.
-
-        Args:
-            hard_data: list of tensors (per hard type), shape [B, particles, features]
-            hard_mask_exist: list of existence masks for hard data
-            current_state: tensor of shape [B, sum_reco, len_flow_feats] representing the current diffusion state
-            reco_mask_exist: list of tensors (per reco type) representing the existence masks
-
-        Returns:
-            Transformer output of shape [B, sum_reco+1, embed_dim].
+        Time-dependent conditioning using the current diffusion state (x_t) and timestep (t).
         """
         B = current_state.shape[0]
         # Project the current state into embedding space
         x_t_emb = self.state_proj(current_state)  # [B, sum_reco, embed_dim]
+
+        # Project t to embedding space and add to x_t_emb
+        t_reshaped = t.view(B, 1).expand(-1, current_state.shape[1])   # shape [B, sum_reco]
+        t_emb = self.time_proj(t_reshaped.unsqueeze(-1))               # shape [B*sum_reco, embed_dim] after flatten
+        t_emb = t_emb.view(B, current_state.shape[1], self.embed_dim)  # [B, sum_reco, embed_dim]
+        x_t_emb = x_t_emb + t_emb
+
         # Add a null token (as before) at the beginning along the particle axis
         null_token = torch.ones((B, 1, self.embed_dim), device=current_state.device) * -1
         tgt = torch.cat([null_token, x_t_emb], dim=1)  # [B, sum_reco+1, embed_dim]
@@ -332,7 +334,7 @@ class BaseCFM(L.LightningModule):
         transformer_out = self.transformer(
             src = hard_data_emb,         # Encoder (hard) input
             tgt = tgt,                   # Decoder (current state) input
-            tgt_mask = self.tgt_mask.to(current_state.device),
+            tgt_mask = None, # Particles can attend freely
             src_key_padding_mask = hard_mask_attn,
             memory_key_padding_mask = hard_mask_attn,
             tgt_key_padding_mask = tgt_mask_processed,
@@ -565,7 +567,7 @@ class BaseCFM(L.LightningModule):
             x_t = self.bridging_distribution(paired_x0, paired_x1, t)  # [B, sum_reco, len_flow_feats]
 
             # Get the Transformer output
-            transformer_out = self.conditioning(hard_data, hard_mask, x_t, reco_mask)  # [B, sum_reco+1, embed_dim]
+            transformer_out = self.conditioning(hard_data, hard_mask, x_t, reco_mask, t)  # [B, sum_reco+1, embed_dim]
 
             # Remove the null token
             context = transformer_out[:, 1:, :]  # [B, sum_reco, embed_dim]
@@ -623,7 +625,7 @@ class BaseCFM(L.LightningModule):
                 t_value = step_i * dt
                 t_ = torch.full((B,), t_value, device=x_t.device)
                 # Recompute time-dependent conditioning using the current state x_t.
-                conditions = self.conditioning(hard_data, hard_mask_exist, x_t, reco_mask_exist)  # [B, sum_reco+1, embed_dim]
+                conditions = self.conditioning(hard_data, hard_mask_exist, x_t, reco_mask_exist, t_)  # [B, sum_reco+1, embed_dim]
                 context = conditions[:, 1:, :] # Remove null token, shape [B, sum_reco, embed_dim]
                 x_t = self.rk4_step(context, x_t, t_, dt)
                 if store_trajectories:
