@@ -119,6 +119,7 @@ class BaseCFM(L.LightningModule):
         self.len_flow_feats = max([effective_feature_count(feats) for feats in self.flow_input_features])
 
         self.onehot_encoding = onehot_encoding
+
         self.sigma = sigma
         self._optimizer = optimizer
         self._scheduler_config = scheduler_config
@@ -176,27 +177,19 @@ class BaseCFM(L.LightningModule):
         self.max_reco_len = sum(self.n_reco_particles_per_type) + 1
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
 
-         # --- Define the Partial Embedding Module ---
-        # This module maps a partial feature vector (of length F) to a fixed dimension.
-        # We set d_partial equal to embed_dim.
-        self.partial_embed = nn.Linear(self.len_flow_feats, self.embed_dim)
-
         # Velocity network for bridging
-        d_in = 2 * self.embed_dim + 2
-        d_hidden = cfm_args['dim_feedforward']
+        d_in = self.embed_dim + self.len_flow_feats + 1
+        d_hidden = cfm_args['dim_hidden']
         activation_fn = cfm_args['activation']
-        vel_layers = []
+        cfm_layers = []
         for _ in range(cfm_args['num_layers']):
-            vel_layers.append(nn.Linear(d_in, d_hidden))
-            vel_layers.append(nn.BatchNorm1d(d_hidden))   # BatchNorm before activation
-            vel_layers.append(activation_fn()) # New instance every time
+            cfm_layers.append(nn.Linear(d_in, d_hidden))
+            cfm_layers.append(nn.BatchNorm1d(d_hidden))   # BatchNorm before activation
+            cfm_layers.append(activation_fn()) # New instance every time
             d_in = d_hidden
-        vel_layers.append(nn.Linear(d_hidden, 1))
-        vel_layers.append(nn.BatchNorm1d(1))  # Normalize final output
-        self.velocity_net = nn.Sequential(*vel_layers)
-
-        # Mapping from flow-feature space to embedding space (for autoregressive history update).
-        self.flow_to_embed = nn.Linear(self.len_flow_feats, self.embed_dim)
+        cfm_layers.append(nn.Linear(d_hidden, self.len_flow_feats))
+        cfm_layers.append(nn.BatchNorm1d(self.len_flow_feats))  # Normalize final output
+        self.velocity_net = nn.Sequential(*cfm_layers)
 
         # Map flow features to corresponding indices in reco features
         self.flow_indices = []
@@ -394,29 +387,21 @@ class BaseCFM(L.LightningModule):
         raise NotImplementedError("Child classes need to override this bridging_distribution function.")
 
 
-    def compute_velocity(self, context, partial_features, x_t, t):
+    def compute_velocity(self, context, x_t, t_):
         """
-        Computes the predicted velocity for a single scalar feature.
-        Inputs:
-          - context: [B, 1, embed_dim] from the Transformer for the current particle.
-          - partial_features: [B, F] where F is self.len_flow_feats.
-            This is the partially generated feature vector for the current particle (zeros for not-yet-generated features).
-          - x_t: [B, 1, 1] the bridging sample for the current feature.
-          - t: [B, 1] the current time (after unsqueeze).
-        We first embed the partial feature vector to get a fixed-length representation,
-        then concatenate with context and t to feed to the velocity network.
+        Compute velocity vector using the `velocity_net` network.
         """
-        B = context.shape[0]
-        # Get embedding for the partial features.
-        partial_emb = self.partial_embed(partial_features)  # [B, embed_dim]
-        partial_emb = partial_emb.unsqueeze(1)              # [B, 1, embed_dim]
+        B, sum_reco_tokens, _ = context.shape
+        # Prepare net_in to include: transformer contex, current state, timestep
         net_in = torch.cat([
-            context,              # [B, 1, embed_dim]
-            partial_emb,          # [B, 1, embed_dim]
-            t.unsqueeze(-1)       # [B, 1, 1]
-        ], dim=2)  # Now shape [B, 1, 2*embed_dim + 1]
-        net_in = net_in.reshape(B, -1)  # [B, 2*embed_dim + 1]
-        v_pred = self.velocity_net(net_in).reshape(B, 1, 1)
+            context.reshape(B * sum_reco_tokens, -1),          # [B*sum_reco, embed_dim]
+            x_t.reshape(B * sum_reco_tokens, self.len_flow_feats),
+            t_.repeat_interleave(sum_reco_tokens).unsqueeze(-1),# [B*sum_reco, 1]
+        ], dim=1)  # [B*sum_reco, embed_dim + len_flow_feats + 1]
+
+        # Obtain predicted velocities
+        v_pred = self.velocity_net(net_in).reshape(B, sum_reco_tokens, self.len_flow_feats)  # [B, sum_reco, len_flow_feats]
+
         return v_pred
 
 
@@ -605,41 +590,27 @@ class BaseCFM(L.LightningModule):
             # Pack the reco features
             x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)  # [B, sum_reco, len_flow_feats]
             B, sum_reco_tokens, len_flow_feats = x_real.shape
-            diff_list = []
 
-            # Loop over each reco particle token.
-            for i in range(sum_reco):
-                context_particle = context[:, i:i+1, :]  # [B, 1, embed_dim]
-                # x0_particle is sampled as noise.
-                x0_particle = torch.randn(B, 1, self.len_flow_feats, device=x_real.device)
-                x1_particle = x_real[:, i:i+1, :]         # Ground truth features for particle i.
-                feature_diffs = []
-                # Initialize partial_features as zeros (shape: [B, F])
-                partial_features = torch.zeros(B, F, device=x_real.device)
-                # For teacher forcing, we generate features sequentially.
-                for f in range(F):
-                    t_val = torch.rand(B, device=x_real.device)  # [B]
-                    # We unsqueeze t_val later in compute_velocity.
-                    # For each particle, we use the same re-pairing for all features.
-                    paired_x0, paired_x1 = self.get_bridging_pair(x0_particle, x1_particle)
-                    # Compute bridging sample for the current feature f.
-                    # Here we assume that bridging_distribution works per feature.
-                    # We extract only the f-th feature from paired_x0 and paired_x1:
-                    x0_f = paired_x0[:, :, f:f+1]  # [B, 1, 1]
-                    x1_f = paired_x1[:, :, f:f+1]  # [B, 1, 1]
-                    x_t_f = self.bridging_distribution(x0_f, x1_f, t_val)  # [B, 1, 1]
-                    # Compute predicted velocity, conditioned on current particle context and partial_features.
-                    v_pred = self.compute_velocity(context_particle, partial_features, x_t_f, t_val)
-                    # Compute target velocity (using teacher forcing: ground-truth x1_f and x0_f).
-                    v_true = self.velocity_target(x0_f, x1_f, x_t_f, t_val)
-                    feature_diffs.append((v_pred - v_true) ** 2)
-                    # Update partial_features: use ground truth feature for position f.
-                    gt_feature = x1_particle[:, :, f]  # [B, 1]
-                    # Set column f of partial_features to ground truth.
-                    partial_features[:, f] = gt_feature.squeeze(-1)
-                diff_particle = torch.cat(feature_diffs, dim=-1)  # [B, 1, F]
-                diff_list.append(diff_particle)
-            diff = torch.cat(diff_list, dim=1)  # [B, total, F]
+            # Initialize the bridging distribution
+            x0 = torch.randn_like(x_real)  # Ranom Gaussian distribution. Shape: [B, sum_reco, len_flow_feats]
+            x1 = x_real
+            t = torch.rand(B, device=x_real.device)  # Each event within a batch gets a random timestep
+
+            # Child classes using OT can perform pairing logic if needed
+            paired_x0, paired_x1 = self.get_bridging_pair(x0, x1)
+
+            # We want to transform from Gaussian noise to the reco data, conditioned on hard data:
+            x_t = self.bridging_distribution(paired_x0, paired_x1, t)  # [B, sum_reco, len_flow_feats]
+
+            # Compute the velocity vector
+            v_pred = self.compute_velocity(context, x_t, t)  # [B, sum_reco, len_flow_feats]
+
+            # Calculate the TRUE velocity vector
+            v_true = self.velocity_target(paired_x0, paired_x1, x_t, t)
+
+            # Compute element-wise squared errors, masked by feat_mask
+            diff = (v_pred - v_true) ** 2 * feat_mask  # [B, sum_reco, len_flow_feats]
+
             return diff
 
 
@@ -653,71 +624,75 @@ class BaseCFM(L.LightningModule):
 
     def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10, store_trajectories=False):
         """
-        Autoregressively generates new samples.
-        - The Transformer encoder processes hard_data.
-        - For each reco particle (token), the Transformer decoder is run sequentially.
-        - Then, for each particle, features are generated one-by-one:
-            Each feature is generated conditioned on the particle context and the already generated features (partial_features).
-        Returns:
-          - reco_samples: list of tensors (one per reco type) of final generated samples.
-          - all_traj: (optional) trajectories of intermediate steps.
-        """
-        B = hard_data[0].shape[0]
-        device = hard_data[0].device
-        hard_mask_cat = torch.cat(hard_mask_exist, dim=1)
-        hard_emb = torch.cat([self.hard_embeddings[i](hard_data[i]) for i in range(len(self.hard_embeddings))], dim=1)
-        hard_emb = hard_emb * hard_mask_cat[..., None]
-        if self.hard_mask_attn is None:
-            hard_mask_attn = hard_mask_cat
-        else:
-            hard_mask_attn = torch.logical_or(self.hard_mask_attn.to(device), hard_mask_cat)
-        if hard_mask_attn.dtype != torch.bool:
-            hard_mask_attn = hard_mask_attn > 0
-        hard_mask_attn = torch.zeros_like(hard_mask_attn, dtype=torch.float32).masked_fill(~hard_mask_attn, float("-inf"))
-        encoder_output = self.transformer.encoder(hard_emb, src_key_padding_mask=hard_mask_attn)
-        total = sum(self.n_reco_particles_per_type)
-        d_model = self.embed_dim
-        null_token = torch.ones((B, 1, d_model), device=device) * -1
-        generated_tokens = [null_token]
-        final_particles = []  # List to store full particle features
-        all_traj = [] if store_trajectories else None
+        Generate N_sample new saomples by evolving the bridging distribution using the learned velocity field.
 
-        for i in range(1, total+1):
-            prev_seq = torch.cat(generated_tokens, dim=1)  # [B, i, d_model]
-            tgt_mask = self.transformer.generate_square_subsequent_mask(prev_seq.size(1)).to(device)
-            dec_out = self.transformer.decoder(prev_seq, encoder_output, tgt_mask=tgt_mask)
-            token_context = dec_out[:, -1:, :]  # [B, 1, d_model]
-            # For each particle, we generate its features sequentially.
-            # Initialize partial_features with zeros: shape [B, F]
-            partial_features = torch.zeros(B, self.len_flow_feats, device=device)
-            particle_feature_list = []
-            particle_traj = [] if store_trajectories else None
-            for f in range(self.len_flow_feats):
-                x0_feat = torch.randn(B, 1, 1, device=device)
-                x_feat = x0_feat.clone()
-                traj_feat = [] if store_trajectories else None
-                dt = 1.0 / steps
-                for step in range(steps):
-                    t_val = torch.full((B,), step * dt, device=device)
-                    x_feat = self.rk4_step(token_context, x_feat, t_val, dt)
-                    if store_trajectories:
-                        traj_feat.append(x_feat.detach().cpu())
-                if store_trajectories:
-                    particle_traj.append(torch.stack(traj_feat, dim=0))
-                particle_feature_list.append(x_feat)  # x_feat is [B, 1, 1]
-                # In sampling, we update partial_features with the generated value.
-                partial_features[:, f] = x_feat.squeeze(-1).squeeze(-1)
+        Args:
+            hard_data: List of tensors, 1 per hard particle type, shape [batch_size, particles, features]
+            hard_mask_exist: List of tensors, 1 per hard particle type, shape [batch_size, particles, features]
+            reco_data: List of tensors, 1 per reco particle type, shape [batch_size, particles, features]
+            reco_mask_exist: List of tensors, 1 per reco particle type, shape [batch_size, particles, features]
+            N_sample: Number of samples to generate
+            steps: Number of Euler integration steps for bridging
+            store_trajectories: bool, If True, record intermediate states for plotting
+
+        Returns:
+            samples: List of tensors, one per reco type, final samples for each reco type, shape [N_sample, batch_size, particles, features]
+            trajectories: Tensor, intermediate states 2D, shape [N_sample, steps+1, B, sum_reco, 2]
+        """
+        N_reco = len(reco_data) # number of reco particle types
+
+        samples = [ [] for _ in range(N_reco) ]  # Initialize list of final samples for each reco type
+
+        # We'll store the entire trajectory for each sample, over time steps
+        all_trajectories = [] if store_trajectories else None
+
+        for s in range(N_sample):
+            # Get transformer conditions
+            conditions = self.conditioning(hard_data, hard_mask_exist, reco_data, reco_mask_exist)  # [B, sum_reco+1, embed_dim]
+            context = conditions[:, 1:, :] # Remove null token, shape [B, sum_reco, embed_dim]
+
+            # Pack the reco features
+            x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
+            B, sum_reco_tokens, len_flow_feats = x_real.shape
+
+            # Initialize the bridging distribution
+            x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
+            x_t = x0.clone()
+
+            # (optional) store states at each step if we want trajectories
             if store_trajectories:
-                all_traj.append(particle_traj)
-            # Concatenate all generated features for this particle: [B, 1, F]
-            particle_flow = torch.cat(particle_feature_list, dim=-1)
-            final_particles.append(particle_flow)
-            # Update autoregressive history: map particle_flow to an embedding.
-            new_embed = self.flow_to_embed(particle_flow)
-            generated_tokens.append(new_embed)
-        x_t_full = torch.cat(final_particles, dim=1)  # [B, total, F]
-        reco_samples = self.unpack_reco_samples(x_t_full, reco_mask_exist)
-        return reco_samples, all_traj
+                traj_states = [x_t.detach().cpu().clone()]
+
+            # RK4 ODE solver
+            dt = 1.0 / steps
+            for step_i in range(steps):
+                t_value = step_i * dt
+                t_ = torch.full((B,), t_value, device=x_t.device)
+                x_t = self.rk4_step(context, x_t, t_, dt)
+                if store_trajectories:
+                    # record partial features for plotting
+                    traj_states.append(x_t.detach().cpu().clone())
+
+           # If storing, stack the states: shape [steps+1, B, sum_reco, 2]
+            if store_trajectories:
+                traj_states = torch.stack(traj_states, dim=0)  # [steps+1, B, sum_reco, 2]
+                all_trajectories.append(traj_states)
+
+            # Unpack samples
+            reco_samples = self.unpack_reco_samples(x_t, reco_mask_exist)  # List of [B, particles, features]
+            for i in range(N_reco): # Append samples
+                samples[i].append(reco_samples[i])  # Append [B, particles, features] to list for reco particle type i
+
+        # Stack Samples per Reco Type
+        samples = [torch.stack(s, dim=0) for s in samples]  # List of [N_sample, B, particles, features]
+
+        # If we collected trajectories
+        if store_trajectories:
+            # shape [N_sample, steps+1, B, sum_reco, 2]
+            all_trajectories = torch.stack(all_trajectories, dim=0)
+            return samples, all_trajectories
+        else:
+            return samples
 
 
 
@@ -802,7 +777,6 @@ class TargetBridgingCFM(BaseCFM):
         # Ignore x0 here
 
         t = pad_t_like_x(t, x0)
-
         # Sample noise and store it in self.last_eps for use in the velocity target.
         self.last_eps = torch.randn_like(x1)
         sigma_t = 1.0 - (1.0 - self.sigma) * t # Compute time-dependent std

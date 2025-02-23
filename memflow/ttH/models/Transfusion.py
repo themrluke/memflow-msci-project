@@ -67,7 +67,7 @@ class BaseCFM(L.LightningModule):
     Serves as a parent class for other methods.
     Subclasses can override the bridging logic.
     Handles:
-        - MLP-based conditioning
+        - Transformer-based conditioning
         - Feature packing/unpacking
         - Velocity network
         - Data flow in forward()
@@ -119,10 +119,21 @@ class BaseCFM(L.LightningModule):
         self.len_flow_feats = max([effective_feature_count(feats) for feats in self.flow_input_features])
 
         self.onehot_encoding = onehot_encoding
-
         self.sigma = sigma
         self._optimizer = optimizer
         self._scheduler_config = scheduler_config
+
+        # Handle attention masks
+        # If no attention mask provided, the existence masks are used: Model attends to all particles in event
+        if reco_mask_attn is None:
+            self.reco_mask_attn = None
+            print("No reco attention mask provided; will use existence mask only.")
+        else:
+            # Add a single True for the null token
+            self.reco_mask_attn = torch.cat((torch.tensor([True]), reco_mask_attn), dim=0)
+        if hard_mask_attn is None:
+            print("No hard attention mask provided; will use existence mask only.")
+        self.hard_mask_attn = hard_mask_attn
 
         # Safety checks
         assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), \
@@ -151,27 +162,45 @@ class BaseCFM(L.LightningModule):
         self.hard_embeddings = self.make_embeddings(self.hard_input_features_per_type)
         self.reco_embeddings = self.make_embeddings(self.reco_input_features_per_type, onehot_dim)
 
-        # Build MLP
-        global_dim = len(self.hard_embeddings) * self.embed_dim
-        self.condition_net = nn.Sequential(
-            nn.Linear(global_dim, self.embed_dim),
-            nn.ReLU(),
-            nn.Linear(self.embed_dim, self.embed_dim)
-        )
+        # Build Transformer
+        if 'd_model' in transformer_args.keys():
+            print (f'Transformer args: will override `d_model` to {self.embed_dim}')
+        transformer_args["d_model"] = self.embed_dim # Ensure transformer internal feature dimension matches embedding size
+        if "dropout" not in transformer_args:
+            transformer_args["dropout"] = self.dropout
+        self.transformer = nn.Transformer(batch_first=True, **transformer_args) # By default nn.Transformer expects (seq_length, batch_size, feature_dim)
+        self.norm = nn.LayerNorm(self.embed_dim)  # Apply LayerNorm after Transformer
+
+        # Missing particles across events are padded, therefore able to create one global tgt_mask:
+        # (assume sum(n_reco_particles_per_type)+1 is the same for all events)
+        self.max_reco_len = sum(self.n_reco_particles_per_type) + 1
+        self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
+
+         # --- Define the Partial Embedding Module ---
+        # For autoregressive sampling we now want to update one “group” at a time.
+        # For scalar features the group dimension is 1,
+        # for circular features the group dimension is 2.
+        # We define two separate “partial embed” layers for these two cases.
+        self.partial_embed_scalar = nn.Linear(1, self.embed_dim)
+        self.partial_embed_circular = nn.Linear(2, self.embed_dim)
+
 
         # Velocity network for bridging
-        d_in = self.embed_dim + self.len_flow_feats + 1
+        d_in = 2 * self.embed_dim + 1
         d_hidden = cfm_args['dim_hidden']
         activation_fn = cfm_args['activation']
-        cfm_layers = []
+        vel_layers = []
         for _ in range(cfm_args['num_layers']):
-            cfm_layers.append(nn.Linear(d_in, d_hidden))
-            cfm_layers.append(nn.BatchNorm1d(d_hidden))   # BatchNorm before activation
-            cfm_layers.append(activation_fn()) # New instance every time
+            vel_layers.append(nn.Linear(d_in, d_hidden))
+            vel_layers.append(nn.BatchNorm1d(d_hidden))   # BatchNorm before activation
+            vel_layers.append(activation_fn()) # New instance every time
             d_in = d_hidden
-        cfm_layers.append(nn.Linear(d_hidden, self.len_flow_feats))
-        cfm_layers.append(nn.BatchNorm1d(self.len_flow_feats))  # Normalize final output
-        self.velocity_net = nn.Sequential(*cfm_layers)
+        vel_layers.append(nn.Linear(d_hidden, 1))
+        vel_layers.append(nn.BatchNorm1d(1))  # Normalize final output
+        self.velocity_net = nn.Sequential(*vel_layers)
+
+        # Mapping from flow-feature space to embedding space (for autoregressive history update).
+        self.flow_to_embed = nn.Linear(self.len_flow_feats, self.embed_dim)
 
         # Map flow features to corresponding indices in reco features
         self.flow_indices = []
@@ -256,31 +285,103 @@ class BaseCFM(L.LightningModule):
             }
 
 
-    def conditioning(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist):
+    def conditioning(self,hard_data,hard_mask_exist,reco_data,reco_mask_exist):
         """
-        Computes the conditioning context for the CFM model using an MLP.
-        Instead of processing the hard data via a Transformer with causal masking,
-        we simply embed each hard object, average over its particles, concatenate the resulting
-        event-level representations, and pass them through a DNN to get an event-level context.
-        This context is then broadcast to all reco tokens.
+        Computes the conditioning context for the CFM model by encoding hard and reco data using a Transformer.
         """
-        hard_contexts = []
-        for i in range(len(hard_data)):
-            # Embed hard inputs: shape [B, num_particles, embed_dim]
-            embedded = self.hard_embeddings[i](hard_data[i])
-            # Compute average over particles (you could also use masking here if needed)
-            avg_context = embedded.mean(dim=1)  # shape: [B, embed_dim]
-            hard_contexts.append(avg_context)
-        # Concatenate all hard contexts: shape [B, embed_dim * num_hard_types]
-        global_hard = torch.cat(hard_contexts, dim=1)
-        # Pass through the conditioning network
-        event_context = self.condition_net(global_hard)  # shape: [B, embed_dim]
-        # Determine total number of reco tokens across types
-        total_reco = sum([data.shape[1] for data in reco_data])
-        # Broadcast event-level context to all reco tokens: [B, total_reco, embed_dim]
-        context = event_context.unsqueeze(1).repeat(1, total_reco, 1)
+        # Add null token to first reco object
+        null_token = torch.ones((reco_data[0].shape[0],1,reco_data[0].shape[2])) * -1
+        reco_data_null = [
+            torch.cat(
+                (
+                    null_token.to(reco_data[0].device),
+                    reco_data[0],
+                ),
+                dim = 1, # along particle axis
+            )
+        ] + [data[:] for data in reco_data[1:]]
+        reco_mask_exist_null = [
+            torch.cat(
+                (
+                    torch.full((reco_mask_exist[0].shape[0],1),fill_value=True).to(reco_mask_exist[0].device),
+                    reco_mask_exist[0],
+                ),
+                dim = 1,
+            )
 
-        return context
+        ] + [mask[:] for mask in reco_mask_exist[1:]]
+
+        # Apply onehot encoding
+        if self.onehot_encoding:
+            reco_data_null = [
+                torch.cat(
+                    [
+                        data,
+                        onehot.repeat(data.shape[0],1,1).to(data.device),
+                    ],
+                    dim = 2,
+                )
+                for data,onehot in zip(reco_data_null,self.onehot_tensors)
+            ]
+
+        # Apply embeddings and concat along particle axis
+        hard_mask_exist = torch.cat(hard_mask_exist,dim=1)
+        hard_data = torch.cat(
+            [
+                self.hard_embeddings[i](hard_data[i])
+                for i in range(len(self.hard_embeddings))
+            ],
+            dim = 1
+        ) * hard_mask_exist[...,None]
+        reco_mask_exist_null = torch.cat(reco_mask_exist_null,dim=1)
+        reco_data_null = torch.cat(
+            [
+                self.reco_embeddings[i](reco_data_null[i])
+                for i in range(len(self.reco_embeddings))
+            ],
+            dim = 1
+        ) * reco_mask_exist_null[...,None]
+
+        # Expand attention mask
+        # Need to turn 0->1 when particle exists
+        if self.hard_mask_attn is None:
+            hard_mask_attn = hard_mask_exist
+        else:
+            hard_mask_attn  = torch.logical_or(
+                self.hard_mask_attn.to(hard_mask_exist.device),
+                hard_mask_exist,
+            )
+        if self.reco_mask_attn is None:
+            reco_mask_attn = reco_mask_exist_null
+        else:
+            reco_mask_attn = torch.logical_or(
+                self.reco_mask_attn.to(reco_mask_exist_null.device),
+                reco_mask_exist_null,
+            )
+        # -> Make sure that particles we want in the attention are considered even if missing
+        # (in which case the default values are set in the dataset class, no need to re default them)
+        # Turn them into boolean arrays
+        if hard_mask_attn.dtype != torch.bool:
+            hard_mask_attn = hard_mask_attn > 0
+        if reco_mask_attn.dtype != torch.bool:
+            reco_mask_attn = reco_mask_attn > 0
+        # replace True->0, False->-inf
+        # To have same dtype as tgt_mask
+        hard_mask_attn = torch.zeros_like(hard_mask_attn).to(torch.float32).masked_fill(~hard_mask_attn,float("-inf"))
+        reco_mask_attn = torch.zeros_like(reco_mask_attn).to(torch.float32).masked_fill(~reco_mask_attn,float("-inf"))
+
+        # Transformer processing
+        condition = self.transformer(
+            src = hard_data,                                # encoder (hard) input
+            tgt = reco_data_null,                           # decorder (reco) input
+            tgt_mask = self.tgt_mask.to(hard_data.device),  # triangular (causality) mask
+            src_key_padding_mask = hard_mask_attn,          # encoder (hard) mask
+            memory_key_padding_mask = hard_mask_attn,       # encoder output / memory mask
+            tgt_key_padding_mask = reco_mask_attn,          # decoder (reco) mask
+        )
+        condition = self.norm(condition)   # Apply LayerNorm
+
+        return condition
 
 
     def get_bridging_pair(self, x0, x1):
@@ -297,20 +398,27 @@ class BaseCFM(L.LightningModule):
         raise NotImplementedError("Child classes need to override this bridging_distribution function.")
 
 
-    def compute_velocity(self, context, x_t, t_):
+    def compute_velocity(self, context, group_feature, t):
         """
-        Compute velocity vector using the `velocity_net` network.
+        Computes predicted velocity for one feature group.
+        Inputs:
+          - context: [B, 1, embed_dim]
+          - group_feature: [B, d] where d is 1 (scalar) or 2 (circular)
+          - t: [B] scalar time for that group.
+        Returns:
+          - v_pred: [B, 1]
         """
-        B, sum_reco_tokens, _ = context.shape
-        net_in = torch.cat([
-            context.reshape(B * sum_reco_tokens, -1),          # [B*sum_reco, embed_dim]
-            x_t.reshape(B * sum_reco_tokens, self.len_flow_feats),
-            t_.repeat_interleave(sum_reco_tokens).unsqueeze(-1),# [B*sum_reco, 1]
-        ], dim=1)  # [B*sum_reco, embed_dim + len_flow_feats + 1]
-
-        # Obtain predicted velocities
-        v_pred = self.velocity_net(net_in).reshape(B, sum_reco_tokens, self.len_flow_feats)  # [B, sum_reco, len_flow_feats]
-
+        B = context.shape[0]
+        if group_feature.shape[1] == 1:
+            partial_emb = self.partial_embed_scalar(group_feature)
+        elif group_feature.shape[1] == 2:
+            partial_emb = self.partial_embed_circular(group_feature)
+        else:
+            raise ValueError(f"Unexpected group dimension: {group_feature.shape[1]}")
+        partial_emb = partial_emb.unsqueeze(1)
+        net_in = torch.cat([context, partial_emb, t.view(B, 1, 1)], dim=2)
+        net_in = net_in.reshape(B, -1)
+        v_pred = self.velocity_net(net_in).reshape(B, 1)
         return v_pred
 
 
@@ -478,126 +586,250 @@ class BaseCFM(L.LightningModule):
 
 
     def forward(self, batch):
-            """Compute the Conditional Flow-Matching loss."""
-            hard_data = batch["hard"]["data"]
-            hard_mask = batch["hard"]["mask"]
-            reco_data = batch["reco"]["data"]
-            reco_mask = batch["reco"]["mask"]
-
-            # Safety checks #
-            assert len(hard_data) == len(self.hard_embeddings), f'{len(hard_data)} hard objects but {len(self.hard_embeddings)} hard embeddings'
-            assert len(hard_mask) == len(self.hard_embeddings), f'{len(hard_mask)} hard objects but {len(self.hard_embeddings)} hard embeddings'
-            assert len(reco_data) == len(self.reco_embeddings), f'{len(reco_data)} reco objects but {len(self.reco_embeddings)} reco embeddings'
-            assert len(reco_mask) == len(self.reco_embeddings), f'{len(reco_mask)} reco objects but {len(self.reco_embeddings)} reco embeddings'
-
-            # Use the MLP-based conditioning
-            context = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)  # [B, sum_reco, embed_dim]
-
-            # Pack the reco features
-            x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)  # [B, sum_reco, len_flow_feats]
-            B, sum_reco_tokens, len_flow_feats = x_real.shape
-
-            # Initialize the bridging distribution
-            x0 = torch.randn_like(x_real)  # Ranom Gaussian distribution. Shape: [B, sum_reco, len_flow_feats]
-            x1 = x_real
-            t = torch.rand(B, device=x_real.device)  # Each event within a batch gets a random timestep
-
-            # Child classes using OT can perform pairing logic if needed
-            paired_x0, paired_x1 = self.get_bridging_pair(x0, x1)
-
-            # We want to transform from Gaussian noise to the reco data, conditioned on hard data:
-            x_t = self.bridging_distribution(paired_x0, paired_x1, t)  # [B, sum_reco, len_flow_feats]
-
-            # Compute the velocity vector
-            v_pred = self.compute_velocity(context, x_t, t)  # [B, sum_reco, len_flow_feats]
-
-            # Calculate the TRUE velocity vector
-            v_true = self.velocity_target(paired_x0, paired_x1, x_t, t)
-
-            # Compute element-wise squared errors, masked by feat_mask
-            diff = (v_pred - v_true) ** 2 * feat_mask  # [B, sum_reco, len_flow_feats]
-
-            return diff
-
-
-    def rk4_step(self, context, x, t_val, dt):
-        k1 = self.compute_velocity(context, x, t_val)
-        k2 = self.compute_velocity(context, x + 0.5*dt*k1, t_val + 0.5*dt)
-        k3 = self.compute_velocity(context, x + 0.5*dt*k2, t_val + 0.5*dt)
-        k4 = self.compute_velocity(context, x +     dt*k3, t_val +     dt)
-        return x + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
-
-
-    def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10, store_trajectories=False):
         """
-        Generate N_sample new saomples by evolving the bridging distribution using the learned velocity field.
+        Autoregressive teacher forcing forward.
+        For each reco particle token, the features are updated group-by-group.
+        The prediction (velocity) is computed on the bridging sample (x_t) rather than the ground-truth x1.
+        """
+        hard_data = batch["hard"]["data"]
+        hard_mask = batch["hard"]["mask"]
+        reco_data = batch["reco"]["data"]
+        reco_mask = batch["reco"]["mask"]
 
-        Args:
-            hard_data: List of tensors, 1 per hard particle type, shape [batch_size, particles, features]
-            hard_mask_exist: List of tensors, 1 per hard particle type, shape [batch_size, particles, features]
-            reco_data: List of tensors, 1 per reco particle type, shape [batch_size, particles, features]
-            reco_mask_exist: List of tensors, 1 per reco particle type, shape [batch_size, particles, features]
-            N_sample: Number of samples to generate
-            steps: Number of Euler integration steps for bridging
-            store_trajectories: bool, If True, record intermediate states for plotting
+        # Safety checks as before...
+        assert len(hard_data) == len(self.hard_embeddings), \
+            f'{len(hard_data)} hard objects but {len(self.hard_embeddings)} hard embeddings'
+        assert len(hard_mask) == len(self.hard_embeddings), \
+            f'{len(hard_mask)} hard objects but {len(self.hard_embeddings)} hard embeddings'
+        assert len(reco_data) == len(self.reco_embeddings), \
+            f'{len(reco_data)} reco objects but {len(self.reco_embeddings)} reco embeddings'
+        assert len(reco_mask) == len(self.reco_embeddings), \
+            f'{len(reco_mask)} reco objects but {len(self.reco_embeddings)} reco embeddings'
 
+        # Obtain conditioning via Transformer.
+        transformer_out = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)
+        # Remove the null token.
+        context_all = transformer_out[:, 1:, :]  # [B, total_particles, embed_dim]
+        x_real, feat_mask, total_particles = self.pack_reco_features(reco_data, reco_mask)  # [B, total_particles, len_flow_feats]
+        B, _, _ = x_real.shape
+
+        # Build the autoregressive ordering over particles.
+        particle_order = []
+        for type_idx, num in enumerate(self.n_reco_particles_per_type):
+            particle_order.extend([type_idx] * num)
+
+        diff_list = []
+        token_idx = 0
+        for type_idx in particle_order:
+            # For each particle token, get the decoder context.
+            context_particle = context_all[:, token_idx:token_idx+1, :]  # [B, 1, embed_dim]
+            # For teacher forcing, sample x0 as noise and set x1 as ground-truth.
+            x0_particle = torch.randn(B, 1, self.len_flow_feats, device=x_real.device)
+            x1_particle = x_real[:, token_idx:token_idx+1, :]  # [B, 1, len_flow_feats]
+
+            # Determine the group structure for this particle.
+            groups = [2 if feat=="phi" else 1 for feat in self.flow_input_features[type_idx]]
+            particle_diff_groups = []
+            group_start = 0
+
+            # For each group in the particle, generate it sequentially.
+            for group_size in groups:
+                # Re-pair if needed.
+                paired_x0, paired_x1 = self.get_bridging_pair(x0_particle, x1_particle)
+                x0_group = paired_x0[:, :, group_start:group_start+group_size].squeeze(1)  # [B, group_size]
+                x1_group = paired_x1[:, :, group_start:group_start+group_size].squeeze(1)  # [B, group_size]
+                # Sample a random time for this group.
+                t_val = torch.rand(B, device=x_real.device)
+                # Compute the bridging sample *using x0_group and x1_group*.
+                x_t_group = self.bridging_distribution(x0_group, x1_group, t_val)  # [B, group_size]
+                # IMPORTANT FIX: Use x_t_group (not x1_group) when computing the velocity prediction.
+                v_pred = self.compute_velocity(context_particle, x_t_group, t_val)  # [B, 1]
+                v_true = self.velocity_target(x0_group, x1_group, x_t_group, t_val)  # [B, 1]
+                # Compute squared error and expand to group size.
+                group_error = (v_pred - v_true) ** 2  # [B, 1]
+                group_error_expanded = group_error.repeat(1, group_size)  # [B, group_size]
+                particle_diff_groups.append(group_error_expanded)
+                group_start += group_size
+
+            # Concatenate group errors to form the error for the particle.
+            particle_diff = torch.cat(particle_diff_groups, dim=1)  # [B, effective_dim]
+            effective_dim = sum([2 if feat=="phi" else 1 for feat in self.flow_input_features[type_idx]])
+            if effective_dim < self.len_flow_feats:
+                pad_width = self.len_flow_feats - effective_dim
+                pad_tensor = torch.zeros(B, pad_width, device=x_real.device, dtype=particle_diff.dtype)
+                particle_diff = torch.cat([particle_diff, pad_tensor], dim=1)
+            diff_list.append(particle_diff.unsqueeze(1))  # [B, 1, len_flow_feats]
+            token_idx += 1
+
+        diff = torch.cat(diff_list, dim=1)  # [B, total_particles, len_flow_feats]
+        return diff
+
+
+    def rk4_step_group(self, context, group_feature, t_val, dt):
+        """
+        Performs one RK4 step on a feature group.
+        Inputs:
+        - context: [B, 1, embed_dim]
+        - group_feature: [B, d] (d = 1 for scalar or 2 for circular)
+        - t_val: [B] current time
+        - dt: integration step
         Returns:
-            samples: List of tensors, one per reco type, final samples for each reco type, shape [N_sample, batch_size, particles, features]
-            trajectories: Tensor, intermediate states 2D, shape [N_sample, steps+1, B, sum_reco, 2]
+        - Updated group_feature of shape [B, d]
         """
-        N_reco = len(reco_data) # number of reco particle types
+        k1 = self.compute_velocity(context, group_feature, t_val)
+        k2 = self.compute_velocity(context, group_feature + 0.5 * dt * k1, t_val + 0.5 * dt)
+        k3 = self.compute_velocity(context, group_feature + 0.5 * dt * k2, t_val + 0.5 * dt)
+        k4 = self.compute_velocity(context, group_feature + dt * k3, t_val + dt)
+        return group_feature + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
-        samples = [ [] for _ in range(N_reco) ]  # Initialize list of final samples for each reco type
 
-        # We'll store the entire trajectory for each sample, over time steps
-        all_trajectories = [] if store_trajectories else None
 
-        for s in range(N_sample):
-            # Use the MLP-based conditioning
-            context = self.conditioning(hard_data, hard_mask_exist, reco_data, reco_mask_exist)  # [B, sum_reco, embed_dim]
+    def sample(
+        self,
+        hard_data,
+        hard_mask_exist,
+        reco_data,
+        reco_mask_exist,
+        N_sample=1,
+        steps=10,
+        store_trajectories=False,
+    ):
+        """
+        Autoregressively generate new samples for all reco particle types.
+        
+        This version generates not only particles sequentially but also their feature groups.
+        Each feature group is generated conditioned on the groups generated so far for that particle.
+        The final output has the same format as the non-autoregressive CFM:
+            a list of tensors (one per reco type) with shape [N_sample, B, particles, features].
+        """
+        samples = []  # Will collect one sample (i.e. a list-of-reco-tensors) per N_sample
+        traj_all = [] if store_trajectories else None
 
-            # Pack the reco features
-            x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
-            B, sum_reco_tokens, len_flow_feats = x_real.shape
+        for sample_idx in range(N_sample):
+            B = hard_data[0].shape[0]
+            device = hard_data[0].device
 
-            # Initialize the bridging distribution
-            x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
-            x_t = x0.clone()
+            # --- Encoder: Process hard data ---
+            hard_mask_cat = torch.cat(hard_mask_exist, dim=1)
+            hard_emb = torch.cat(
+                [self.hard_embeddings[i](hard_data[i]) for i in range(len(self.hard_embeddings))],
+                dim=1,
+            )
+            hard_emb = hard_emb * hard_mask_cat[..., None]
+            if self.hard_mask_attn is None:
+                hard_mask_attn = hard_mask_cat
+            else:
+                hard_mask_attn = torch.logical_or(self.hard_mask_attn.to(device), hard_mask_cat)
+            if hard_mask_attn.dtype != torch.bool:
+                hard_mask_attn = hard_mask_attn > 0
+            encoder_output = self.transformer.encoder(hard_emb, src_key_padding_mask=hard_mask_attn)
 
-            # (optional) store states at each step if we want trajectories
-            if store_trajectories:
-                traj_states = [x_t.detach().cpu().clone()]
+            # --- Global Autoregressive Initialization ---
+            d_model = self.embed_dim
+            null_token = torch.ones((B, 1, d_model), device=device) * -1
+            # Global tokens: these are the tokens for complete particles.
+            generated_tokens = [null_token]  
+            particle_states = []  # To store the final state (feature vector) for each particle.
+            traj_particles_all = [] if store_trajectories else None
 
-            # RK4 ODE solver
-            dt = 1.0 / steps
-            for step_i in range(steps):
-                t_value = step_i * dt
-                t_ = torch.full((B,), t_value, device=x_t.device)
-                x_t = self.rk4_step(context, x_t, t_, dt)
+            # Determine particle ordering and group specifications.
+            particle_order = []
+            for type_idx, num in enumerate(self.n_reco_particles_per_type):
+                particle_order.extend([type_idx] * num)
+
+            # For each reco type, determine the group sizes.
+            group_specs = {}    # Maps type_idx -> list of group sizes.
+            effective_dims = {}  # Maps type_idx -> total effective feature dim.
+            for type_idx, flow_feats in enumerate(self.flow_input_features):
+                groups = [2 if feat == "phi" else 1 for feat in flow_feats]
+                group_specs[type_idx] = groups
+                effective_dims[type_idx] = sum(groups)
+
+            # --- Autoregressive Generation Loop ---
+            for type_idx in particle_order:
+                # For the current particle, we generate its feature groups sequentially.
+                local_group_tokens = []  # Will hold tokens for the groups of this particle.
+                group_states = []  # To store the final state of each group.
+                groups = group_specs[type_idx]
+                # For each feature group:
+                for group_size in groups:
+                    # Build the current local autoregressive sequence:
+                    if local_group_tokens:
+                        # Concatenate global tokens with already-generated group tokens.
+                        current_seq = torch.cat(generated_tokens + local_group_tokens, dim=1)
+                    else:
+                        current_seq = torch.cat(generated_tokens, dim=1)
+                    tgt_mask = self.transformer.generate_square_subsequent_mask(current_seq.size(1)).to(device)
+                    dec_out = self.transformer.decoder(current_seq, encoder_output, tgt_mask=tgt_mask)
+                    # Use the last token as the condition for this group.
+                    token_context = dec_out[:, -1:, :]  # [B, 1, d_model]
+
+                    # Initialize the group state with random noise.
+                    current_group = torch.randn(B, group_size, device=device)
+                    dt = 1.0 / steps
+                    traj_group = [] if store_trajectories else None
+                    for step in range(steps):
+                        t_val = torch.full((B,), step * dt, device=device)
+                        current_group = self.rk4_step_group(token_context, current_group, t_val, dt)
+                        if store_trajectories:
+                            traj_group.append(current_group.detach().cpu())
+                    if store_trajectories:
+                        traj_group = torch.stack(traj_group, dim=0)  # [steps, B, group_size]
+                    # Compute a token for this group using the appropriate partial embed.
+                    if group_size == 1:
+                        group_token = self.partial_embed_scalar(current_group)  # [B, embed_dim]
+                    elif group_size == 2:
+                        group_token = self.partial_embed_circular(current_group)  # [B, embed_dim]
+                    else:
+                        raise ValueError("Unexpected group size")
+                    group_token = group_token.unsqueeze(1)  # [B, 1, embed_dim]
+                    local_group_tokens.append(group_token)
+                    group_states.append(current_group)
+                # End of groups for this particle.
+                # Concatenate group states along the feature axis.
+                particle_state = torch.cat(group_states, dim=1)  # [B, effective_dim]
+                # Pad if necessary to match self.len_flow_feats.
+                if effective_dims[type_idx] < self.len_flow_feats:
+                    pad_width = self.len_flow_feats - effective_dims[type_idx]
+                    pad_tensor = torch.zeros(B, pad_width, device=device)
+                    particle_state = torch.cat([particle_state, pad_tensor], dim=1)
+                particle_states.append(particle_state.unsqueeze(1))  # [B, 1, len_flow_feats]
+                # Update the global autoregressive sequence: compute a full particle token.
+                full_token = self.flow_to_embed(particle_state)  # [B, embed_dim]
+                generated_tokens.append(full_token.unsqueeze(1))
+                # (Optionally, you can also store the local group trajectories for analysis.)
                 if store_trajectories:
-                    # record partial features for plotting
-                    traj_states.append(x_t.detach().cpu().clone())
+                    traj_particles_all.append(local_group_tokens)
 
-           # If storing, stack the states: shape [steps+1, B, sum_reco, 2]
+            # --- Repackage Generated Particle States ---
+            # Concatenate particle states: [B, total_particles, len_flow_feats]
+            x_t_full = torch.cat(particle_states, dim=1)
+            # Use the existing unpacking function to recover per-reco-type tensors.
+            reco_samples = self.unpack_reco_samples(x_t_full, reco_mask_exist)
+            samples.append(reco_samples)
+
+            # Trajectory repackaging (placeholder)
             if store_trajectories:
-                traj_states = torch.stack(traj_states, dim=0)  # [steps+1, B, sum_reco, 2]
-                all_trajectories.append(traj_states)
+                traj_all = None
 
-            # Unpack samples
-            reco_samples = self.unpack_reco_samples(x_t, reco_mask_exist)  # List of [B, particles, features]
-            for i in range(N_reco): # Append samples
-                samples[i].append(reco_samples[i])  # Append [B, particles, features] to list for reco particle type i
-
-        # Stack Samples per Reco Type
-        samples = [torch.stack(s, dim=0) for s in samples]  # List of [N_sample, B, particles, features]
-
-        # If we collected trajectories
-        if store_trajectories:
-            # shape [N_sample, steps+1, B, sum_reco, 2]
-            all_trajectories = torch.stack(all_trajectories, dim=0)
-            return samples, all_trajectories
+        # Rearrange samples so that we have one tensor per reco type with shape:
+        # [N_sample, B, particles, features]
+        if samples and samples[0]:
+            N_total = len(samples)
+            N_reco = len(samples[0])
+            samples_by_type = [
+                torch.stack([samples[s][r] for s in range(N_total)], dim=0)
+                for r in range(N_reco)
+            ]
         else:
-            return samples
+            raise RuntimeError("No samples generated. Check sampling logic.")
+
+        if store_trajectories:
+            return samples_by_type, traj_all
+        else:
+            return samples_by_type
+
+
 
 
 
@@ -682,6 +914,7 @@ class TargetBridgingCFM(BaseCFM):
         # Ignore x0 here
 
         t = pad_t_like_x(t, x0)
+
         # Sample noise and store it in self.last_eps for use in the velocity target.
         self.last_eps = torch.randn_like(x1)
         sigma_t = 1.0 - (1.0 - self.sigma) * t # Compute time-dependent std

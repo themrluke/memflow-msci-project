@@ -67,7 +67,7 @@ class BaseCFM(L.LightningModule):
     Serves as a parent class for other methods.
     Subclasses can override the bridging logic.
     Handles:
-        - MLP-based conditioning
+        - Transformer-based conditioning
         - Feature packing/unpacking
         - Velocity network
         - Data flow in forward()
@@ -124,6 +124,18 @@ class BaseCFM(L.LightningModule):
         self._optimizer = optimizer
         self._scheduler_config = scheduler_config
 
+        # Handle attention masks
+        # If no attention mask provided, the existence masks are used: Model attends to all particles in event
+        if reco_mask_attn is None:
+            self.reco_mask_attn = None
+            print("No reco attention mask provided; will use existence mask only.")
+        else:
+            # Add a single True for the null token
+            self.reco_mask_attn = torch.cat((torch.tensor([True]), reco_mask_attn), dim=0)
+        if hard_mask_attn is None:
+            print("No hard attention mask provided; will use existence mask only.")
+        self.hard_mask_attn = hard_mask_attn
+
         # Safety checks
         assert len(n_reco_particles_per_type) == len(reco_input_features_per_type), \
             f'{len(n_reco_particles_per_type)} sets of reco particles but got {len(reco_input_features_per_type)} sets of input features'
@@ -151,13 +163,23 @@ class BaseCFM(L.LightningModule):
         self.hard_embeddings = self.make_embeddings(self.hard_input_features_per_type)
         self.reco_embeddings = self.make_embeddings(self.reco_input_features_per_type, onehot_dim)
 
-        # Build MLP
-        global_dim = len(self.hard_embeddings) * self.embed_dim
-        self.condition_net = nn.Sequential(
-            nn.Linear(global_dim, self.embed_dim),
-            nn.ReLU(),
-            nn.Linear(self.embed_dim, self.embed_dim)
-        )
+        # Build Transformer
+        if 'd_model' in transformer_args.keys():
+            print (f'Transformer args: will override `d_model` to {self.embed_dim}')
+        transformer_args["d_model"] = self.embed_dim # Ensure transformer internal feature dimension matches embedding size
+        if "dropout" not in transformer_args:
+            transformer_args["dropout"] = self.dropout
+        self.transformer = nn.Transformer(batch_first=True, **transformer_args) # By default nn.Transformer expects (seq_length, batch_size, feature_dim)
+        self.norm = nn.LayerNorm(self.embed_dim)  # Apply LayerNorm after Transformer
+
+        # Missing particles across events are padded, therefore able to create one global tgt_mask:
+        # (assume sum(n_reco_particles_per_type)+1 is the same for all events)
+        self.max_reco_len = sum(self.n_reco_particles_per_type) + 1
+        self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
+
+        # Create a projection layer to map the current state (of shape [B, sum_reco, len_flow_feats])
+        # to the transformer’s embedding space (of dimension self.embed_dim)
+        self.state_proj = nn.Linear(self.len_flow_feats, self.embed_dim)
 
         # Velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
@@ -256,31 +278,67 @@ class BaseCFM(L.LightningModule):
             }
 
 
-    def conditioning(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist):
+    def conditioning(self, hard_data, hard_mask_exist, current_state, reco_mask_exist):
         """
-        Computes the conditioning context for the CFM model using an MLP.
-        Instead of processing the hard data via a Transformer with causal masking,
-        we simply embed each hard object, average over its particles, concatenate the resulting
-        event-level representations, and pass them through a DNN to get an event-level context.
-        This context is then broadcast to all reco tokens.
-        """
-        hard_contexts = []
-        for i in range(len(hard_data)):
-            # Embed hard inputs: shape [B, num_particles, embed_dim]
-            embedded = self.hard_embeddings[i](hard_data[i])
-            # Compute average over particles (you could also use masking here if needed)
-            avg_context = embedded.mean(dim=1)  # shape: [B, embed_dim]
-            hard_contexts.append(avg_context)
-        # Concatenate all hard contexts: shape [B, embed_dim * num_hard_types]
-        global_hard = torch.cat(hard_contexts, dim=1)
-        # Pass through the conditioning network
-        event_context = self.condition_net(global_hard)  # shape: [B, embed_dim]
-        # Determine total number of reco tokens across types
-        total_reco = sum([data.shape[1] for data in reco_data])
-        # Broadcast event-level context to all reco tokens: [B, total_reco, embed_dim]
-        context = event_context.unsqueeze(1).repeat(1, total_reco, 1)
+        Time-dependent conditioning.
+        Instead of using a fixed reco_data, we use the current diffusion state.
 
-        return context
+        Args:
+            hard_data: list of tensors (per hard type), shape [B, particles, features]
+            hard_mask_exist: list of existence masks for hard data
+            current_state: tensor of shape [B, sum_reco, len_flow_feats] representing the current diffusion state
+            reco_mask_exist: list of tensors (per reco type) representing the existence masks
+
+        Returns:
+            Transformer output of shape [B, sum_reco+1, embed_dim].
+        """
+        B = current_state.shape[0]
+        # Project the current state into embedding space
+        x_t_emb = self.state_proj(current_state)  # [B, sum_reco, embed_dim]
+        # Add a null token (as before) at the beginning along the particle axis
+        null_token = torch.ones((B, 1, self.embed_dim), device=current_state.device) * -1
+        tgt = torch.cat([null_token, x_t_emb], dim=1)  # [B, sum_reco+1, embed_dim]
+
+        # Process the hard data exactly as in BaseCFM
+        hard_mask_exist_cat = torch.cat(hard_mask_exist, dim=1)
+        hard_data_emb = torch.cat(
+            [self.hard_embeddings[i](hard_data[i]) for i in range(len(self.hard_embeddings))],
+            dim=1
+        ) * hard_mask_exist_cat[..., None]
+
+        # For key padding masks: use the same logic as in BaseCFM.
+        if self.hard_mask_attn is None:
+            hard_mask_attn = hard_mask_exist_cat
+        else:
+            hard_mask_attn = torch.logical_or(
+                self.hard_mask_attn.to(hard_mask_exist_cat.device),
+                hard_mask_exist_cat,
+            )
+        # For the decoder target mask, combine the reco masks.
+        reco_mask_exist_cat = torch.cat(reco_mask_exist, dim=1)
+        # Add a True for the null token.
+        null_mask = torch.ones((B, 1), device=current_state.device, dtype=reco_mask_exist_cat.dtype)
+        tgt_mask = torch.cat([null_mask, reco_mask_exist_cat], dim=1)
+        
+        # Convert masks to the expected float masks (True -> 0, False -> -inf)
+        if hard_mask_attn.dtype != torch.bool:
+            hard_mask_attn = hard_mask_attn > 0
+        if tgt_mask.dtype != torch.bool:
+            tgt_mask = tgt_mask > 0
+        hard_mask_attn = torch.zeros_like(hard_mask_attn, dtype=torch.float32).masked_fill(~hard_mask_attn, float("-inf"))
+        tgt_mask_processed = torch.zeros_like(tgt_mask, dtype=torch.float32).masked_fill(~tgt_mask, float("-inf"))
+        
+        # Use the existing tgt_mask for causality (unchanged)
+        transformer_out = self.transformer(
+            src = hard_data_emb,         # Encoder (hard) input
+            tgt = tgt,                   # Decoder (current state) input
+            tgt_mask = self.tgt_mask.to(current_state.device),
+            src_key_padding_mask = hard_mask_attn,
+            memory_key_padding_mask = hard_mask_attn,
+            tgt_key_padding_mask = tgt_mask_processed,
+        )
+        transformer_out = self.norm(transformer_out)
+        return transformer_out
 
 
     def get_bridging_pair(self, x0, x1):
@@ -302,6 +360,7 @@ class BaseCFM(L.LightningModule):
         Compute velocity vector using the `velocity_net` network.
         """
         B, sum_reco_tokens, _ = context.shape
+        # Prepare net_in to include: transformer contex, current state, timestep
         net_in = torch.cat([
             context.reshape(B * sum_reco_tokens, -1),          # [B*sum_reco, embed_dim]
             x_t.reshape(B * sum_reco_tokens, self.len_flow_feats),
@@ -490,9 +549,6 @@ class BaseCFM(L.LightningModule):
             assert len(reco_data) == len(self.reco_embeddings), f'{len(reco_data)} reco objects but {len(self.reco_embeddings)} reco embeddings'
             assert len(reco_mask) == len(self.reco_embeddings), f'{len(reco_mask)} reco objects but {len(self.reco_embeddings)} reco embeddings'
 
-            # Use the MLP-based conditioning
-            context = self.conditioning(hard_data, hard_mask, reco_data, reco_mask)  # [B, sum_reco, embed_dim]
-
             # Pack the reco features
             x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask)  # [B, sum_reco, len_flow_feats]
             B, sum_reco_tokens, len_flow_feats = x_real.shape
@@ -507,6 +563,12 @@ class BaseCFM(L.LightningModule):
 
             # We want to transform from Gaussian noise to the reco data, conditioned on hard data:
             x_t = self.bridging_distribution(paired_x0, paired_x1, t)  # [B, sum_reco, len_flow_feats]
+
+            # Get the Transformer output
+            transformer_out = self.conditioning(hard_data, hard_mask, x_t, reco_mask)  # [B, sum_reco+1, embed_dim]
+
+            # Remove the null token
+            context = transformer_out[:, 1:, :]  # [B, sum_reco, embed_dim]
 
             # Compute the velocity vector
             v_pred = self.compute_velocity(context, x_t, t)  # [B, sum_reco, len_flow_feats]
@@ -530,20 +592,9 @@ class BaseCFM(L.LightningModule):
 
     def sample(self, hard_data, hard_mask_exist, reco_data, reco_mask_exist, N_sample=1, steps=10, store_trajectories=False):
         """
-        Generate N_sample new saomples by evolving the bridging distribution using the learned velocity field.
-
-        Args:
-            hard_data: List of tensors, 1 per hard particle type, shape [batch_size, particles, features]
-            hard_mask_exist: List of tensors, 1 per hard particle type, shape [batch_size, particles, features]
-            reco_data: List of tensors, 1 per reco particle type, shape [batch_size, particles, features]
-            reco_mask_exist: List of tensors, 1 per reco particle type, shape [batch_size, particles, features]
-            N_sample: Number of samples to generate
-            steps: Number of Euler integration steps for bridging
-            store_trajectories: bool, If True, record intermediate states for plotting
-
-        Returns:
-            samples: List of tensors, one per reco type, final samples for each reco type, shape [N_sample, batch_size, particles, features]
-            trajectories: Tensor, intermediate states 2D, shape [N_sample, steps+1, B, sum_reco, 2]
+        Generate samples by evolving the bridging distribution with time-dependent conditioning.
+        At each integration step, the transformer condition is re-computed using the current state.
+        The input/output formats remain identical to your original implementation.
         """
         N_reco = len(reco_data) # number of reco particle types
 
@@ -551,14 +602,12 @@ class BaseCFM(L.LightningModule):
 
         # We'll store the entire trajectory for each sample, over time steps
         all_trajectories = [] if store_trajectories else None
-
+        
+        # Pack the reco features
+        x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
+        B, sum_reco_tokens, len_flow_feats = x_real.shape
+        
         for s in range(N_sample):
-            # Use the MLP-based conditioning
-            context = self.conditioning(hard_data, hard_mask_exist, reco_data, reco_mask_exist)  # [B, sum_reco, embed_dim]
-
-            # Pack the reco features
-            x_real, feat_mask, sum_reco = self.pack_reco_features(reco_data, reco_mask_exist)  # [B, sum_reco, len_flow_feats]
-            B, sum_reco_tokens, len_flow_feats = x_real.shape
 
             # Initialize the bridging distribution
             x0 = torch.randn_like(x_real)  # [B, sum_reco, len_flow_feats]
@@ -573,6 +622,9 @@ class BaseCFM(L.LightningModule):
             for step_i in range(steps):
                 t_value = step_i * dt
                 t_ = torch.full((B,), t_value, device=x_t.device)
+                # Recompute time-dependent conditioning using the current state x_t.
+                conditions = self.conditioning(hard_data, hard_mask_exist, x_t, reco_mask_exist)  # [B, sum_reco+1, embed_dim]
+                context = conditions[:, 1:, :] # Remove null token, shape [B, sum_reco, embed_dim]
                 x_t = self.rk4_step(context, x_t, t_, dt)
                 if store_trajectories:
                     # record partial features for plotting
