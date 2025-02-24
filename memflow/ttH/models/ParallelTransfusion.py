@@ -177,12 +177,9 @@ class BaseCFM(L.LightningModule):
         self.max_reco_len = sum(self.n_reco_particles_per_type) + 1
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
 
-        # Ensure that self.embed_dim = self.embed_dims[-1] (already set in your code)
-        self.state_embedding = nn.Sequential(
-            nn.Linear(self.len_flow_feats, self.embed_dim),
-            nn.ReLU(),
-            nn.Linear(self.embed_dim, self.embed_dim)
-        )
+        # Generate state embeddings for x_t (supports multiple feature sets)
+        self.state_embeddings = self.make_state_embeddings(self.flow_input_features)
+
 
         self.time_embedding = nn.Sequential(
             nn.Linear(1, self.embed_dim),
@@ -271,6 +268,51 @@ class BaseCFM(L.LightningModule):
 
         return embeddings
 
+    def make_state_embeddings(self, flow_input_features):
+        """
+        Creates embedding layers for different state (x_t) feature sets.
+        Ensures inputs with identical structures share the same embedding layers.
+        Since phi is already expanded (sin, cos) in x_t, the effective input dimension
+        is len(features) + 1 if 'phi' is in the feature set.
+        
+        Args:
+            flow_input_features: List of feature names for each particle type (already expanded for phi)
+        
+        Returns:
+            embeddings: nn.ModuleList containing embedding layers for each particle type.
+        """
+        feature_embeddings = {}  # Dictionary to store shared embeddings
+        embeddings = nn.ModuleList()  # List to hold the embedding layers
+
+        for features in flow_input_features:  # Iterate over each feature set
+            if not isinstance(features, tuple):
+                features = tuple(features)  # Ensure features are immutable tuples
+
+            key = tuple(features)  # Use feature structure as key
+            print(features)
+            # Compute effective input dimension.
+            in_dim = len(features)
+            if "phi" in features:
+                in_dim += 1  # Because phi now has 2 values instead of 1.
+
+            if key not in feature_embeddings:  # If no embedding for this structure yet.
+                layers = []
+                for i, out_dim in enumerate(self.embed_dims):
+                    if i == 0:
+                        layers.append(nn.Linear(in_dim, out_dim))
+                    else:
+                        layers.append(nn.Linear(self.embed_dims[i - 1], out_dim))
+                    if self.embed_act is not None and i < len(self.embed_dims) - 1:
+                        layers.append(self.embed_act())
+                    if self.dropout != 0.0:
+                        layers.append(nn.Dropout(self.dropout))
+                embedding = nn.Sequential(*layers)
+                feature_embeddings[key] = embedding
+            embeddings.append(feature_embeddings[key])
+
+        return embeddings
+
+
 
     # Methods to set optimizer and scheduler externally after model initialization
     def set_optimizer(self, optimizer):
@@ -302,58 +344,50 @@ class BaseCFM(L.LightningModule):
         Args:
             hard_data: list of tensors, one per hard object type, shape [B, particles, features]
             hard_mask_exist: list of tensors, one per hard object type, shape [B, particles]
-            x_t: tensor, shape [B, total_particles, flow_feature_dim] from bridging_distribution
-                (e.g. [1024, 7, 4]; note that phi is already expanded for flow features)
-            state_mask_exist: list of tensors (one per reco type) or a tensor corresponding to x_t’s valid entries
+            x_t: tensor, shape [B, total_particles, len_flow_feats] from bridging_distribution.
+                (For example, for jets: [B, n_jets, 4] and for MET: [B, n_MET, 3], concatenated along particle axis)
+            state_mask_exist: list of tensors, one per reco type, each of shape [B, n_particles]
             t: tensor of timesteps for each batch element; may come as shape [B] or [B, 1]
 
         Returns:
             condition: tensor from the Transformer, shape [B, total_particles+1, d_model]
         """
+        B = x_t.shape[0]
+
         # ----- Process hard data (encoder input) -----
-        hard_mask_exist_cat = torch.cat(hard_mask_exist, dim=1)
+        hard_mask_exist_cat = torch.cat(hard_mask_exist, dim=1)  # [B, total_hard]
         hard_emb = torch.cat(
             [self.hard_embeddings[i](hard_data[i]) for i in range(len(self.hard_embeddings))],
             dim=1
-        ) * hard_mask_exist_cat[..., None]
-        
+        ) * hard_mask_exist_cat[..., None]  # [B, total_hard, d_model]
+
         # ----- Process current state x_t (decoder input) -----
-        # Add a null token along the particle axis.
-        null_token = torch.ones((x_t.shape[0], 1, x_t.shape[2]), device=x_t.device) * -1
-        x_t_null = torch.cat((null_token, x_t), dim=1)  # [B, total_particles+1, flow_feature_dim]
-        
-        # Process state mask: if it's a list, convert it to a single tensor as in the original logic.
-        if isinstance(state_mask_exist, list):
-            state_mask_exist_null_list = [
-                torch.cat(
-                    (
-                        torch.full((state_mask_exist[0].shape[0], 1), fill_value=True,
-                                device=state_mask_exist[0].device, dtype=state_mask_exist[0].dtype),
-                        state_mask_exist[0]
-                    ),
-                    dim=1
-                )
-            ]
-            for mask in state_mask_exist[1:]:
-                state_mask_exist_null_list.append(mask.clone())
-            state_mask_exist_null = torch.cat(state_mask_exist_null_list, dim=1)
-        else:
-            null_mask = torch.ones((state_mask_exist.shape[0], 1), device=state_mask_exist.device, dtype=state_mask_exist.dtype)
-            state_mask_exist_null = torch.cat((null_mask, state_mask_exist), dim=1)
-        
-        # ----- (Optional) Onehot encoding -----
-        if self.onehot_encoding:
-            # Assume a single reco type; use the first onehot tensor.
-            onehot = self.onehot_tensors[0]
-            onehot_expanded = onehot.repeat(x_t_null.shape[0], x_t_null.shape[1], 1).to(x_t_null.device)
-            x_t_null = torch.cat((x_t_null, onehot_expanded), dim=2)
-        
-        # ----- Embed the current state using dedicated state embedding (avoiding circular phi expansion) -----
-        state_emb = self.state_embedding(x_t_null) * state_mask_exist_null[..., None]
-        
+        state_emb_list = []
+        mask_list = []
+        offset = 0
+        # For each particle type, slice x_t using the effective dimension.
+        for i, features in enumerate(self.flow_input_features):
+            # Compute effective input dimension: add 1 if "phi" is present.
+            effective_dim = len(features) + (1 if "phi" in features else 0)
+            n = self.n_reco_particles_per_type[i]  # number of particles for this type
+            slice_state = x_t[:, offset:offset+n, :effective_dim]  # [B, n, effective_dim]
+            # Apply the dedicated state embedding for type i.
+            emb_i = self.state_embeddings[i](slice_state)  # [B, n, d_model]
+            state_emb_list.append(emb_i)
+            mask_list.append(state_mask_exist[i])  # [B, n]
+            offset += n
+        # Concatenate state embeddings and masks across types.
+        state_emb = torch.cat(state_emb_list, dim=1)   # [B, total_particles, d_model]
+        state_mask_cat = torch.cat(mask_list, dim=1)      # [B, total_particles]
+
+        # Prepend a null token (as in the original code) to the state embeddings and its mask.
+        null_token_emb = torch.ones((B, 1, state_emb.shape[2]), device=state_emb.device) * -1
+        state_emb = torch.cat((null_token_emb, state_emb), dim=1)  # [B, total_particles+1, d_model]
+        null_mask = torch.ones((B, 1), device=state_mask_cat.device, dtype=state_mask_cat.dtype)
+        state_mask_cat = torch.cat((null_mask, state_mask_cat), dim=1)  # [B, total_particles+1]
+
         # ----- Incorporate time embedding -----
         # Ensure t is of shape [B, 1]
-        B = x_t.shape[0]
         if t.dim() == 1:
             t = t.unsqueeze(1)
         if t.shape[0] != B:
@@ -361,7 +395,7 @@ class BaseCFM(L.LightningModule):
         time_emb = self.time_embedding(t)  # [B, d_model]
         time_emb_expanded = time_emb.unsqueeze(1).expand_as(state_emb)
         state_emb = state_emb + time_emb_expanded
-        
+
         # ----- Prepare attention masks -----
         if self.hard_mask_attn is None:
             hard_mask_attn = hard_mask_exist_cat
@@ -371,11 +405,11 @@ class BaseCFM(L.LightningModule):
                 hard_mask_exist_cat,
             )
         if self.reco_mask_attn is None:
-            state_mask_attn = state_mask_exist_null
+            state_mask_attn = state_mask_cat
         else:
             state_mask_attn = torch.logical_or(
-                self.reco_mask_attn.to(state_mask_exist_null.device),
-                state_mask_exist_null,
+                self.reco_mask_attn.to(state_mask_cat.device),
+                state_mask_cat,
             )
         if hard_mask_attn.dtype != torch.bool:
             hard_mask_attn = hard_mask_attn > 0
@@ -383,7 +417,7 @@ class BaseCFM(L.LightningModule):
             state_mask_attn = state_mask_attn > 0
         hard_mask_attn = torch.zeros_like(hard_mask_attn, dtype=torch.float32).masked_fill(~hard_mask_attn, float("-inf"))
         state_mask_attn = torch.zeros_like(state_mask_attn, dtype=torch.float32).masked_fill(~state_mask_attn, float("-inf"))
-        
+
         # ----- Transformer processing -----
         condition = self.transformer(
             src = hard_emb,                          # Encoder input from hard data.
