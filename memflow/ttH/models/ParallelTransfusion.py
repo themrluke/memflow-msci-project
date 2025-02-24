@@ -177,10 +177,20 @@ class BaseCFM(L.LightningModule):
         self.max_reco_len = sum(self.n_reco_particles_per_type) + 1
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.max_reco_len)
 
-        # Create a projection layer to map the current state (of shape [B, sum_reco, len_flow_feats])
-        # to the transformer’s embedding space (of dimension self.embed_dim)
-        self.state_proj = nn.Linear(self.len_flow_feats, self.embed_dim)
-        self.time_proj = nn.Linear(1, self.embed_dim)
+        # Ensure that self.embed_dim = self.embed_dims[-1] (already set in your code)
+        self.state_embedding = nn.Sequential(
+            nn.Linear(self.len_flow_feats, self.embed_dim),
+            nn.ReLU(),
+            nn.Linear(self.embed_dim, self.embed_dim)
+        )
+
+        self.time_embedding = nn.Sequential(
+            nn.Linear(1, self.embed_dim),
+            nn.ReLU(),
+            nn.Linear(self.embed_dim, self.embed_dim)
+        )
+
+
 
         # Velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
@@ -283,32 +293,76 @@ class BaseCFM(L.LightningModule):
             }
 
 
-    def conditioning(self, hard_data, hard_mask_exist, current_state, reco_mask_exist, t):
+    
+    def conditioning(self, hard_data, hard_mask_exist, x_t, state_mask_exist, t):
         """
-        Time-dependent conditioning using the current diffusion state (x_t) and timestep (t).
+        Computes the conditioning context for the parallel transfusion CFM model by encoding hard data
+        and the current state x_t (augmented with time) using a Transformer.
+
+        Args:
+            hard_data: list of tensors, one per hard object type, shape [B, particles, features]
+            hard_mask_exist: list of tensors, one per hard object type, shape [B, particles]
+            x_t: tensor, shape [B, total_particles, flow_feature_dim] from bridging_distribution
+                (e.g. [1024, 7, 4]; note that phi is already expanded for flow features)
+            state_mask_exist: list of tensors (one per reco type) or a tensor corresponding to x_t’s valid entries
+            t: tensor of timesteps for each batch element; may come as shape [B] or [B, 1]
+
+        Returns:
+            condition: tensor from the Transformer, shape [B, total_particles+1, d_model]
         """
-        B = current_state.shape[0]
-        # Project the current state into embedding space
-        x_t_emb = self.state_proj(current_state)  # [B, sum_reco, embed_dim]
-
-        # Project t to embedding space and add to x_t_emb
-        t_reshaped = t.view(B, 1).expand(-1, current_state.shape[1])   # shape [B, sum_reco]
-        t_emb = self.time_proj(t_reshaped.unsqueeze(-1))               # shape [B*sum_reco, embed_dim] after flatten
-        t_emb = t_emb.view(B, current_state.shape[1], self.embed_dim)  # [B, sum_reco, embed_dim]
-        x_t_emb = x_t_emb + t_emb
-
-        # Add a null token (as before) at the beginning along the particle axis
-        null_token = torch.ones((B, 1, self.embed_dim), device=current_state.device) * -1
-        tgt = torch.cat([null_token, x_t_emb], dim=1)  # [B, sum_reco+1, embed_dim]
-
-        # Process the hard data exactly as in BaseCFM
+        # ----- Process hard data (encoder input) -----
         hard_mask_exist_cat = torch.cat(hard_mask_exist, dim=1)
-        hard_data_emb = torch.cat(
+        hard_emb = torch.cat(
             [self.hard_embeddings[i](hard_data[i]) for i in range(len(self.hard_embeddings))],
             dim=1
         ) * hard_mask_exist_cat[..., None]
-
-        # For key padding masks: use the same logic as in BaseCFM.
+        
+        # ----- Process current state x_t (decoder input) -----
+        # Add a null token along the particle axis.
+        null_token = torch.ones((x_t.shape[0], 1, x_t.shape[2]), device=x_t.device) * -1
+        x_t_null = torch.cat((null_token, x_t), dim=1)  # [B, total_particles+1, flow_feature_dim]
+        
+        # Process state mask: if it's a list, convert it to a single tensor as in the original logic.
+        if isinstance(state_mask_exist, list):
+            state_mask_exist_null_list = [
+                torch.cat(
+                    (
+                        torch.full((state_mask_exist[0].shape[0], 1), fill_value=True,
+                                device=state_mask_exist[0].device, dtype=state_mask_exist[0].dtype),
+                        state_mask_exist[0]
+                    ),
+                    dim=1
+                )
+            ]
+            for mask in state_mask_exist[1:]:
+                state_mask_exist_null_list.append(mask.clone())
+            state_mask_exist_null = torch.cat(state_mask_exist_null_list, dim=1)
+        else:
+            null_mask = torch.ones((state_mask_exist.shape[0], 1), device=state_mask_exist.device, dtype=state_mask_exist.dtype)
+            state_mask_exist_null = torch.cat((null_mask, state_mask_exist), dim=1)
+        
+        # ----- (Optional) Onehot encoding -----
+        if self.onehot_encoding:
+            # Assume a single reco type; use the first onehot tensor.
+            onehot = self.onehot_tensors[0]
+            onehot_expanded = onehot.repeat(x_t_null.shape[0], x_t_null.shape[1], 1).to(x_t_null.device)
+            x_t_null = torch.cat((x_t_null, onehot_expanded), dim=2)
+        
+        # ----- Embed the current state using dedicated state embedding (avoiding circular phi expansion) -----
+        state_emb = self.state_embedding(x_t_null) * state_mask_exist_null[..., None]
+        
+        # ----- Incorporate time embedding -----
+        # Ensure t is of shape [B, 1]
+        B = x_t.shape[0]
+        if t.dim() == 1:
+            t = t.unsqueeze(1)
+        if t.shape[0] != B:
+            t = t.transpose(0, 1)
+        time_emb = self.time_embedding(t)  # [B, d_model]
+        time_emb_expanded = time_emb.unsqueeze(1).expand_as(state_emb)
+        state_emb = state_emb + time_emb_expanded
+        
+        # ----- Prepare attention masks -----
         if self.hard_mask_attn is None:
             hard_mask_attn = hard_mask_exist_cat
         else:
@@ -316,31 +370,33 @@ class BaseCFM(L.LightningModule):
                 self.hard_mask_attn.to(hard_mask_exist_cat.device),
                 hard_mask_exist_cat,
             )
-        # For the decoder target mask, combine the reco masks.
-        reco_mask_exist_cat = torch.cat(reco_mask_exist, dim=1)
-        # Add a True for the null token.
-        null_mask = torch.ones((B, 1), device=current_state.device, dtype=reco_mask_exist_cat.dtype)
-        tgt_mask = torch.cat([null_mask, reco_mask_exist_cat], dim=1)
-        
-        # Convert masks to the expected float masks (True -> 0, False -> -inf)
+        if self.reco_mask_attn is None:
+            state_mask_attn = state_mask_exist_null
+        else:
+            state_mask_attn = torch.logical_or(
+                self.reco_mask_attn.to(state_mask_exist_null.device),
+                state_mask_exist_null,
+            )
         if hard_mask_attn.dtype != torch.bool:
             hard_mask_attn = hard_mask_attn > 0
-        if tgt_mask.dtype != torch.bool:
-            tgt_mask = tgt_mask > 0
+        if state_mask_attn.dtype != torch.bool:
+            state_mask_attn = state_mask_attn > 0
         hard_mask_attn = torch.zeros_like(hard_mask_attn, dtype=torch.float32).masked_fill(~hard_mask_attn, float("-inf"))
-        tgt_mask_processed = torch.zeros_like(tgt_mask, dtype=torch.float32).masked_fill(~tgt_mask, float("-inf"))
+        state_mask_attn = torch.zeros_like(state_mask_attn, dtype=torch.float32).masked_fill(~state_mask_attn, float("-inf"))
         
-        # Use the existing tgt_mask for causality (unchanged)
-        transformer_out = self.transformer(
-            src = hard_data_emb,         # Encoder (hard) input
-            tgt = tgt,                   # Decoder (current state) input
-            tgt_mask = None, # Particles can attend freely
+        # ----- Transformer processing -----
+        condition = self.transformer(
+            src = hard_emb,                          # Encoder input from hard data.
+            tgt = state_emb,                         # Decoder input: current state with time.
+            tgt_mask = self.tgt_mask.to(hard_emb.device),  # Triangular (causality) mask.
             src_key_padding_mask = hard_mask_attn,
             memory_key_padding_mask = hard_mask_attn,
-            tgt_key_padding_mask = tgt_mask_processed,
+            tgt_key_padding_mask = state_mask_attn,
         )
-        transformer_out = self.norm(transformer_out)
-        return transformer_out
+        condition = self.norm(condition)
+        return condition
+
+
 
 
     def get_bridging_pair(self, x0, x1):
