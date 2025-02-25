@@ -78,12 +78,18 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
                                         gen_data.shape[2],
                                         gen_data.shape[3])
         # For the real data, use the provided mask or create a dummy one.
+        print('REAL DATA SHAPE: ', real_data.shape[0], real_data.shape[1])
+        print('gen DATA SHAPE: ', gen_data.shape[0], gen_data.shape[1])
         if real_mask is not None:
             real_mask = real_mask.cpu()
         else:
             real_mask = torch.ones(real_data.shape[0], real_data.shape[1], dtype=torch.bool)
         # Create a dummy mask for gen_data of shape [batch, nParticles]
-        gen_mask = torch.ones(gen_data.shape[0], gen_data.shape[1], dtype=torch.bool)
+        #gen_mask = torch.ones(gen_data.shape[0], gen_data.shape[1], dtype=torch.bool)
+        # # Expand the reco mask to match the shape of gen_data
+        gen_mask = real_mask.unsqueeze(1).expand(-1, gen_data.shape[0] // real_mask.shape[0], -1)
+        gen_mask = gen_mask.reshape(gen_data.shape[0], gen_data.shape[1])  # Flatten back
+
 
         # Apply inverse preprocessing.
         real_data, _ = preprocessing.inverse(
