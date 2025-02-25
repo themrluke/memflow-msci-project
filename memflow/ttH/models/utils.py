@@ -64,10 +64,10 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     real_fields = model.reco_input_features_per_type[ptype_idx]  # e.g. ["pt", "eta", "phi", "E"]
     # For generated data, pick the corresponding fields using flow indices.
     gen_fields = [real_fields[idx] for idx in model.flow_indices[ptype_idx]]
-    
+
     if preprocessing is not None:
         name = model.reco_particle_type_names[ptype_idx]
-        
+
         # Move data to CPU.
         real_data = real_data.cpu()
         gen_data = gen_data.cpu()
@@ -78,18 +78,35 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
                                         gen_data.shape[2],
                                         gen_data.shape[3])
         # For the real data, use the provided mask or create a dummy one.
-        print('REAL DATA SHAPE: ', real_data.shape[0], real_data.shape[1])
-        print('gen DATA SHAPE: ', gen_data.shape[0], gen_data.shape[1])
         if real_mask is not None:
             real_mask = real_mask.cpu()
         else:
             real_mask = torch.ones(real_data.shape[0], real_data.shape[1], dtype=torch.bool)
-        # Create a dummy mask for gen_data of shape [batch, nParticles]
-        #gen_mask = torch.ones(gen_data.shape[0], gen_data.shape[1], dtype=torch.bool)
-        # # Expand the reco mask to match the shape of gen_data
-        gen_mask = real_mask.unsqueeze(1).expand(-1, gen_data.shape[0] // real_mask.shape[0], -1)
-        gen_mask = gen_mask.reshape(gen_data.shape[0], gen_data.shape[1])  # Flatten back
 
+        # Extract N_sample from the original shape of gen_data
+        N_sample = gen_data.shape[0] // real_data.shape[0]  # Number of samples per event
+
+        # Repeat real_mask along the first axis to align with gen_data
+        gen_mask = real_mask.repeat((N_sample, 1))  # Shape: (N_sample * B, nParticles)
+
+        # Print the mask itself for debugging
+        print("gen_mask shape:", gen_mask.shape)
+        print("real_mask shape:", real_mask.shape)
+
+        # Print the mask itself
+        print("gen_mask:", gen_mask.shape)
+        print('real mask: ', real_mask.shape)
+
+        # Calculate and print the percentage of masked jets
+        masked_percentage = 100 * (gen_mask == False).sum().item() / gen_mask.numel()
+        print(f"Percentage of masked jets: {masked_percentage:.2f}%")
+
+        # Calculate and print the percentage of masked jets
+        real_masked_percentage = 100 * (real_mask == False).sum().item() / real_mask.numel()
+        print(f"Percentage of real masked jets: {real_masked_percentage:.2f}%")
+
+        print('real data shape before inverse preprocessing', real_data.shape)
+        print('gen data shape before inverse preprocessing', gen_data.shape)
 
         # Apply inverse preprocessing.
         real_data, _ = preprocessing.inverse(
@@ -107,6 +124,7 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
 
     # --- Extract and flatten the feature values ---
     real_data = real_data[real_mask.bool()]
+    gen_data = gen_data[gen_mask.bool()]
 
     if ptype_idx == 1 and feat_idx == 1: # For MET, phi is at different element in sample data
         real_vals = real_data[..., feat_idx+1].cpu().numpy().ravel()
@@ -130,7 +148,7 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     total_real = np.sum(real_counts)
     total_gen = np.sum(gen_counts)
     real_errors = np.sqrt(real_counts) / (total_real * bin_widths)
-    gen_errors = np.sqrt(gen_counts) / (total_gen * bin_widths)
+    gen_errors = (np.sqrt(gen_counts) / (total_gen * bin_widths)) * np.sqrt(gen_data.shape[0] // real_data.shape[0])
 
     # --- Compute the ratio (Gen/Real) and propagate uncertainties ---
     ratio = np.divide(hist_gen, hist_real, where=hist_real > 0)
@@ -182,7 +200,7 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
                 axs[1].set_ylim(0.5, 1.5)
     else:
         axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
-    
+
     if ptype_idx == 0 and feat_idx == 2: # Jets phi
             axs[0].set_xlim(-math.pi, math.pi)
             #axs[1].set_ylim(0.95, 1.05)
