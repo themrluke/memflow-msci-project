@@ -214,6 +214,206 @@ def compare_distributions(model, real_data, gen_data, ptype_idx,
     return None
 
 
+def compare_distributions_multiple(model, real_data, gen_data_1, gen_data_2, ptype_idx,
+                                   feat_idx=0, nbins=50, feat_name="Feature",
+                                   preprocessing=None, real_mask=None, log_scale=False):
+    """
+    Compare histograms of real vs. two generated datasets for a single feature with a ratio subplot.
+
+    Parameters
+    ----------
+    model : object
+        Must have:
+          - reco_particle_type_names: list of str
+          - reco_input_features_per_type: list (per particle type) of list of str
+          - flow_indices: list (per particle type) of list of int
+    real_data, gen_data_1, gen_data_2 : torch.Tensor
+        Real data should have shape (B, nParticles, nFeatures).
+        Generated data may have an extra sample dimension, e.g. (N_sample, B, nParticles, nFeatures).
+    ptype_idx : int
+        Particle type index (to select the proper field names).
+    feat_idx : int
+        The feature indices (in the real and generated data) to compare.
+    nbins : int, optional
+        Number of histogram bins.
+    feat_name : str, optional
+        Label for the x-axis.
+    preprocessing : object, optional
+        A preprocessing object with an inverse() method.
+    real_mask : torch.Tensor, optional
+        A mask for the real data; if provided, it is used in the inverse() call.
+    log_scale : bool, optional
+        Whether to use logarithmic y-scale.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The created figure.
+    """
+
+    real_data = real_data[ptype_idx]
+    real_mask = real_mask[ptype_idx]
+    gen_data_1 = gen_data_1[ptype_idx]
+    gen_data_2 = gen_data_2[ptype_idx]
+
+    # Retrieve full field names from the model.
+    real_fields = model.reco_input_features_per_type[ptype_idx]
+    gen_fields = [real_fields[idx] for idx in model.flow_indices[ptype_idx]]
+
+    if preprocessing is not None:
+        name = model.reco_particle_type_names[ptype_idx]
+
+        # Move data to CPU.
+        real_data = real_data.cpu()
+        gen_data_1 = gen_data_1.cpu()
+        gen_data_2 = gen_data_2.cpu()
+
+        # Reshape generated data if it has extra sampling dimension
+        if gen_data_1.ndim == 4:
+            gen_data_1 = gen_data_1.reshape(gen_data_1.shape[0] * gen_data_1.shape[1], 
+                                            gen_data_1.shape[2], gen_data_1.shape[3])
+        if gen_data_2.ndim == 4:
+            gen_data_2 = gen_data_2.reshape(gen_data_2.shape[0] * gen_data_2.shape[1], 
+                                            gen_data_2.shape[2], gen_data_2.shape[3])
+
+        # Ensure real mask is on CPU
+        if real_mask is not None:
+            real_mask = real_mask.cpu()
+        else:
+            real_mask = torch.ones(real_data.shape[0], real_data.shape[1], dtype=torch.bool)
+
+        # Extract number of samples per event for generated data
+        N_sample_1 = gen_data_1.shape[0] // real_data.shape[0]
+        N_sample_2 = gen_data_2.shape[0] // real_data.shape[0]
+
+        # Repeat real_mask along the first axis to align with generated data
+        gen_mask_1 = real_mask.repeat((N_sample_1, 1))  # Shape: (N_sample_1 * B, nParticles)
+        gen_mask_2 = real_mask.repeat((N_sample_2, 1))  # Shape: (N_sample_2 * B, nParticles)
+
+        # Apply inverse preprocessing.
+        real_data, _ = preprocessing.inverse(name=name, x=real_data, mask=real_mask, fields=real_fields)
+        gen_data_1, _ = preprocessing.inverse(name=name, x=gen_data_1, mask=gen_mask_1, fields=gen_fields)
+        gen_data_2, _ = preprocessing.inverse(name=name, x=gen_data_2, mask=gen_mask_2, fields=gen_fields)
+
+    # --- Extract and flatten the feature values ---
+    real_data = real_data[real_mask.bool()]
+    gen_data_1 = gen_data_1[gen_mask_1.bool()]
+    gen_data_2 = gen_data_2[gen_mask_2.bool()]
+
+    if ptype_idx == 1 and feat_idx == 1: # For MET, phi is at different element in sample data
+        real_vals = real_data[..., feat_idx+1].cpu().numpy().ravel()
+    else:
+        real_vals = real_data[..., feat_idx].cpu().numpy().ravel()
+
+    gen_vals_1 = gen_data_1[..., feat_idx].cpu().numpy().ravel()
+    gen_vals_2 = gen_data_2[..., feat_idx].cpu().numpy().ravel()
+
+    # --- Compute histogram bins ---
+    bins = np.linspace(min(real_vals.min(), gen_vals_1.min(), gen_vals_2.min()),
+                       max(real_vals.max(), gen_vals_1.max(), gen_vals_2.max()),
+                       nbins + 1)
+
+    # --- Compute density-normalized histograms ---
+    hist_real, _ = np.histogram(real_vals, bins=bins, density=True)
+    hist_gen_1, _ = np.histogram(gen_vals_1, bins=bins, density=True)
+    hist_gen_2, _ = np.histogram(gen_vals_2, bins=bins, density=True)
+
+    # --- Compute Poisson uncertainties for generated data ---
+    real_counts, _ = np.histogram(real_vals, bins=bins)
+    gen_counts_1, _ = np.histogram(gen_vals_1, bins=bins)
+    gen_counts_2, _ = np.histogram(gen_vals_2, bins=bins)
+
+    bin_widths = np.diff(bins)
+    total_real = np.sum(real_counts)
+    total_gen_1 = np.sum(gen_counts_1)
+    total_gen_2 = np.sum(gen_counts_2)
+    real_errors = np.sqrt(real_counts) / (total_real * bin_widths)
+    gen_errors_1 = np.sqrt(gen_counts_1) / (total_gen_1 * bin_widths) * np.sqrt(N_sample_1)
+    gen_errors_2 = np.sqrt(gen_counts_2) / (total_gen_2 * bin_widths) * np.sqrt(N_sample_2)
+
+    # --- Compute the ratio (Gen/Real) ---
+    ratio_1 = np.divide(hist_gen_1, hist_real, where=hist_real > 0)
+    ratio_2 = np.divide(hist_gen_2, hist_real, where=hist_real > 0)
+
+    # --- Compute the ratio (Gen/Real) and propagate uncertainties ---
+    ratio_1 = np.divide(hist_gen_1, hist_real, where=hist_real > 0)
+    ratio_2 = np.divide(hist_gen_2, hist_real, where=hist_real > 0)
+
+    # Compute ratio uncertainty
+    ratio_error_1 = np.divide(gen_errors_1, hist_real, where=hist_real > 0)
+    ratio_error_2 = np.divide(gen_errors_2, hist_real, where=hist_real > 0)
+
+    # --- Create figure with two subplots ---
+    fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1], 'hspace': 0}, 
+                            sharex=True, figsize=(6, 5), dpi=300)
+    plt.subplots_adjust(hspace=0)
+
+    axs[0].step(bins[:-1], hist_real, where="post", label="Truth", linewidth=1.5, color='#1f77b4')
+    axs[0].step(bins[:-1], hist_gen_1, where="post", label="Transfermer", linewidth=1.5, color='#d62728')
+    axs[0].step(bins[:-1], hist_gen_2, where="post", label="Parallel Transfusion", linewidth=1.5, color='#2ca02c')
+    axs[0].fill_between(bins[:-1], hist_real - real_errors, hist_real + real_errors,
+                        step="post", color='#1f77b4', alpha=0.3)
+    axs[0].fill_between(bins[:-1], hist_gen_1 - gen_errors_1, hist_gen_1 + gen_errors_1,
+                        step="post", color='#d62728', alpha=0.3)
+    axs[0].fill_between(bins[:-1], hist_gen_2 - gen_errors_2, hist_gen_2 + gen_errors_2,
+                        step="post", color='#2ca02c', alpha=0.3)
+
+    axs[0].set_ylabel("Density", fontsize=22)
+    axs[0].legend(fontsize=14)
+
+    axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
+    axs[1].step(bins[:-1], ratio_1, where="post", color='#d62728', linewidth=1.5, label="Gen 1 / Truth")
+    axs[1].step(bins[:-1], ratio_2, where="post", color='#2ca02c', linewidth=1.5, label="Gen 2 / Truth")
+    axs[1].fill_between(bins[:-1], ratio_1 - ratio_error_1, ratio_1 + ratio_error_1,
+                        step="post", color='#d62728', alpha=0.3)
+    axs[1].fill_between(bins[:-1], ratio_2 - ratio_error_2, ratio_2 + ratio_error_2,
+                        step="post", color='#2ca02c', alpha=0.3)
+    axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=22)
+    axs[1].set_xlabel(feat_name, fontsize=22)
+
+    axs[0].tick_params(axis='y', which='major', labelsize=14)
+    axs[1].tick_params(axis='both', which='major', labelsize=14)
+    axs[0].tick_params(axis='y', which='minor', labelsize=14)
+    axs[1].tick_params(axis='both', which='minor', labelsize=14)
+
+    # Enable logarithmic scale if specified
+    if log_scale:
+        axs[0].set_yscale("log")
+        if ptype_idx == 0: # Jets
+            if feat_idx == 0: # pT
+                axs[0].set_xlim(30, 1500)
+                axs[0].set_ylim(2e-8,1e-2)
+                axs[1].set_ylim(0.5, 1.5)
+            elif feat_idx == 1: # eta
+                axs[0].set_xlim(-5, 5)
+                axs[0].set_ylim(3e-4,1e0)
+                axs[1].set_ylim(0.8, 1.2)
+            elif feat_idx == 3: # Mass
+                axs[0].set_xlim(0, 160)
+                axs[0].set_ylim(3e-7,1e-1)
+                axs[1].set_ylim(0.5, 1.5)
+        if ptype_idx == 1: # MET
+            if feat_idx == 0: #pT
+                axs[0].set_xlim(200, 1200)
+                axs[0].set_ylim(3e-7,1e-2)
+                axs[1].set_ylim(0.5, 1.5)
+    else:
+        axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
+
+    if ptype_idx == 0 and feat_idx == 2: # Jets phi
+            axs[0].set_xlim(-math.pi, math.pi)
+            #axs[1].set_ylim(0.95, 1.05)
+    if ptype_idx == 1 and feat_idx == 1: # MET phi
+            axs[0].set_xlim(-math.pi, math.pi)
+            #axs[1].set_ylim(0.95, 1.05)
+
+    plt.tight_layout()
+    plt.show()
+
+    return None
+
+
+
 def plot_sampling_distributions(real_data, gen_data_samples, feat_names, event_idx=0, object_name="jets"):
     """
     Compare real data vs. multiple generated samples for a specific event with 2D heatmaps.
