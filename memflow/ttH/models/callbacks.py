@@ -154,8 +154,8 @@ class SamplingCallback(Callback):
         reco_val = float(reco_val)
 
         if feature == 'phi':
-            #return np.linspace(-math.pi, math.pi, self.bins)
-            return np.linspace(sample_vals.min(), sample_vals.max(), self.bins)
+            return np.linspace(-math.pi, math.pi, self.bins)
+            #return np.linspace(sample_vals.min(), sample_vals.max(), self.bins)
         elif feature == 'eta':
             return np.linspace(-5.0, 5.0, self.bins)
         elif feature in ['pt', 'm', 'mass']:
@@ -253,7 +253,7 @@ class SamplingCallback(Callback):
                     extent=extent,
                     norm=matplotlib.colors.LogNorm(),
                     mincnt=1,  # Only show hexagons with at least one count
-                    cmap='BuGn'
+                    cmap='BuGn' # BuGn or RdPu
                 )
             else:
                 hb = ax_main.hexbin(
@@ -263,7 +263,7 @@ class SamplingCallback(Callback):
                     mincnt=1,
                     cmap='BuGn'
                 )
-            
+
             # Extract a color from the main hist to use for marginal hist
             main_cmap = plt.get_cmap('BuGn')
             marginal_color = main_cmap(0.5)
@@ -354,6 +354,10 @@ class SamplingCallback(Callback):
             device = self.device
         model = model.to(device)
 
+        # Ensure the save directory exists
+        save_dir = 'Figures'
+        os.makedirs(save_dir, exist_ok=True)
+
         # Sample
         hard_data = [d.to(device) for d in self.batch['hard']['data']]
         hard_mask_exist = [m.to(device) for m in self.batch['hard']['mask']]
@@ -431,12 +435,16 @@ class SamplingCallback(Callback):
                             features = flow_feats,
                             title = f'{model.reco_particle_type_names[i]} #{j} (event #{event})'
                         )
-                        if show:
-                            plt.show()
                         fig_name = f'event_{event}_obj_{model.reco_particle_type_names[i]}_{j}'
                         if self.suffix:
                             fig_name += f'_{self.suffix}'
+
+                        fig_path = os.path.join(save_dir, fig_name + ".png")
+                        # Save figure
+                        fig.savefig(fig_path, dpi=300, bbox_inches='tight')
+                        plt.close(fig)  # Close to free memory
                         figs[fig_name] = fig
+                        print(f"Saved: {fig_path}")
         return figs
 
     def on_validation_epoch_end(self,trainer,pl_module):
