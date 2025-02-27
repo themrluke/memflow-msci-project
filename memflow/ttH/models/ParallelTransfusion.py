@@ -203,10 +203,6 @@ class BaseCFM(L.LightningModule):
         cfm_layers.append(nn.BatchNorm1d(self.len_flow_feats))  # Normalize final output
         self.velocity_net = nn.Sequential(*cfm_layers)
 
-        #self.velocity_net = nn.Linear(self.embed_dim + self.len_flow_feats + 1, self.len_flow_feats)
-
-
-
         # Map flow features to corresponding indices in reco features
         self.flow_indices = []
         self.global_flow_features = []
