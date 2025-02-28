@@ -589,7 +589,6 @@ class TrajectoriesPlots:
 ###############################################################################
 # HIGH-LEVEL DISTRIBUTIONS CLASS
 ###############################################################################
-
 class HighLevelDistributions:
     """
     Class for plotting high-level observables using vectorized operations.
@@ -615,62 +614,65 @@ class HighLevelDistributions:
         self.feat_idx_map = feat_idx_map
         self.jet_ordering = jet_ordering
 
-        # Undo preprocessing for jets and MET using your existing function.
+        # Undo preprocessing for jets and MET (for truth and gen_data1)
         jets_real, jets_real_mask, jets_gen, jets_gen_mask = undo_preprocessing(
             model, real_data[0], model.reco_input_features_per_type[0], real_mask[0],
-            gen_data[0], [model.reco_input_features_per_type[0][i] for i in model.flow_indices[0]], 
+            gen_data[0], [model.reco_input_features_per_type[0][i] for i in model.flow_indices[0]],
             0, preprocessing
         )
-        met_real, met_real_mask, met_gen, met_gen_mask = undo_preprocessing(
+        met_real, _, met_gen, _ = undo_preprocessing(
             model, real_data[1], model.reco_input_features_per_type[1], real_mask[1],
-            gen_data[1], [model.reco_input_features_per_type[1][i] for i in model.flow_indices[1]], 
+            gen_data[1], [model.reco_input_features_per_type[1][i] for i in model.flow_indices[1]],
             1, preprocessing
         )
-
-        # Reshape generated data as before
+        print("Before reshaping: jets_gen.shape =", jets_gen.shape)
+        # Reshape generated data: for jets_gen and met_gen
         n_events = jets_real.shape[0]
-        gen_total = jets_gen.shape[0]  # n_samples * n_events
+        gen_total = jets_gen.shape[0]  # This equals (n_samples * n_events)
         n_samples = gen_total // n_events
         jets_gen = jets_gen.reshape(n_samples, n_events, *jets_gen.shape[1:])
-        jets_gen_mask = jets_gen_mask.reshape(n_samples, n_events, *jets_gen_mask.shape[1:])
+        # For MET, we assume one object per event; its shape remains (n_events, 1, n_met_features)
         if met_gen is not None:
             met_total = met_gen.shape[0]
             n_samples_met = met_total // n_events
             met_gen = met_gen.reshape(n_samples_met, n_events, *met_gen.shape[1:])
-            met_gen_mask = met_gen_mask.reshape(n_samples_met, n_events, *met_gen_mask.shape[1:])
 
+        # For gen_data2, reuse the same masks as for gen_data1.
         if gen_data2 is not None:
-            jets_gen2, met_gen2, jets_gen_mask2, met_gen_mask2 = undo_preprocessing(
+
+            # Use undo_preprocessing for gen_data2, but reuse real_mask[0] for jets and real_mask[1] for MET.
+            _, _, jets_gen2 , _ = undo_preprocessing(
                 model, real_data[0], model.reco_input_features_per_type[0], real_mask[0],
-                gen_data2[0], [model.reco_input_features_per_type[0][i] for i in model.flow_indices[0]], 
+                gen_data2[0], [model.reco_input_features_per_type[0][i] for i in model.flow_indices[0]],
                 0, preprocessing
             )
-            jets_gen2 = jets_gen2.reshape(jets_gen2.shape[0]//n_events, n_events, *jets_gen2.shape[1:])
-            jets_gen_mask2 = jets_gen_mask2.reshape(jets_gen_mask2.shape[0]//n_events, n_events, *jets_gen_mask2.shape[1:])
-            met_gen2, _, met_gen_mask2, _ = undo_preprocessing(
+            print("Before reshaping: jets_gen2.shape =", jets_gen2.shape)
+            gen2_total = jets_gen2.shape[0]  # This equals (n_samples * n_events)
+            n_samples2 = gen2_total // n_events
+            jets_gen2 = jets_gen2.reshape(n_samples2, n_events, *jets_gen2.shape[1:])
+            _, _ , met_gen2 , _ = undo_preprocessing(
                 model, real_data[1], model.reco_input_features_per_type[1], real_mask[1],
-                gen_data2[1], [model.reco_input_features_per_type[1][i] for i in model.flow_indices[1]], 
+                gen_data2[1], [model.reco_input_features_per_type[1][i] for i in model.flow_indices[1]],
                 1, preprocessing
             )
-            met_gen2 = met_gen2.reshape(met_gen2.shape[0]//n_events, n_events, *met_gen2.shape[1:])
+            met_gen2 = met_gen2.reshape(n_samples_met, n_events, *met_gen2.shape[1:])
         else:
-            jets_gen2 = met_gen2 = jets_gen_mask2 = met_gen_mask2 = None
+            jets_gen2 = met_gen2 = None
 
-        # Convert tensors to NumPy arrays
-        self.jets_real = jets_real.cpu().numpy()
-        self.jets_gen = jets_gen.cpu().numpy()
+        # Convert tensors to NumPy arrays.
+        self.jets_real = jets_real.cpu().numpy()  # Truth jets (shape: [n_events, nJets, n_truth_features])
+        self.jets_gen = jets_gen.cpu().numpy()    # Gen Model 1 jets (shape: [n_samples, n_events, nJets, n_gen_features])
         self.met_real = met_real.cpu().numpy() if met_real is not None else None
         self.met_gen = met_gen.cpu().numpy() if met_gen is not None else None
         if jets_gen2 is not None:
             self.jets_gen2 = jets_gen2.cpu().numpy()
             self.met_gen2 = met_gen2.cpu().numpy() if met_gen2 is not None else None
 
-        # If jet_ordering is "pt", reorder the real jets by descending pT.
+        # Optionally reorder real jets by descending pT if jet_ordering=="pt".
         if self.jet_ordering == "pt":
             pt_idx = self.feat_idx_map["pt"]
             sorted_indices = np.argsort(-self.jets_real[:, :, pt_idx], axis=1)
             self.jets_real = np.take_along_axis(self.jets_real, sorted_indices[:, :, None], axis=1)
-            # (Optionally, you can reorder generated jets similarly.)
     
     def _to_vector(self, jets):
         """
@@ -678,7 +680,6 @@ class HighLevelDistributions:
         into a vectorized awkward array.
         """
         jets_ak = ak.Array(jets)
-        # Use ak.zip to group the fields and assign a vector type.
         return ak.zip({
             "pt": jets_ak[:, :, self.feat_idx_map["pt"]],
             "eta": jets_ak[:, :, self.feat_idx_map["eta"]],
@@ -700,42 +701,47 @@ class HighLevelDistributions:
         return vector.array({"pt": pt, "eta": eta, "phi": phi, "mass": mass})
     
     def plot_E_j1(self):
-        """Plot the energy of the leading jet for truth and generated data together."""
         self.compare_observable(lambda jets: jets[:, 0].E, nbins=100,
                                   xlabel=r"$E_{j_1}$ [GeV]", observable_name="E_j1", log_scale=True)
     
     def plot_pT_j1(self):
-        """Plot the pT of the leading jet for truth and generated data together."""
         self.compare_observable(lambda jets: jets[:, 0].pt, nbins=100,
                                   xlabel=r"$p_{T, j_1}$ [GeV]", observable_name="pT_j1", log_scale=True)
     
     def plot_dphi_j1j2(self):
-        """Plot Δϕ between j₁ and j₂."""
         self.compare_observable(lambda jets: jets[:, 0].deltaphi(jets[:, 1]), nbins=50,
                                   xlabel=r"$\Delta\phi(j_1,j_2)$ [rad]", observable_name="dphi_j1j2")
     
     def plot_dR_j1j2(self):
-        """Plot ΔR between j₁ and j₂."""
         self.compare_observable(lambda jets: jets[:, 0].deltaR(jets[:, 1]), nbins=50,
                                   xlabel=r"$\Delta R(j_1,j_2)$", observable_name="dR_j1j2", log_scale=True)
     
     def plot_HT(self):
-        """Plot H_T (scalar sum of jet pT)."""
         self.compare_observable(lambda jets: ak.sum(jets.pt, axis=1), nbins=50,
                                   xlabel=r"$H_T$ [GeV]", observable_name="HT", log_scale=True)
     
     def plot_dR_met_jj(self):
-        """Plot ΔR between MET and the dijet system (j₁+j₂)."""
         def obs(jets):
             dijet = jets[:, 0] + jets[:, 1]
-            # For truth, met vector is computed from self.met_real (shape: n_events,)
             met_vec = self._to_vector_met(self.met_real)
-            return met_vec.deltaR(dijet)
+            # Tile MET vector for each generated sample:
+            n_samples = self.jets_gen.shape[0]
+            # For MET, since there is one object per event, its shape is (n_events,)
+            met_pt_tiled = ak.concatenate([met_vec.pt] * n_samples, axis=0)
+            met_eta_tiled = ak.concatenate([met_vec.eta] * n_samples, axis=0)
+            met_phi_tiled = ak.concatenate([met_vec.phi] * n_samples, axis=0)
+            met_mass_tiled = ak.concatenate([met_vec.mass] * n_samples, axis=0)
+            met_tiled = vector.array({
+                "pt": met_pt_tiled,
+                "eta": met_eta_tiled,
+                "phi": met_phi_tiled,
+                "mass": met_mass_tiled
+            })
+            return met_tiled.deltaR(dijet)
         self.compare_observable(obs, nbins=50,
-                                  xlabel=r"$\Delta R(\mathrm{MET},jj)$", observable_name="dR_met_jj", log_scale=True)
+                                xlabel=r"$\Delta R(\mathrm{MET},jj)$", observable_name="dR_met_jj", log_scale=True)
     
     def plot_min_mass_jj(self):
-        """Plot the minimum invariant mass among all jet pairs."""
         def obs(jets):
             dijets = ak.combinations(jets, 2, replacement=False, axis=1)
             j1, j2 = ak.unzip(dijets)
@@ -744,112 +750,57 @@ class HighLevelDistributions:
                                   xlabel=r"$m_{jj}^{\min}$ [GeV]", observable_name="min_mass_jj", log_scale=True)
     
     def compare_observable(self, observable_function, nbins=50, xlabel="Feature", observable_name="Observable", log_scale=False):
-        """
-        Compare an observable computed from truth and generated jets.
-        observable_function should be a function that takes a vectorized jets array (shape: (n_events, nJets, ...))
-        and returns an awkward array of one value per event.
-        
-        This method computes the observable for truth data and for generated data (flattened over samples and events),
-        then plots a two-panel figure: the upper panel shows step histograms with Poisson error bands,
-        and the lower panel shows the ratio (generated/truth) with error bands.
-        """
         # Real data observable:
-        real_vec = self._to_vector(self.jets_real)  # shape: (n_events, nJets, vector)
-        real_obs = observable_function(real_vec)  # expect one value per event
+        real_vec = self._to_vector(self.jets_real)
+        real_obs = observable_function(real_vec)
         real_vals = ak.to_numpy(real_obs).ravel()
-        
+
         # Generated data observable:
-        # For observables that depend on MET (like dR_met_jj), we must tile the MET vector.
-        if observable_name == "dR_met_jj":
-            n_samples = self.jets_gen.shape[0]
-            gen_flat = self.jets_gen.reshape(-1, self.jets_gen.shape[2], self.jets_gen.shape[3])
-            gen_vec = self._to_vector(gen_flat)
-            # Get the MET vector (vector array) from truth:
-            met_vec = self._to_vector_met(self.met_real)  # Already a vector array
-            # Tile each component to match the number of generated samples:
-            met_pt_tiled = ak.concatenate([met_vec.pt] * n_samples, axis=0)
-            met_eta_tiled = ak.concatenate([met_vec.eta] * n_samples, axis=0)
-            met_phi_tiled = ak.concatenate([met_vec.phi] * n_samples, axis=0)
-            met_mass_tiled = ak.concatenate([met_vec.mass] * n_samples, axis=0)
-            # Rebuild the tiled MET as a vector array:
-            met_tiled = vector.array({
-                "pt": met_pt_tiled,
-                "eta": met_eta_tiled,
-                "phi": met_phi_tiled,
-                "mass": met_mass_tiled
-            })
-            dijet = gen_vec[:, 0] + gen_vec[:, 1]
-            gen_obs = met_tiled.deltaR(dijet)
+        n_samples = self.jets_gen.shape[0]  # e.g. 100 samples
+        n_events = self.jets_gen.shape[1]   # e.g. 18364 events
+        gen_flat = self.jets_gen.reshape(n_samples * n_events, *self.jets_gen.shape[2:])
+        gen_vec = self._to_vector(gen_flat)
+        gen_obs = observable_function(gen_vec)
+        # Reshape back to (n_samples, n_events) and average over samples:
+        gen_vals = ak.to_numpy(gen_obs).reshape(n_samples, n_events).mean(axis=0)
 
-        else:
-            n_samples = self.jets_gen.shape[0]
-            gen_flat = self.jets_gen.reshape(-1, self.jets_gen.shape[2], self.jets_gen.shape[3])
-            gen_vec = self._to_vector(gen_flat)
-            gen_obs = observable_function(gen_vec)
-        gen_vals = ak.to_numpy(gen_obs).ravel()
-        
-        # For second generated dataset if provided:
+        # Second generated dataset:
         if self.jets_gen2 is not None:
-            n_samples2 = self.jets_gen2.shape[0]
-            gen2_flat = self.jets_gen2.reshape(-1, self.jets_gen2.shape[2], self.jets_gen2.shape[3])
+            gen2_flat = self.jets_gen2.reshape(n_samples * n_events, *self.jets_gen2.shape[2:])
             gen_vec2 = self._to_vector(gen2_flat)
-            
-            if observable_name == "dR_met_jj":
-                met_vec = self._to_vector_met(self.met_real)  # Ensure MET is a vector array
-                
-                # Tile each component of MET instead of tiling the whole vector
-                met_pt_tiled2 = ak.concatenate([met_vec.pt] * n_samples2, axis=0)
-                met_eta_tiled2 = ak.concatenate([met_vec.eta] * n_samples2, axis=0)
-                met_phi_tiled2 = ak.concatenate([met_vec.phi] * n_samples2, axis=0)
-                met_mass_tiled2 = ak.concatenate([met_vec.mass] * n_samples2, axis=0)
-
-                # Reconstruct the MET vector array after tiling
-                met_tiled2 = vector.array({
-                    "pt": met_pt_tiled2,
-                    "eta": met_eta_tiled2,
-                    "phi": met_phi_tiled2,
-                    "mass": met_mass_tiled2
-                })
-                
-                dijet2 = gen_vec2[:, 0] + gen_vec2[:, 1]
-                gen_obs2 = met_tiled2.deltaR(dijet2)
-
-            else:
-                gen_obs2 = observable_function(gen_vec2)
-            gen_vals2 = ak.to_numpy(gen_obs2).ravel()
+            gen_obs2 = observable_function(gen_vec2)
+            gen_vals2 = ak.to_numpy(gen_obs2).reshape(n_samples, n_events).mean(axis=0)
         else:
-            gen_vals2 = gen_vals.copy()
-            n_samples2 = n_samples
-        
+            gen_vals2 = np.full_like(real_vals, np.nan)
+
         # Determine common bins:
         min_val = min(real_vals.min(), gen_vals.min(), gen_vals2.min())
         max_val = max(real_vals.max(), gen_vals.max(), gen_vals2.max())
         bins = np.linspace(min_val, max_val, nbins+1)
-        
-        # Compute density-normalized histograms:
+
+        # Histograms:
         hist_real, _ = np.histogram(real_vals, bins=bins, density=True)
         hist_gen, _ = np.histogram(gen_vals, bins=bins, density=True)
         hist_gen2, _ = np.histogram(gen_vals2, bins=bins, density=True)
-        
-        # Also compute raw counts for Poisson errors:
         counts_real, _ = np.histogram(real_vals, bins=bins)
         counts_gen, _ = np.histogram(gen_vals, bins=bins)
         counts_gen2, _ = np.histogram(gen_vals2, bins=bins)
         bin_widths = np.diff(bins)
+
         total_real = counts_real.sum()
         total_gen = counts_gen.sum()
         total_gen2 = counts_gen2.sum()
-        
+
         real_errors = np.sqrt(counts_real) / (total_real * bin_widths)
-        gen_errors = np.sqrt(counts_gen) / (total_gen * bin_widths) * np.sqrt(n_samples)
-        gen_errors2 = np.sqrt(counts_gen2) / (total_gen2 * bin_widths) * np.sqrt(n_samples2)
-        
-        ratio = np.divide(hist_gen, hist_real, where=hist_real>0)
-        ratio2 = np.divide(hist_gen2, hist_real, where=hist_real>0)
-        ratio_error = np.divide(gen_errors, hist_real, where=hist_real>0)
-        ratio_error2 = np.divide(gen_errors2, hist_real, where=hist_real>0)
-        
-        # Create figure with two subplots:
+        gen_errors = np.sqrt(counts_gen) / (total_gen * bin_widths) / np.sqrt(n_samples)
+        gen_errors2 = np.sqrt(counts_gen2) / (total_gen2 * bin_widths) / np.sqrt(n_samples)
+
+        ratio = np.divide(hist_gen, hist_real, where=hist_real > 0)
+        ratio2 = np.divide(hist_gen2, hist_real, where=hist_real > 0)
+        ratio_error = np.divide(gen_errors, hist_real, where=hist_real > 0)
+        ratio_error2 = np.divide(gen_errors2, hist_real, where=hist_real > 0)
+
+        # Plotting:
         fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3,1], 'hspace': 0},
                                 sharex=True, figsize=(6,5), dpi=150)
         axs[0].step(bins[:-1], hist_real, where='post', label="Truth", linewidth=1.5, color='#1f77b4')
@@ -865,7 +816,7 @@ class HighLevelDistributions:
         axs[0].legend(fontsize=10)
         if log_scale:
             axs[0].set_yscale("log")
-        
+
         axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
         axs[1].step(bins[:-1], ratio, where='post', linewidth=1.5, color='#d62728', label="Gen 1/Truth")
         axs[1].step(bins[:-1], ratio2, where='post', linewidth=1.5, color='#2ca02c', label="Gen 2/Truth")
@@ -875,12 +826,16 @@ class HighLevelDistributions:
                             step='post', color='#2ca02c', alpha=0.3)
         axs[1].set_xlabel(xlabel, fontsize=16)
         axs[1].set_ylabel(r"Gen/Truth", fontsize=16)
-        
+
+        print(f"Truth values: Min={real_vals.min()}, Max={real_vals.max()}, Size={real_vals.shape}")
+        print(f"Gen Model 1 values: Min={gen_vals.min()}, Max={gen_vals.max()}, Size={gen_vals.shape}")
+        print(f"Gen Model 2 values: Min={gen_vals2.min()}, Max={gen_vals2.max()}, Size={gen_vals2.shape}")
+
         plt.tight_layout()
         plt.show()
-    
+
+
     def plot_all(self):
-        """Convenience method to plot all high-level distributions."""
         self.plot_E_j1()
         self.plot_pT_j1()
         self.plot_dphi_j1j2()
@@ -888,6 +843,7 @@ class HighLevelDistributions:
         self.plot_HT()
         self.plot_dR_met_jj()
         self.plot_min_mass_jj()
+
 
 
 
