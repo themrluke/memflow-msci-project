@@ -865,30 +865,30 @@ class HighLevelDistributions:
         if observable_name == "E_j1":
             axs[0].set_xlim(30, 1150)
             axs[0].set_ylim(5e-6, 1e-2)
-            axs[1].set_ylim(0.5, 1.5)
+            axs[1].set_ylim(0.4, 1.6)
         elif observable_name == "pT_j1":
             axs[0].set_xlim(30, 700)
             axs[0].set_ylim(2e-6, 2e-2)
-            axs[1].set_ylim(0.5, 1.5)
+            axs[1].set_ylim(0.4, 1.6)
         elif observable_name == "dphi_j1j2":
             axs[0].set_xlim(-math.pi, math.pi)
-            axs[1].set_ylim(0.5, 1.5)
+            axs[1].set_ylim(0.4, 1.6)
         elif observable_name == "dR_j1j2":
             axs[0].set_xlim(0.4, 7)
             axs[0].set_ylim(3e-4, 1e0)
-            axs[1].set_ylim(0.5, 1.5)
+            axs[1].set_ylim(0.4, 1.6)
         elif observable_name == "HT":
             axs[0].set_xlim(300, 3000)
             axs[0].set_ylim(6e-8, 4e-3)
-            axs[1].set_ylim(0.5, 1.5)
+            axs[1].set_ylim(0.4, 1.6)
         elif observable_name == "dR_met_jj":
             axs[0].set_xlim(0, 7)
             axs[0].set_ylim(2e-5, 2e0)
-            axs[1].set_ylim(0.5, 1.5)
+            axs[1].set_ylim(0.4, 1.6)
         elif observable_name == "min_mass_jj":
             axs[0].set_xlim(2, 220)
             axs[0].set_ylim(1e-5, 1e-1)
-            axs[1].set_ylim(0.5, 1.5)
+            axs[1].set_ylim(0.4, 1.6)
 
 
         # 1) Real data
@@ -1016,6 +1016,13 @@ class HighLevelDistributions:
 
         # Ratio panel
         axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
+
+        # Draw dashed lines at y_min and y_max
+        y_min, y_max = axs[1].get_ylim()
+        axs[1].axhline(y_min + 0.1, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+        axs[1].axhline(y_max - 0.1, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+        # Set y-ticks at the positions of the dotted lines
+        axs[1].set_yticks([y_min + 0.1, 1.0, y_max - 0.1])
 
         axs[1].step(bins[:-1], ratio,  where='post', linewidth=1, color='#d62728')
         axs[1].fill_between(bins[:-1], ratio - ratio_error, ratio + ratio_error,
