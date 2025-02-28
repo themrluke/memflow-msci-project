@@ -731,6 +731,8 @@ class HighLevelDistributions:
         hist_gen1, _ = np.histogram(gen_vals1, bins=bins, density=True)
         hist_gen2, _ = np.histogram(gen_vals2, bins=bins, density=True)
         # Also compute raw counts for Poisson errors
+        N_sample_1 = gen_vals1.shape[0]
+        N_sample_2 = gen_vals2.shape[0]
         counts_real, _ = np.histogram(real_vals, bins=bins)
         counts_gen1, _ = np.histogram(gen_vals1, bins=bins)
         counts_gen2, _ = np.histogram(gen_vals2, bins=bins)
@@ -739,8 +741,8 @@ class HighLevelDistributions:
         total_gen1 = np.sum(counts_gen1)
         total_gen2 = np.sum(counts_gen2)
         error_real = np.sqrt(counts_real) / (total_real * bin_widths)
-        error_gen1 = np.sqrt(counts_gen1) / (total_gen1 * bin_widths)
-        error_gen2 = np.sqrt(counts_gen2) / (total_gen2 * bin_widths)
+        error_gen1 = np.sqrt(counts_gen1) / (total_gen1 * bin_widths) * np.sqrt(N_sample_1)
+        error_gen2 = np.sqrt(counts_gen2) / (total_gen2 * bin_widths) * np.sqrt(N_sample_2)
         # Ratio: generated/truth (avoid division by zero)
         ratio1 = np.divide(hist_gen1, hist_real, where=hist_real>0)
         ratio2 = np.divide(hist_gen2, hist_real, where=hist_real>0)
