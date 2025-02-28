@@ -7,6 +7,14 @@ import vector
 import awkward as ak
 import os
 
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Nimbus Roman']
+plt.rcParams['mathtext.fontset'] = 'custom'
+plt.rcParams['mathtext.rm'] = 'Nimbus Roman'
+plt.rcParams['mathtext.it'] = 'Nimbus Roman:italic'
+plt.rcParams['mathtext.bf'] = 'Nimbus Roman:bold'
+plt.rcParams["text.usetex"] = False
+
 vector.register_awkward()
 
 class torch_wrapper(torch.nn.Module):
@@ -779,7 +787,6 @@ class HighLevelDistributions:
     def plot_E_j1(self):
         self.compare_observable(
             lambda jets: jets[:, 0].E,
-            nbins=7500,
             xlabel=r"$E_{j_1}$ [GeV]",
             observable_name="E_j1",
             log_scale=True
@@ -788,7 +795,6 @@ class HighLevelDistributions:
     def plot_pT_j1(self):
         self.compare_observable(
             lambda jets: jets[:, 0].pt,
-            nbins=1000,
             xlabel=r"$p_{T, j_1}$ [GeV]",
             observable_name="pT_j1",
             log_scale=True
@@ -797,7 +803,6 @@ class HighLevelDistributions:
     def plot_dphi_j1j2(self):
         self.compare_observable(
             lambda jets: jets[:, 0].deltaphi(jets[:, 1]),
-            nbins=50,
             xlabel=r"$\Delta\phi(j_1,j_2)$ [rad]",
             observable_name="dphi_j1j2"
         )
@@ -805,7 +810,7 @@ class HighLevelDistributions:
     def plot_dR_j1j2(self):
         self.compare_observable(
             lambda jets: jets[:, 0].deltaR(jets[:, 1]),
-            nbins=100,
+
             xlabel=r"$\Delta R(j_1,j_2)$",
             observable_name="dR_j1j2",
             log_scale=True
@@ -814,7 +819,6 @@ class HighLevelDistributions:
     def plot_HT(self):
         self.compare_observable(
             lambda jets: ak.sum(jets.pt, axis=1),
-            nbins=5000,
             xlabel=r"$H_T$ [GeV]",
             observable_name="HT",
             log_scale=True
@@ -827,7 +831,6 @@ class HighLevelDistributions:
 
         self.compare_observable(
             obs,
-            nbins=50,
             xlabel=r"$\Delta R(\mathrm{MET},jj)$",
             observable_name="dR_met_jj",
             log_scale=True
@@ -841,14 +844,53 @@ class HighLevelDistributions:
 
         self.compare_observable(
             obs,
-            nbins=500,
             xlabel=r"$m_{jj}^{\min}$ [GeV]",
             observable_name="min_mass_jj",
             log_scale=True
         )
 
-    def compare_observable(self, observable_function, nbins=50, xlabel="Feature",
+    def compare_observable(self, observable_function, xlabel="Feature",
                            observable_name="Observable", log_scale=False):
+
+
+        fig, axs = plt.subplots(
+            2, 1,
+            gridspec_kw={'height_ratios': [3,1], 'hspace': 0},
+            sharex=True,
+            figsize=(6,5),
+            dpi=150
+        )
+
+        # Set custom ranges for axes
+        if observable_name == "E_j1":
+            axs[0].set_xlim(30, 1150)
+            axs[0].set_ylim(5e-6, 1e-2)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "pT_j1":
+            axs[0].set_xlim(30, 700)
+            axs[0].set_ylim(2e-6, 2e-2)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "dphi_j1j2":
+            axs[0].set_xlim(-math.pi, math.pi)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "dR_j1j2":
+            axs[0].set_xlim(0.4, 7)
+            axs[0].set_ylim(3e-4, 1e0)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "HT":
+            axs[0].set_xlim(300, 3000)
+            axs[0].set_ylim(6e-8, 4e-3)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "dR_met_jj":
+            axs[0].set_xlim(0, 7)
+            axs[0].set_ylim(2e-5, 2e0)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "min_mass_jj":
+            axs[0].set_xlim(2, 220)
+            axs[0].set_ylim(1e-5, 1e-1)
+            axs[1].set_ylim(0.5, 1.5)
+
+
         # 1) Real data
         real_vec = self._to_vector(self.jets_real)
         if observable_name == "dR_met_jj":
@@ -912,7 +954,11 @@ class HighLevelDistributions:
             gen_vals2.max(),
             gen_vals3.max()
         )
-        bins = np.linspace(min_val, max_val, nbins+1)
+
+        x_min, x_max = axs[0].get_xlim()
+        bin_width =  (x_max - x_min) / 50 # Change divisor here to make the number of visible bins
+        bins = np.arange(min_val, max_val + bin_width, bin_width)
+
 
         # 6) Hist + ratio
         hist_real, _ = np.histogram(real_vals, bins=bins, density=True)
@@ -946,87 +992,50 @@ class HighLevelDistributions:
         ratio_error2 = np.divide(gen_errors2, hist_real, where=hist_real>0)
         ratio_error3 = np.divide(gen_errors3, hist_real, where=hist_real>0)
 
-        # 7) Plot
-        fig, axs = plt.subplots(
-            2, 1,
-            gridspec_kw={'height_ratios': [3,1], 'hspace': 0},
-            sharex=True,
-            figsize=(6,5),
-            dpi=150
-        )
-
         # Top panel
-        axs[0].step(bins[:-1], hist_real, where='post', label="Truth", linewidth=1.5, color='#1f77b4')
+        axs[0].step(bins[:-1], hist_real, where='post', label="Truth", linewidth=1, color='#1f77b4')
         axs[0].fill_between(bins[:-1], hist_real - real_errors, hist_real + real_errors,
                             step='post', color='#1f77b4', alpha=0.3)
 
-        axs[0].step(bins[:-1], hist_gen,  where='post', label="Gen Model 1", linewidth=1.5, color='#d62728')
+        axs[0].step(bins[:-1], hist_gen,  where='post', label="Transfermer", linewidth=1, color='#d62728')
         axs[0].fill_between(bins[:-1], hist_gen - gen_errors, hist_gen + gen_errors,
                             step='post', color='#d62728', alpha=0.3)
 
-        axs[0].step(bins[:-1], hist_gen2, where='post', label="Gen Model 2", linewidth=1.5, color='#2ca02c')
+        axs[0].step(bins[:-1], hist_gen2, where='post', label="Parallel Transfusion", linewidth=1, color='#2ca02c')
         axs[0].fill_between(bins[:-1], hist_gen2 - gen_errors2, hist_gen2 + gen_errors2,
                             step='post', color='#2ca02c', alpha=0.3)
 
-        axs[0].step(bins[:-1], hist_gen3, where='post', label="Gen Model 3", linewidth=1.5, color='#9467bd')
+        axs[0].step(bins[:-1], hist_gen3, where='post', label="CFM", linewidth=1, color='#9467bd')
         axs[0].fill_between(bins[:-1], hist_gen3 - gen_errors3, hist_gen3 + gen_errors3,
                             step='post', color='#9467bd', alpha=0.3)
 
         axs[0].set_ylabel("Density", fontsize=16)
-        axs[0].legend(fontsize=10)
+        axs[0].legend(fontsize=14, frameon=False)
         if log_scale:
             axs[0].set_yscale("log")
 
         # Ratio panel
         axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
 
-        axs[1].step(bins[:-1], ratio,  where='post', linewidth=1.5, color='#d62728')
+        axs[1].step(bins[:-1], ratio,  where='post', linewidth=1, color='#d62728')
         axs[1].fill_between(bins[:-1], ratio - ratio_error, ratio + ratio_error,
                             step='post', color='#d62728', alpha=0.3)
 
-        axs[1].step(bins[:-1], ratio2, where='post', linewidth=1.5, color='#2ca02c')
+        axs[1].step(bins[:-1], ratio2, where='post', linewidth=1, color='#2ca02c')
         axs[1].fill_between(bins[:-1], ratio2 - ratio_error2, ratio2 + ratio_error2,
                             step='post', color='#2ca02c', alpha=0.3)
 
-        axs[1].step(bins[:-1], ratio3, where='post', linewidth=1.5, color='#9467bd')
+        axs[1].step(bins[:-1], ratio3, where='post', linewidth=1, color='#9467bd')
         axs[1].fill_between(bins[:-1], ratio3 - ratio_error3, ratio3 + ratio_error3,
                             step='post', color='#9467bd', alpha=0.3)
 
         axs[1].set_xlabel(xlabel, fontsize=16)
-        axs[1].set_ylabel("Gen/Truth", fontsize=16)
-
-        if observable_name == "E_j1":
-            axs[0].set_xlim(30, 1150)
-            axs[0].set_ylim(5e-6, 1e-2)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name == "pT_j1":
-            axs[0].set_xlim(30, 700)
-            axs[0].set_ylim(2e-6, 2e-2)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name == "dphi_j1j2":
-            axs[0].set_xlim(-math.pi, math.pi)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name == "dR_j1j2":
-            axs[0].set_xlim(0, 7)
-            axs[0].set_ylim(3e-4, 1e0)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name == "HT":
-            axs[0].set_xlim(200, 3000)
-            axs[0].set_ylim(1e-8, 2e-3)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name == "dR_met_jj":
-            axs[0].set_xlim(0, 10)
-            axs[0].set_ylim(1e-6, 1e0)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name == "min_mass_jj":
-            axs[0].set_xlim(2, 220)
-            axs[0].set_ylim(1e-8, 2e-2)
-            axs[1].set_ylim(0.5, 1.5)
+        axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
 
 
         print(f"Truth values: Min={real_vals.min()}, Max={real_vals.max()}, Size={real_vals.shape}")
-        print(f"Gen Model 1 values: Min={gen_vals.min()}, Max={gen_vals.max()}, Size={gen_vals.shape}")
-        print(f"Gen Model 2 values: Min={gen_vals2.min()}, Max={gen_vals2.max()}, Size={gen_vals2.shape}")
+        print(f"Transfermer values: Min={gen_vals.min()}, Max={gen_vals.max()}, Size={gen_vals.shape}")
+        print(f"Parallel Transfusion values: Min={gen_vals2.min()}, Max={gen_vals2.max()}, Size={gen_vals2.shape}")
 
         plt.tight_layout()
         plt.show()
