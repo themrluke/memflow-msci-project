@@ -3,7 +3,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import torch
+import vector
+import awkward as ak
 import os
+
+vector.register_awkward()
 
 class torch_wrapper(torch.nn.Module):
     """Wraps a model to a torchdyn-compatible format."""
@@ -587,386 +591,228 @@ class TrajectoriesPlots:
 ###############################################################################
 class HighLevelDistributions:
     """
-    Class for plotting high-level observables such as:
-      - Energy of the leading jet (E_j1, computed from pt, eta, mass)
+    Class for plotting high-level observables using vectorized operations.
+    
+    Observables:
+      - Energy of the leading jet (E_j1) computed from pₜ, η, mass
       - Transverse momentum of the leading jet (pT_j1)
-      - Δϕ between jet1 and jet2 (|Δϕ_j1,j2|)
-      - ΔR between jet1 and jet2 (√((Δη)² + (Δϕ)²))
-      - ΔR between MET and the dijet system (ΔR_MET,jj)
-      - H_T, the scalar sum of jet pT's
-    Optionally, if you have two generated models (e.g. model1 and model2), you can pass both.
+      - Δϕ between jet1 and jet2 computed as jets[:,0].deltaphi(jets[:,1])
+      - ΔR between jet1 and jet2 computed as jets[:,0].deltaR(jets[:,1])
+      - ΔR between MET and the dijet system (using vector addition)
+      - H_T, the scalar sum of jet pₜ's
+      - Minimum invariant mass among all jet pairs
+      
+    The input jet data is assumed to have shape (n_events, nJets, n_features),
+    with the feature ordering defined by feat_idx_map (keys include "pt", "eta", "phi", "mass").
+    
+    The jets coming from the reconstruction have the first two jets ordered by btag,
+    and the remaining jets ordered by pₜ. The parameter `jet_ordering` lets you choose:
+      - "btag": use jets as provided (i.e. indices 0 and 1 are j₁ and j₂)
+      - "pt": reorder the jets completely by descending pₜ.
     """
     def __init__(self, model, preprocessing, real_data: torch.Tensor, real_mask: torch.Tensor, 
                  gen_data: torch.Tensor, feat_idx_map: dict, 
-                 gen_data2: torch.Tensor = None):
+                 gen_data2: torch.Tensor = None, jet_ordering="btag"):
         """
         Parameters:
-            real_data: Tuple (jets_real, met_real) – truth data tensors.
-            real_mask: Tuple (jets_real_mask, met_real_mask) – masks for truth data.
-            gen_data: Tuple (jets_gen, met_gen) – generated data tensors.
-            feat_idx_map: Dictionary mapping feature names to indices.
-            gen_data2: Optional Tuple (jets_gen2, met_gen2) – second generated dataset.
+          model: the model containing feature lists (e.g. reco_input_features_per_type, flow_indices)
+          preprocessing: object with an inverse() method
+          real_data: Tuple (jets_real, met_real)
+          real_mask: Tuple (jets_real_mask, met_real_mask)
+          gen_data: Tuple (jets_gen, met_gen) for the first generated model
+          feat_idx_map: Dictionary mapping feature names to their indices (e.g. {"pt": 0, "eta": 1, "phi": 2, "mass": 3})
+          gen_data2: Optional tuple for a second generated model
+          jet_ordering: "btag" (default) or "pt". If "pt", the jets are reordered by descending pₜ.
         """
-        # Get the feature lists from the model.
-        jets_real_fields = model.reco_input_features_per_type[0]
-        jets_gen_fields = [jets_real_fields[idx] for idx in model.flow_indices[0]]
-        met_real_fields = model.reco_input_features_per_type[1]
-        met_gen_fields = [met_real_fields[idx] for idx in model.flow_indices[1]]
-
-        # Undo preprocessing for jets
-        jets_real, jets_real_mask, jets_gen, jets_gen_mask = undo_preprocessing(
-            model, real_data[0], jets_real_fields, real_mask[0], gen_data[0], jets_gen_fields, 0, preprocessing
-        )
-        # Undo preprocessing for MET
-        met_real, met_real_mask, met_gen, met_gen_mask = undo_preprocessing(
-            model, real_data[1], met_real_fields, real_mask[1], gen_data[1], met_gen_fields, 1, preprocessing
-        )
-
-        if gen_data2 is not None:
-            _, _, jets_gen2, jets_gen_mask2 = undo_preprocessing(
-                model, real_data[0], jets_real_fields, real_mask[0], gen_data2[0], jets_gen_fields, 0, preprocessing
-            )
-            _, _, met_gen2, met_gen_mask2 = undo_preprocessing(
-                model, real_data[1], met_real_fields, real_mask[1], gen_data2[1], met_gen_fields, 1, preprocessing
-            )
-        else:
-            jets_gen2, met_gen2, jets_gen_mask2, met_gen_mask2 = None, None, None, None
-
         self.feat_idx_map = feat_idx_map
+        self.jet_ordering = jet_ordering
 
-        # The undo_preprocessing function returns tensors that are still “flattened” over samples and events.
-        # For jets, we expect:
-        #   real jets: shape (n_events, nJets, n_features)
-        #   gen jets: shape (n_samples*n_events, nJets, n_features)
-        # For MET:
-        #   real MET: shape (n_events, 1, n_met_features)
-        #   gen MET: shape (n_samples*n_events, 1, n_met_features)
-        #
-        # We now reshape generated data back to (n_samples, n_events, ...)
+        # Undo preprocessing for jets and MET using your existing function.
+        # (We assume undo_preprocessing returns tensors in a “flattened” format.)
+        jets_real, jets_real_mask, jets_gen, jets_gen_mask = undo_preprocessing(
+            model, real_data[0], model.reco_input_features_per_type[0], real_mask[0],
+            gen_data[0], [model.reco_input_features_per_type[0][i] for i in model.flow_indices[0]], 
+            0, preprocessing
+        )
+        met_real, met_real_mask, met_gen, met_gen_mask = undo_preprocessing(
+            model, real_data[1], model.reco_input_features_per_type[1], real_mask[1],
+            gen_data[1], [model.reco_input_features_per_type[1][i] for i in model.flow_indices[1]], 
+            1, preprocessing
+        )
+
+        # Reshape generated data (as in your original class)
         n_events = jets_real.shape[0]
-        # For jets_gen:
         gen_total = jets_gen.shape[0]  # n_samples * n_events
         n_samples = gen_total // n_events
         jets_gen = jets_gen.reshape(n_samples, n_events, *jets_gen.shape[1:])
-        # Also reshape the corresponding mask:
         jets_gen_mask = jets_gen_mask.reshape(n_samples, n_events, *jets_gen_mask.shape[1:])
-        # For MET:
         if met_gen is not None:
-            met_total = met_gen.shape[0]  # n_samples * n_events
+            met_total = met_gen.shape[0]
             n_samples_met = met_total // n_events
-            # We expect n_samples_met to equal n_samples.
             met_gen = met_gen.reshape(n_samples_met, n_events, *met_gen.shape[1:])
             met_gen_mask = met_gen_mask.reshape(n_samples_met, n_events, *met_gen_mask.shape[1:])
 
-        if jets_gen2 is not None:
-            gen_total2 = jets_gen2.shape[0]
-            n_samples2 = gen_total2 // n_events
-            jets_gen2 = jets_gen2.reshape(n_samples2, n_events, *jets_gen2.shape[1:])
-            jets_gen_mask2 = jets_gen_mask2.reshape(n_samples2, n_events, *jets_gen_mask2.shape[1:])
-            if met_gen2 is not None:
-                met_total2 = met_gen2.shape[0]
-                n_samples_met2 = met_total2 // n_events
-                met_gen2 = met_gen2.reshape(n_samples_met2, n_events, *met_gen2.shape[1:])
-                met_gen_mask2 = met_gen_mask2.reshape(n_samples_met2, n_events, *met_gen_mask2.shape[1:])
+        if gen_data2 is not None:
+            jets_gen2, met_gen2, jets_gen_mask2, met_gen_mask2 = undo_preprocessing(
+                model, real_data[0], model.reco_input_features_per_type[0], real_mask[0],
+                gen_data2[0], [model.reco_input_features_per_type[0][i] for i in model.flow_indices[0]], 
+                0, preprocessing
+            )
+            jets_gen2 = jets_gen2.reshape(jets_gen2.shape[0]//n_events, n_events, *jets_gen2.shape[1:])
+            jets_gen_mask2 = jets_gen_mask2.reshape(jets_gen_mask2.shape[0]//n_events, n_events, *jets_gen_mask2.shape[1:])
+            met_gen2, _, met_gen_mask2, _ = undo_preprocessing(
+                model, real_data[1], model.reco_input_features_per_type[1], real_mask[1],
+                gen_data2[1], [model.reco_input_features_per_type[1][i] for i in model.flow_indices[1]], 
+                1, preprocessing
+            )
+            met_gen2 = met_gen2.reshape(met_gen2.shape[0]//n_events, n_events, *met_gen2.shape[1:])
+        else:
+            jets_gen2 = met_gen2 = jets_gen_mask2 = met_gen_mask2 = None
 
-        # Convert all to NumPy arrays
+        # Convert tensors to NumPy arrays
         self.jets_real = jets_real.cpu().numpy()
-        self.jets_gen = jets_gen.cpu().numpy()  # shape: (n_samples, n_events, nJets, n_features)
+        self.jets_gen = jets_gen.cpu().numpy()
         self.met_real = met_real.cpu().numpy() if met_real is not None else None
         self.met_gen = met_gen.cpu().numpy() if met_gen is not None else None
         if jets_gen2 is not None:
             self.jets_gen2 = jets_gen2.cpu().numpy()
             self.met_gen2 = met_gen2.cpu().numpy() if met_gen2 is not None else None
 
-        # --- Now perform sorting of jets per event ---
-        pt_idx = self.feat_idx_map["pt"]
-
-        # Sort real jets in descending pT per event.
-        sorted_indices_real = np.argsort(-self.jets_real[:, :, pt_idx], axis=1)
-        mask_real = jets_real_mask.numpy().astype(bool)  # shape: (n_events, nJets)
-        tiled_indices = np.tile(np.arange(self.jets_real.shape[1]), (self.jets_real.shape[0], 1))
-        sorted_indices_real[mask_real == 0] = tiled_indices[mask_real == 0]
-        self.jets_real = np.take_along_axis(self.jets_real, sorted_indices_real[:, :, None], axis=1)
-
-        # For generated jets (model 1), sort each event by the median pT across samples.
-        median_pt_gen = np.median(self.jets_gen[..., pt_idx], axis=0)  # shape: (n_events, nJets)
-        sorted_indices_gen = np.argsort(-median_pt_gen, axis=1)  # shape: (n_events, nJets)
-        mask_gen = np.any(jets_gen_mask.numpy(), axis=0)  # shape: (n_events, nJets)
-        tiled_indices_gen = np.tile(np.arange(self.jets_gen.shape[2]), (self.jets_gen.shape[1], 1))
-        sorted_indices_gen[mask_gen == 0] = tiled_indices_gen[mask_gen == 0]
-        self.jets_gen = np.take_along_axis(self.jets_gen, sorted_indices_gen[None, :, :, None], axis=2)
-
-        if self.jets_gen2 is not None:
-            median_pt_gen2 = np.median(self.jets_gen2[..., pt_idx], axis=0)
-            sorted_indices_gen2 = np.argsort(-median_pt_gen2, axis=1)
-            mask_gen2 = np.any(jets_gen_mask2.numpy(), axis=0)
-            tiled_indices_gen2 = np.tile(np.arange(self.jets_gen2.shape[2]), (self.jets_gen2.shape[1], 1))
-            sorted_indices_gen2[mask_gen2 == 0] = tiled_indices_gen2[mask_gen2 == 0]
-            self.jets_gen2 = np.take_along_axis(self.jets_gen2, sorted_indices_gen2[None, :, :, None], axis=2)
-
-        print("Shapes after preprocessing and sorting:")
-        print(f"  jets_real: {self.jets_real.shape}")
-        print(f"  jets_gen: {self.jets_gen.shape}")
-        if self.jets_gen2 is not None:
-            print(f"  jets_gen2: {self.jets_gen2.shape}")
-
-    def _compute_energy(self, pt, eta, mass):
-        """Computes energy using E^2 = p_T^2 + m^2 cosh^2(η)."""
-        return np.sqrt(pt**2 + (mass * np.cosh(eta))**2)
-
-    def _plot_distribution_comparison(self, real_vals, gen_vals1, gen_vals2, observable_name, xlabel, 
-                                        nbins=50, log_scale=False, model1_label="Model 1", model2_label="Model 2"):
+        # If the user chooses "pt" ordering, reorder the jets completely by descending pT.
+        if self.jet_ordering == "pt":
+            pt_idx = self.feat_idx_map["pt"]
+            sorted_indices = np.argsort(-self.jets_real[:, :, pt_idx], axis=1)
+            self.jets_real = np.take_along_axis(self.jets_real, sorted_indices[:, :, None], axis=1)
+            # (You could also reorder the generated jets similarly if needed.)
+    
+    def _to_vector(self, jets):
         """
-        Helper to plot a two-panel figure:
-         - Top panel: Step histograms (with Poisson error bands) for truth, gen model1, and gen model2.
-         - Bottom panel: Ratio of each generated model to truth.
-        All arrays are assumed to be 1D.
+        Convert a jets numpy array of shape (n_events, nJets, n_features)
+        into a vectorized awkward array.
         """
-        # Determine common bins across all data
-        bins = np.linspace(min(real_vals.min(), gen_vals1.min(), gen_vals2.min()),
-                           max(real_vals.max(), gen_vals1.max(), gen_vals2.max()),
-                           nbins+1)
-        # Compute density-normalized histograms
-        hist_real, _ = np.histogram(real_vals, bins=bins, density=True)
-        hist_gen1, _ = np.histogram(gen_vals1, bins=bins, density=True)
-        hist_gen2, _ = np.histogram(gen_vals2, bins=bins, density=True)
-        # Also compute raw counts for Poisson errors
-        N_sample_1 = gen_vals1.shape[0]
-        N_sample_2 = gen_vals2.shape[0]
-        counts_real, _ = np.histogram(real_vals, bins=bins)
-        counts_gen1, _ = np.histogram(gen_vals1, bins=bins)
-        counts_gen2, _ = np.histogram(gen_vals2, bins=bins)
-        bin_widths = np.diff(bins)
-        total_real = np.sum(counts_real)
-        total_gen1 = np.sum(counts_gen1)
-        total_gen2 = np.sum(counts_gen2)
-        error_real = np.sqrt(counts_real) / (total_real * bin_widths)
-        error_gen1 = np.sqrt(counts_gen1) / (total_gen1 * bin_widths) * np.sqrt(N_sample_1)
-        error_gen2 = np.sqrt(counts_gen2) / (total_gen2 * bin_widths) * np.sqrt(N_sample_2)
-        # Ratio: generated/truth (avoid division by zero)
-        ratio1 = np.divide(hist_gen1, hist_real, where=hist_real>0)
-        ratio2 = np.divide(hist_gen2, hist_real, where=hist_real>0)
-        ratio_error1 = np.divide(error_gen1, hist_real, where=hist_real>0)
-        ratio_error2 = np.divide(error_gen2, hist_real, where=hist_real>0)
+        jets_ak = ak.Array(jets)  # Convert to Awkward Array
 
-        # Create figure with two subplots: top for histograms, bottom for ratio
-        fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1], 'hspace': 0},
-                                sharex=True, figsize=(6,5), dpi=150)
-        # Top panel: step histograms with error bands
-        axs[0].step(bins[:-1], hist_real, where='post', label="Truth", linewidth=1.5, color='#1f77b4')
-        axs[0].fill_between(bins[:-1], hist_real - error_real, hist_real + error_real, step='post', color='#1f77b4', alpha=0.3)
-        axs[0].step(bins[:-1], hist_gen1, where='post', label=model1_label, linewidth=1.5, color='#d62728')
-        axs[0].fill_between(bins[:-1], hist_gen1 - error_gen1, hist_gen1 + error_gen1, step='post', color='#d62728', alpha=0.3)
-        axs[0].step(bins[:-1], hist_gen2, where='post', label=model2_label, linewidth=1.5, color='#2ca02c')
-        axs[0].fill_between(bins[:-1], hist_gen2 - error_gen2, hist_gen2 + error_gen2, step='post', color='#2ca02c', alpha=0.3)
-        axs[0].set_ylabel("Density", fontsize=16)
-        axs[0].legend(fontsize=12)
-        if log_scale:
-            axs[0].set_yscale("log")
-        # Bottom panel: Ratio plots
-        axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
-        axs[1].step(bins[:-1], ratio1, where='post', linewidth=1.5, color='#d62728')
-        axs[1].fill_between(bins[:-1], ratio1 - ratio_error1, ratio1 + ratio_error1, step='post', color='#d62728', alpha=0.3)
-        axs[1].step(bins[:-1], ratio2, where='post', linewidth=1.5, color='#2ca02c')
-        axs[1].fill_between(bins[:-1], ratio2 - ratio_error2, ratio2 + ratio_error2, step='post', color='#2ca02c', alpha=0.3)
-        axs[1].set_xlabel(xlabel, fontsize=16)
-        axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
-
-        if observable_name == "E_j1":
-            axs[1].set_xlim(0, 2000)
-            axs[0].set_ylim(1e-8, 1e-2)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name == "pT_j1":
-            axs[1].set_xlim(0, 2000)
-            #axs[0].set_ylim(1e-8, 1e-2)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name =="dphi_j1,j2":
-            axs[1].set_xlim(-math.pi, math.pi)
-            axs[1].set_ylim(0.5, 1.5)
-        elif observable_name =="dR_j1,j2":
-            axs[1].set_xlim(0, 6)
-            axs[0].set_ylim(4e-4, 1e0)
-            axs[1].set_ylim(0.5,1.5)
-        elif observable_name =="dR_MET,jj":
-            axs[1].set_xlim(0, 4)
-            axs[0].set_ylim(1e-5, 1e1)
-            axs[1].set_ylim(0.5,1.5)
-        elif observable_name =="Min(m_j1j2)":
-            axs[1].set_xlim(0, 200)
-            axs[0].set_ylim(1e-6, 1e0)
-            axs[1].set_ylim(0.5,1.5)
-        elif observable_name =="H_T":
-            axs[1].set_xlim(0, 5000)
-            #axs[0].set_ylim(1e-8, 1e-2)
-            axs[1].set_ylim(0.5,1.5)
+        # Construct a vectorized awkward array directly
+        return ak.zip({
+            "pt": jets_ak[:, :, self.feat_idx_map["pt"]],
+            "eta": jets_ak[:, :, self.feat_idx_map["eta"]],
+            "phi": jets_ak[:, :, self.feat_idx_map["phi"]],
+            "mass": jets_ak[:, :, self.feat_idx_map["mass"]]
+        }, with_name="Momentum4D")  # Assign the correct vector type
 
 
-        plt.tight_layout()
+        
+    def _to_vector_met(self, met):
+        """
+        Convert a MET numpy array of shape (n_events, 1, n_met_features)
+        into a vector array.
+        Assumes MET has [pt, phi] (and we set eta=0, mass=0).
+        """
+        met_ak = ak.Array(met)
+        pt = met_ak[:, 0, 0]
+        phi = met_ak[:, 0, 1]
+        eta = ak.zeros_like(pt)
+        mass = ak.zeros_like(pt)
+        return vector.array({"pt": pt, "eta": eta, "phi": phi, "mass": mass})
+    
+    def plot_E_j1(self):
+        """Plot the energy of the leading jet."""
+        jets_vec = self._to_vector(self.jets_real)
+        E_j1 = jets_vec[:, 0].E
+        plt.figure(figsize=(6, 5), dpi=150)
+        plt.hist(ak.to_numpy(E_j1), bins=30, density=True, histtype="step", linewidth=1.8, color="#ff7f0e")
+        plt.xlabel(r"$E_{j_1}$ [GeV]", fontsize=16)
+        plt.ylabel("Density", fontsize=16)
+        plt.title(r"Distribution of $E_{j_1}$", fontsize=18)
+        plt.yscale("log")
         plt.show()
 
-    # For convenience, if no second model is provided, call the above with gen_vals2 = gen_vals1.
-    def _plot_distribution_comparison_single(self, real_vals, gen_vals, observable_name, xlabel, nbins=50, log_scale=False, model_label="Model"):
-        self._plot_distribution_comparison(real_vals, gen_vals, gen_vals, observable_name, xlabel, nbins, log_scale, model_label, model_label)
+    def plot_pT_j1(self):
+        """Plot the transverse momentum of the leading jet."""
+        jets_vec = self._to_vector(self.jets_real)
+        pT_j1 = jets_vec[:, 0].pt
+        plt.figure(figsize=(6, 5), dpi=150)
+        plt.hist(ak.to_numpy(pT_j1), bins=30, density=True, histtype="step", linewidth=1.8, color="#1f77b4")
+        plt.xlabel(r"$p_{T, j_1}$ [GeV]", fontsize=16)
+        plt.ylabel("Density", fontsize=16)
+        plt.title(r"Distribution of $p_{T, j_1}$", fontsize=18)
+        plt.yscale("log")
+        plt.show()
 
-    # Now update each plot function to use the new helper if a second model is provided.
-    def plot_E_j1(self, nbins=100):
-        """Plot the Energy of the leading jet (computed)."""
-        pt_idx, eta_idx, mass_idx = self.feat_idx_map["pt"], self.feat_idx_map["eta"], self.feat_idx_map["mass"]
-        # Real data
-        pt_real = self.jets_real[:, 0, pt_idx]
-        eta_real = self.jets_real[:, 0, eta_idx]
-        mass_real = self.jets_real[:, 0, mass_idx]
-        E_real = self._compute_energy(pt_real, eta_real, mass_real)
-        # Model 1
-        pt_gen = self.jets_gen[:, :, 0, pt_idx]
-        eta_gen = self.jets_gen[:, :, 0, eta_idx]
-        mass_gen = self.jets_gen[:, :, 0, mass_idx]
-        E_gen = self._compute_energy(pt_gen, eta_gen, mass_gen)
-        # If second model is provided
-        if self.jets_gen2 is not None:
-            pt_gen2 = self.jets_gen2[:, :, 0, pt_idx]
-            eta_gen2 = self.jets_gen2[:, :, 0, eta_idx]
-            mass_gen2 = self.jets_gen2[:, :, 0, mass_idx]
-            E_gen2 = self._compute_energy(pt_gen2, eta_gen2, mass_gen2)
-            self._plot_distribution_comparison(E_real, E_gen, E_gen2, "E_j1", r"$E_{j_1}$ [GeV]", log_scale=True, nbins=nbins)
-        else:
-            self._plot_distribution_comparison_single(E_real, E_gen, "E_j1", r"$E_{j_1}$ [GeV]", log_scale=True, model_label="Model", nbins=nbins)
 
-    def plot_pT_j1(self, nbins=100):
-        """Plot pT of the leading jet."""
-        pt_idx = self.feat_idx_map["pt"]
-        real_vals = self.jets_real[:, 0, pt_idx]
-        gen_vals = self.jets_gen[:, :, 0, pt_idx]
-        if self.jets_gen2 is not None:
-            gen_vals2 = self.jets_gen2[:, :, 0, pt_idx]
-            self._plot_distribution_comparison(real_vals, gen_vals, gen_vals2, "pT_j1", r"$p_{T,j_1}$ [GeV]", log_scale=True, nbins=nbins)
-        else:
-            self._plot_distribution_comparison_single(real_vals, gen_vals, "pT_j1", r"$p_{T,j_1}$ [GeV]", log_scale=True, model_label="Model", nbins=nbins)
-
-    def plot_dphi_j1j2(self, nbins=50):
-        """Plot Δϕ between jet1 and jet2, with proper circular wrapping."""
-        phi_idx = self.feat_idx_map["phi"]
-        delta_phi_real = self.jets_real[:, 0, phi_idx] - self.jets_real[:, 1, phi_idx]
-        delta_phi_real = (delta_phi_real + np.pi) % (2 * np.pi) - np.pi
-        delta_phi_gen = self.jets_gen[:, :, 0, phi_idx] - self.jets_gen[:, :, 1, phi_idx]
-        delta_phi_gen = (delta_phi_gen + np.pi) % (2 * np.pi) - np.pi
-        if self.jets_gen2 is not None:
-            delta_phi_gen2 = self.jets_gen2[:, :, 0, phi_idx] - self.jets_gen2[:, :, 1, phi_idx]
-            delta_phi_gen2 = (delta_phi_gen2 + np.pi) % (2 * np.pi) - np.pi
-            self._plot_distribution_comparison(delta_phi_real, delta_phi_gen, delta_phi_gen2, "dphi_j1,j2", r"$\Delta\phi_{j_1,j_2}$ [rad]", log_scale=False, nbins=nbins)
-        else:
-            self._plot_distribution_comparison_single(delta_phi_real, delta_phi_gen, "dphi_j1,j2", r"$\Delta\phi_{j_1,j_2}$ [rad]", log_scale=False, model_label="Model", nbins=nbins)
-
-    def plot_dR_j1j2(self, nbins=100):
-        """Plot ΔR between jet1 and jet2."""
-        eta_idx, phi_idx = self.feat_idx_map["eta"], self.feat_idx_map["phi"]
-        delta_eta_real = self.jets_real[:, 0, eta_idx] - self.jets_real[:, 1, eta_idx]
-        delta_phi_real = (self.jets_real[:, 0, phi_idx] - self.jets_real[:, 1, phi_idx] + np.pi) % (2 * np.pi) - np.pi
-        delta_R_real = np.sqrt(delta_eta_real**2 + delta_phi_real**2)
-        delta_eta_gen = self.jets_gen[:, :, 0, eta_idx] - self.jets_gen[:, :, 1, eta_idx]
-        delta_phi_gen = (self.jets_gen[:, :, 0, phi_idx] - self.jets_gen[:, :, 1, phi_idx] + np.pi) % (2 * np.pi) - np.pi
-        delta_R_gen = np.sqrt(delta_eta_gen**2 + delta_phi_gen**2)
-        if self.jets_gen2 is not None:
-            delta_eta_gen2 = self.jets_gen2[:, :, 0, eta_idx] - self.jets_gen2[:, :, 1, eta_idx]
-            delta_phi_gen2 = (self.jets_gen2[:, :, 0, phi_idx] - self.jets_gen2[:, :, 1, phi_idx] + np.pi) % (2 * np.pi) - np.pi
-            delta_R_gen2 = np.sqrt(delta_eta_gen2**2 + delta_phi_gen2**2)
-            self._plot_distribution_comparison(delta_R_real, delta_R_gen, delta_R_gen2, "dR_j1,j2", r"$\Delta R_{j_1,j_2}$", log_scale=True, nbins=nbins)
-        else:
-            self._plot_distribution_comparison_single(delta_R_real, delta_R_gen, "dR_j1,j2", r"$\Delta R_{j_1,j_2}$", log_scale=True, model_label="Model", nbins=nbins)
+    def dphi_j1j2(self):
+        jets_vec = self._to_vector(self.jets_real)
+        return jets_vec[:, 0].deltaphi(jets_vec[:, 1])
     
-    def plot_dR_MET_jj(self, nbins=100):
-        """Plot ΔR between MET and the dijet system (ΔR_MET,jj)."""
-        if self.met_real is None or self.met_gen is None:
-            print("MET data not provided.")
-            return
-        eta_idx = self.feat_idx_map["eta"]
-        phi_idx = self.feat_idx_map["phi"]
-
-        # Truth MET: assume shape (n_events, 1, 2)
-        phi_MET_real = self.met_real[:, 0, 1]
-        eta_MET_real = np.zeros_like(phi_MET_real)
-        eta_jj_real = 0.5 * (self.jets_real[:, 0, eta_idx] + self.jets_real[:, 1, eta_idx])
-        phi_jj_real = 0.5 * (self.jets_real[:, 0, phi_idx] + self.jets_real[:, 1, phi_idx])
-        delta_eta_real = eta_MET_real - eta_jj_real
-        delta_phi_real = (phi_MET_real - phi_jj_real + np.pi) % (2 * np.pi) - np.pi
-        dR_real = np.sqrt(delta_eta_real**2 + delta_phi_real**2)
-
-        # Generated MET (model 1)
-        if self.met_gen.ndim == 4:
-            phi_MET_gen = self.met_gen[:, :, 0, 1]
-        else:
-            phi_MET_gen = self.met_gen[:, :, 1]
-        eta_MET_gen = np.zeros_like(phi_MET_gen)
-        eta_jj_gen = 0.5 * (self.jets_gen[:, :, 0, eta_idx] + self.jets_gen[:, :, 1, eta_idx])
-        phi_jj_gen = 0.5 * (self.jets_gen[:, :, 0, phi_idx] + self.jets_gen[:, :, 1, phi_idx])
-        delta_eta_gen = eta_MET_gen - eta_jj_gen
-        delta_phi_gen = (phi_MET_gen - phi_jj_gen + np.pi) % (2 * np.pi) - np.pi
-        dR_gen = np.sqrt(delta_eta_gen**2 + delta_phi_gen**2)
-
-        # Generated MET (model 2)
-        if self.met_gen2 is not None:
-            if self.met_gen2.ndim == 4:
-                phi_MET_gen2 = self.met_gen2[:, :, 0, 1]
-            elif self.met_gen2.ndim == 3:
-                phi_MET_gen2 = self.met_gen2[:, :, 1]
-            else:
-                raise ValueError("Unexpected met_gen2 dimensions.")
-            eta_MET_gen2 = np.zeros_like(phi_MET_gen2)
-            eta_jj_gen2 = 0.5 * (self.jets_gen2[:, :, 0, eta_idx] + self.jets_gen2[:, :, 1, eta_idx])
-            phi_jj_gen2 = 0.5 * (self.jets_gen2[:, :, 0, phi_idx] + self.jets_gen2[:, :, 1, phi_idx])
-            delta_eta_gen2 = eta_MET_gen2 - eta_jj_gen2
-            delta_phi_gen2 = (phi_MET_gen2 - phi_jj_gen2 + np.pi) % (2 * np.pi) - np.pi
-            dR_gen2 = np.sqrt(delta_eta_gen2**2 + delta_phi_gen2**2)
-            self._plot_distribution_comparison(dR_real, dR_gen, dR_gen2, "dR_MET,jj", r"$\Delta R_{\text{MET},jj}$", log_scale=True, nbins=nbins)
-        else:
-            self._plot_distribution_comparison_single(dR_real, dR_gen, "dR_MET,jj", r"$\Delta R_{\text{MET},jj}$", log_scale=True, model_label="Model", nbins=nbins)
-
-    def plot_min_m_jj(self, nbins=100):
-        """Plot the minimum invariant mass m_j1j2 among all jet pairs."""
-        pt_idx, eta_idx, phi_idx = self.feat_idx_map["pt"], self.feat_idx_map["eta"], self.feat_idx_map["phi"]
-        def compute_min_mjj(jets):
-            N = jets.shape[0]
-            nJets = jets.shape[1]
-            if nJets < 2:
-                return np.zeros(N)
-            min_mjj = np.full(N, np.inf)
-            for i in range(nJets):
-                for j in range(i+1, nJets):
-                    pt1, eta1, phi1 = jets[:, i, pt_idx], jets[:, i, eta_idx], jets[:, i, phi_idx]
-                    pt2, eta2, phi2 = jets[:, j, pt_idx], jets[:, j, eta_idx], jets[:, j, phi_idx]
-                    delta_eta = eta1 - eta2
-                    delta_phi = (phi1 - phi2 + np.pi) % (2 * np.pi) - np.pi
-                    mjj = np.sqrt(2 * pt1 * pt2 * (np.cosh(delta_eta) - np.cos(delta_phi)))
-                    min_mjj = np.minimum(min_mjj, mjj)
-            return min_mjj
-        min_mjj_real = compute_min_mjj(self.jets_real)
-        min_mjj_gen = np.array([compute_min_mjj(self.jets_gen[i]) for i in range(self.jets_gen.shape[0])])
-        if self.jets_gen2 is not None:
-            min_mjj_gen2 = np.array([compute_min_mjj(self.jets_gen2[i]) for i in range(self.jets_gen2.shape[0])])
-            self._plot_distribution_comparison(min_mjj_real, min_mjj_gen, min_mjj_gen2, "Min(m_j1j2)", r"$m^{\text{min}}_{j_1,j_2\in \text{jets}}$ [GeV]", log_scale=True, nbins=nbins)
-        else:
-            self._plot_distribution_comparison_single(min_mjj_real, min_mjj_gen, "Min(m_j1j2)", r"$m^{\text{min}}_{j_1,j_2\in \text{jets}}$ [GeV]", log_scale=True, model_label="Model", nbins=nbins)
-
-    def plot_H_T(self, nbins=100):
-        """Plot H_T, the sum of jet transverse momenta."""
-        pt_idx = self.feat_idx_map["pt"]
-        real_vals = np.sum(self.jets_real[:, :, pt_idx], axis=1)
-        gen_vals = np.sum(self.jets_gen[:, :, :, pt_idx], axis=2)
-        if self.jets_gen2 is not None:
-            gen_vals2 = np.sum(self.jets_gen2[:, :, :, pt_idx], axis=2)
-            self._plot_distribution_comparison(real_vals, gen_vals, gen_vals2, "H_T", r"$H_T$ [GeV]", log_scale=True, nbins=nbins)
-        else:
-            self._plot_distribution_comparison_single(real_vals, gen_vals, "H_T", r"$H_T$ [GeV]", log_scale=True, model_label="Model", nbins=nbins)
-
-    def plot_all(self):
-        """Convenience method to plot all high-level distributions."""
-        self.plot_E_j1()
-        self.plot_pT_j1()
-        self.plot_dphi_j1j2()
-        self.plot_dR_j1j2()
-        self.plot_H_T()
-        self.plot_dR_MET_jj()
-        self.plot_min_m_jj()
+    def dR_j1j2(self):
+        jets_vec = self._to_vector(self.jets_real)
+        return jets_vec[:, 0].deltaR(jets_vec[:, 1])
+    
+    def HT(self):
+        jets_vec = self._to_vector(self.jets_real)
+        return ak.sum(jets_vec.pt, axis=1)
+    
+    def dR_met_jj(self):
+        jets_vec = self._to_vector(self.jets_real)
+        dijet = jets_vec[:, 0] + jets_vec[:, 1]
+        met_vec = self._to_vector_met(self.met_real)
+        return met_vec.deltaR(dijet)
+    
+    def min_mass_jj(self):
+        jets_vec = self._to_vector(self.jets_real)
+        dijets = ak.combinations(jets_vec, 2, replacement=False, axis=1)
+        j1, j2 = ak.unzip(dijets)
+        return ak.min((j1 + j2).mass, axis=1)
+    
+    # Plotting methods (simple one-panel histograms)
+    def plot_dphi_j1j2(self):
+        vals = ak.to_numpy(self.dphi_j1j2())
+        plt.figure(figsize=(6, 5), dpi=150)
+        plt.hist(vals, bins=30, density=True, histtype="step", linewidth=1.8, color="#d62728")
+        plt.xlabel(r"$\Delta \phi(j_1,j_2)$ [rad]", fontsize=16)
+        plt.ylabel("Density", fontsize=16)
+        plt.title(r"Distribution of $\Delta \phi(j_1,j_2)$", fontsize=18)
+        plt.show()
+    
+    def plot_dR_j1j2(self):
+        vals = ak.to_numpy(self.dR_j1j2())
+        plt.figure(figsize=(6, 5), dpi=150)
+        plt.hist(vals, bins=30, density=True, histtype="step", linewidth=1.8, color="#2ca02c")
+        plt.xlabel(r"$\Delta R(j_1,j_2)$", fontsize=16)
+        plt.ylabel("Density", fontsize=16)
+        plt.title(r"Distribution of $\Delta R(j_1,j_2)$", fontsize=18)
+        plt.yscale("log")
+        plt.show()
+    
+    def plot_HT(self):
+        vals = ak.to_numpy(self.HT())
+        plt.figure(figsize=(6, 5), dpi=150)
+        plt.hist(vals, bins=30, density=True, histtype="step", linewidth=1.8, color="#1f77b4")
+        plt.xlabel(r"$H_T$ [GeV]", fontsize=16)
+        plt.ylabel("Density", fontsize=16)
+        plt.title(r"Distribution of $H_T$", fontsize=18)
+        plt.yscale("log")
+        plt.show()
+    
+    def plot_dR_met_jj(self):
+        vals = ak.to_numpy(self.dR_met_jj())
+        plt.figure(figsize=(6, 5), dpi=150)
+        plt.hist(vals, bins=30, density=True, histtype="step", linewidth=1.8, color="#ff7f0e")
+        plt.xlabel(r"$\Delta R(\mathrm{MET},jj)$", fontsize=16)
+        plt.ylabel("Density", fontsize=16)
+        plt.title(r"Distribution of $\Delta R(\mathrm{MET},jj)$", fontsize=18)
+        plt.yscale("log")
+        plt.show()
+    
+    def plot_min_mass_jj(self):
+        vals = ak.to_numpy(self.min_mass_jj())
+        plt.figure(figsize=(6, 5), dpi=150)
+        plt.hist(vals, bins=30, density=True, histtype="step", linewidth=1.8, color="#9467bd")
+        plt.xlabel(r"$m_{jj}^{\min}$ [GeV]", fontsize=16)
+        plt.ylabel("Density", fontsize=16)
+        plt.title(r"Distribution of $m_{jj}^{\min}$", fontsize=18)
+        plt.yscale("log")
+        plt.show()
 
 
 def undo_preprocessing(model, real_data, real_fields, real_mask, gen_data, gen_fields, ptype_idx, preprocessing):
