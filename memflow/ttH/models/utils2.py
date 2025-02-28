@@ -613,6 +613,8 @@ class HighLevelDistributions:
                  gen_data2: torch.Tensor = None, jet_ordering="btag"):
         self.feat_idx_map = feat_idx_map
         self.jet_ordering = jet_ordering
+        # If real_data has shape [n_events, nJets, 5] with last dimension [pt, eta, phi, mass, btag],
+        # drop the last column so that real_data matches the 4-feature shape:
 
         # Undo preprocessing for jets and MET (for truth and gen_data1)
         jets_real, jets_real_mask, jets_gen, jets_gen_mask = undo_preprocessing(
@@ -668,12 +670,22 @@ class HighLevelDistributions:
             self.jets_gen2 = jets_gen2.cpu().numpy()
             self.met_gen2 = met_gen2.cpu().numpy() if met_gen2 is not None else None
 
-        # Optionally reorder real jets by descending pT if jet_ordering=="pt".
+        # Optionally reorder jets by descending pT if jet_ordering=="pt".
         if self.jet_ordering == "pt":
             pt_idx = self.feat_idx_map["pt"]
-            sorted_indices = np.argsort(-self.jets_real[:, :, pt_idx], axis=1)
-            self.jets_real = np.take_along_axis(self.jets_real, sorted_indices[:, :, None], axis=1)
-    
+            # Reorder truth jets: shape is [n_events, nJets, n_truth_features]
+            sorted_indices_real = np.argsort(-self.jets_real[:, :, pt_idx], axis=1)
+            self.jets_real = np.take_along_axis(self.jets_real, sorted_indices_real[:, :, None], axis=1)
+            
+            # Reorder generated jets (model 1): shape is [n_samples, n_events, nJets, n_gen_features]
+            sorted_indices_gen = np.argsort(-self.jets_gen[..., pt_idx], axis=2)
+            self.jets_gen = np.take_along_axis(self.jets_gen, sorted_indices_gen[..., None], axis=2)
+            
+            # Reorder generated jets (model 2), if available:
+            if self.jets_gen2 is not None:
+                sorted_indices_gen2 = np.argsort(-self.jets_gen2[..., pt_idx], axis=2)
+                self.jets_gen2 = np.take_along_axis(self.jets_gen2, sorted_indices_gen2[..., None], axis=2)
+
     def _to_vector(self, jets):
         # Create a high-level Awkward Array from jets.
         jets_ak = ak.Array(jets)
@@ -685,12 +697,24 @@ class HighLevelDistributions:
         }, with_name="Momentum4D")
 
     def _to_vector_met(self, met):
-        met_ak = ak.Array(met)
-        pt = met_ak[:, 0, 0]
-        phi = met_ak[:, 0, 1]
-        eta = ak.zeros_like(pt)
-        mass = ak.zeros_like(pt)
+        # Convert to a NumPy array from an Awkward Array for ease of inspection.
+        met_arr = ak.to_numpy(ak.Array(met))
+        if met_arr.shape[-1] == 4:
+            # Truth MET: order is (pt, eta, phi, mass)
+            pt   = met_arr[:, 0, 0]
+            eta  = met_arr[:, 0, 1]
+            phi  = met_arr[:, 0, 2]
+            mass = met_arr[:, 0, 3]
+        elif met_arr.shape[-1] == 2:
+            # Generated MET: order is (pt, phi)
+            pt   = met_arr[:, 0, 0]
+            phi  = met_arr[:, 0, 1]
+            eta  = np.zeros_like(pt)
+            mass = np.zeros_like(pt)
+        else:
+            raise ValueError("Unexpected number of MET features.")
         return vector.array({"pt": pt, "eta": eta, "phi": phi, "mass": mass})
+
 
 
     
@@ -754,8 +778,8 @@ class HighLevelDistributions:
             gen_obs = observable_function(gen_vec, gen_vec_met)
         else:
             gen_obs = observable_function(gen_vec)
-        # Reshape back to (n_samples, n_events) and average over samples:
-        gen_vals = ak.to_numpy(gen_obs).reshape(n_samples, n_events).mean(axis=0)
+        gen_vals = ak.to_numpy(gen_obs).reshape(-1)
+
 
         # Second generated dataset:
         if self.jets_gen2 is not None:
@@ -767,7 +791,8 @@ class HighLevelDistributions:
                 gen_obs2 = observable_function(gen_vec2, gen_vec_met2)
             else:
                 gen_obs2 = observable_function(gen_vec2)
-            gen_vals2 = ak.to_numpy(gen_obs2).reshape(n_samples, n_events).mean(axis=0)
+            gen_vals2 = ak.to_numpy(gen_obs2).reshape(-1)
+
         else:
             gen_vals2 = np.full_like(real_vals, np.nan)
 
