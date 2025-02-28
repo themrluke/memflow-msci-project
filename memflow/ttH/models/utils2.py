@@ -627,7 +627,7 @@ class HighLevelDistributions:
             gen_data[1], [model.reco_input_features_per_type[1][i] for i in model.flow_indices[1]],
             1, preprocessing
         )
-        print("Before reshaping: jets_gen.shape =", jets_gen.shape)
+
         # Reshape generated data: for jets_gen and met_gen
         n_events = jets_real.shape[0]
         gen_total = jets_gen.shape[0]  # This equals (n_samples * n_events)
@@ -648,7 +648,6 @@ class HighLevelDistributions:
                 gen_data2[0], [model.reco_input_features_per_type[0][i] for i in model.flow_indices[0]],
                 0, preprocessing
             )
-            print("Before reshaping: jets_gen2.shape =", jets_gen2.shape)
             gen2_total = jets_gen2.shape[0]  # This equals (n_samples * n_events)
             n_samples2 = gen2_total // n_events
             jets_gen2 = jets_gen2.reshape(n_samples2, n_events, *jets_gen2.shape[1:])
@@ -719,11 +718,11 @@ class HighLevelDistributions:
 
     
     def plot_E_j1(self):
-        self.compare_observable(lambda jets: jets[:, 0].E, nbins=100,
+        self.compare_observable(lambda jets: jets[:, 0].E, nbins=1000,
                                   xlabel=r"$E_{j_1}$ [GeV]", observable_name="E_j1", log_scale=True)
     
     def plot_pT_j1(self):
-        self.compare_observable(lambda jets: jets[:, 0].pt, nbins=100,
+        self.compare_observable(lambda jets: jets[:, 0].pt, nbins=1000,
                                   xlabel=r"$p_{T, j_1}$ [GeV]", observable_name="pT_j1", log_scale=True)
     
     def plot_dphi_j1j2(self):
@@ -731,11 +730,11 @@ class HighLevelDistributions:
                                   xlabel=r"$\Delta\phi(j_1,j_2)$ [rad]", observable_name="dphi_j1j2")
     
     def plot_dR_j1j2(self):
-        self.compare_observable(lambda jets: jets[:, 0].deltaR(jets[:, 1]), nbins=50,
+        self.compare_observable(lambda jets: jets[:, 0].deltaR(jets[:, 1]), nbins=100,
                                   xlabel=r"$\Delta R(j_1,j_2)$", observable_name="dR_j1j2", log_scale=True)
     
     def plot_HT(self):
-        self.compare_observable(lambda jets: ak.sum(jets.pt, axis=1), nbins=50,
+        self.compare_observable(lambda jets: ak.sum(jets.pt, axis=1), nbins=5000,
                                   xlabel=r"$H_T$ [GeV]", observable_name="HT", log_scale=True)
     
     def plot_dR_met_jj(self):
@@ -746,14 +745,12 @@ class HighLevelDistributions:
         self.compare_observable(obs, nbins=50,
                                             xlabel=r"$\Delta R(\mathrm{MET},jj)$", observable_name="dR_met_jj", log_scale=True)
 
-
-
     def plot_min_mass_jj(self):
         def obs(jets):
             dijets = ak.combinations(jets, 2, replacement=False, axis=1)
             j1, j2 = ak.unzip(dijets)
             return ak.min((j1 + j2).mass, axis=1)
-        self.compare_observable(obs, nbins=50,
+        self.compare_observable(obs, nbins=500,
                                   xlabel=r"$m_{jj}^{\min}$ [GeV]", observable_name="min_mass_jj", log_scale=True)
     
 
@@ -772,6 +769,7 @@ class HighLevelDistributions:
         n_events = self.jets_gen.shape[1]   # e.g. 18364 events
         gen_flat = self.jets_gen.reshape(n_samples * n_events, *self.jets_gen.shape[2:])
         gen_vec = self._to_vector(gen_flat)
+
         if observable_name == "dR_met_jj":
             met_gen_flat = self.met_gen.reshape(n_samples * n_events, *self.met_gen.shape[2:])
             gen_vec_met = self._to_vector_met(met_gen_flat)
@@ -815,8 +813,8 @@ class HighLevelDistributions:
         total_gen2 = counts_gen2.sum()
 
         real_errors = np.sqrt(counts_real) / (total_real * bin_widths)
-        gen_errors = np.sqrt(counts_gen) / (total_gen * bin_widths) / np.sqrt(n_samples)
-        gen_errors2 = np.sqrt(counts_gen2) / (total_gen2 * bin_widths) / np.sqrt(n_samples)
+        gen_errors = np.sqrt(counts_gen) / (total_gen * bin_widths) * np.sqrt(n_samples)
+        gen_errors2 = np.sqrt(counts_gen2) / (total_gen2 * bin_widths) * np.sqrt(n_samples)
 
         ratio = np.divide(hist_gen, hist_real, where=hist_real > 0)
         ratio2 = np.divide(hist_gen2, hist_real, where=hist_real > 0)
@@ -849,6 +847,36 @@ class HighLevelDistributions:
                             step='post', color='#2ca02c', alpha=0.3)
         axs[1].set_xlabel(xlabel, fontsize=16)
         axs[1].set_ylabel(r"Gen/Truth", fontsize=16)
+
+
+        if observable_name == "E_j1":
+            axs[0].set_xlim(30, 1250)
+            axs[0].set_ylim(1e-6, 1e-2)
+            axs[1].set_ylim(0, 2)
+        elif observable_name == "pT_j1":
+            axs[0].set_xlim(30, 1200)
+            axs[0].set_ylim(1e-7, 1e-2)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "dphi_j1j2":
+            axs[0].set_xlim(-math.pi, math.pi)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "dR_j1j2":
+            axs[0].set_xlim(0, 7)
+            axs[0].set_ylim(3e-4, 1e0)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "HT":
+            axs[0].set_xlim(200, 3000)
+            axs[0].set_ylim(1e-8, 2e-3)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "dR_met_jj":
+            axs[0].set_xlim(0, 10)
+            axs[0].set_ylim(1e-6, 1e0)
+            axs[1].set_ylim(0.5, 1.5)
+        elif observable_name == "min_mass_jj":
+            axs[0].set_xlim(2, 220)
+            axs[0].set_ylim(1e-8, 2e-2)
+            axs[1].set_ylim(0.5, 1.5)
+
 
         print(f"Truth values: Min={real_vals.min()}, Max={real_vals.max()}, Size={real_vals.shape}")
         print(f"Gen Model 1 values: Min={gen_vals.min()}, Max={gen_vals.max()}, Size={gen_vals.shape}")
