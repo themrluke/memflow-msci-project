@@ -675,10 +675,7 @@ class HighLevelDistributions:
             self.jets_real = np.take_along_axis(self.jets_real, sorted_indices[:, :, None], axis=1)
     
     def _to_vector(self, jets):
-        """
-        Convert a jets numpy array of shape (n_events, nJets, n_features)
-        into a vectorized awkward array.
-        """
+        # Create a high-level Awkward Array from jets.
         jets_ak = ak.Array(jets)
         return ak.zip({
             "pt": jets_ak[:, :, self.feat_idx_map["pt"]],
@@ -686,19 +683,16 @@ class HighLevelDistributions:
             "phi": jets_ak[:, :, self.feat_idx_map["phi"]],
             "mass": jets_ak[:, :, self.feat_idx_map["mass"]]
         }, with_name="Momentum4D")
-    
+
     def _to_vector_met(self, met):
-        """
-        Convert a MET numpy array of shape (n_events, 1, n_met_features)
-        into a vector array.
-        Assumes MET has [pt, phi] (with eta and mass set to zero).
-        """
         met_ak = ak.Array(met)
         pt = met_ak[:, 0, 0]
         phi = met_ak[:, 0, 1]
         eta = ak.zeros_like(pt)
         mass = ak.zeros_like(pt)
         return vector.array({"pt": pt, "eta": eta, "phi": phi, "mass": mass})
+
+
     
     def plot_E_j1(self):
         self.compare_observable(lambda jets: jets[:, 0].E, nbins=100,
@@ -721,26 +715,15 @@ class HighLevelDistributions:
                                   xlabel=r"$H_T$ [GeV]", observable_name="HT", log_scale=True)
     
     def plot_dR_met_jj(self):
-        def obs(jets):
-            dijet = jets[:, 0] + jets[:, 1]
-            met_vec = self._to_vector_met(self.met_real)
-            # Tile MET vector for each generated sample:
-            n_samples = self.jets_gen.shape[0]
-            # For MET, since there is one object per event, its shape is (n_events,)
-            met_pt_tiled = ak.concatenate([met_vec.pt] * n_samples, axis=0)
-            met_eta_tiled = ak.concatenate([met_vec.eta] * n_samples, axis=0)
-            met_phi_tiled = ak.concatenate([met_vec.phi] * n_samples, axis=0)
-            met_mass_tiled = ak.concatenate([met_vec.mass] * n_samples, axis=0)
-            met_tiled = vector.array({
-                "pt": met_pt_tiled,
-                "eta": met_eta_tiled,
-                "phi": met_phi_tiled,
-                "mass": met_mass_tiled
-            })
-            return met_tiled.deltaR(dijet)
+        """Plot ΔR between MET and the dijet system (j₁+j₂)."""
+        def obs(jets, met):
+            j1j2 = jets[:,0] + jets[:,1]
+            return met.deltaR(j1j2)
         self.compare_observable(obs, nbins=50,
-                                xlabel=r"$\Delta R(\mathrm{MET},jj)$", observable_name="dR_met_jj", log_scale=True)
-    
+                                            xlabel=r"$\Delta R(\mathrm{MET},jj)$", observable_name="dR_met_jj", log_scale=True)
+
+
+
     def plot_min_mass_jj(self):
         def obs(jets):
             dijets = ak.combinations(jets, 2, replacement=False, axis=1)
@@ -749,10 +732,15 @@ class HighLevelDistributions:
         self.compare_observable(obs, nbins=50,
                                   xlabel=r"$m_{jj}^{\min}$ [GeV]", observable_name="min_mass_jj", log_scale=True)
     
+
     def compare_observable(self, observable_function, nbins=50, xlabel="Feature", observable_name="Observable", log_scale=False):
         # Real data observable:
         real_vec = self._to_vector(self.jets_real)
-        real_obs = observable_function(real_vec)
+        if observable_name == "dR_met_jj":
+            real_vec_met = self._to_vector_met(self.met_real)
+            real_obs = observable_function(real_vec, real_vec_met)
+        else:
+            real_obs = observable_function(real_vec)
         real_vals = ak.to_numpy(real_obs).ravel()
 
         # Generated data observable:
@@ -760,7 +748,12 @@ class HighLevelDistributions:
         n_events = self.jets_gen.shape[1]   # e.g. 18364 events
         gen_flat = self.jets_gen.reshape(n_samples * n_events, *self.jets_gen.shape[2:])
         gen_vec = self._to_vector(gen_flat)
-        gen_obs = observable_function(gen_vec)
+        if observable_name == "dR_met_jj":
+            met_gen_flat = self.met_gen.reshape(n_samples * n_events, *self.met_gen.shape[2:])
+            gen_vec_met = self._to_vector_met(met_gen_flat)
+            gen_obs = observable_function(gen_vec, gen_vec_met)
+        else:
+            gen_obs = observable_function(gen_vec)
         # Reshape back to (n_samples, n_events) and average over samples:
         gen_vals = ak.to_numpy(gen_obs).reshape(n_samples, n_events).mean(axis=0)
 
@@ -768,7 +761,12 @@ class HighLevelDistributions:
         if self.jets_gen2 is not None:
             gen2_flat = self.jets_gen2.reshape(n_samples * n_events, *self.jets_gen2.shape[2:])
             gen_vec2 = self._to_vector(gen2_flat)
-            gen_obs2 = observable_function(gen_vec2)
+            if observable_name == "dR_met_jj":
+                met_gen2_flat = self.met_gen2.reshape(n_samples * n_events, *self.met_gen2.shape[2:])
+                gen_vec_met2 = self._to_vector_met(met_gen2_flat)
+                gen_obs2 = observable_function(gen_vec2, gen_vec_met2)
+            else:
+                gen_obs2 = observable_function(gen_vec2)
             gen_vals2 = ak.to_numpy(gen_obs2).reshape(n_samples, n_events).mean(axis=0)
         else:
             gen_vals2 = np.full_like(real_vals, np.nan)
