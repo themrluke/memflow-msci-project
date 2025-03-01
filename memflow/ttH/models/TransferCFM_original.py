@@ -179,7 +179,7 @@ class BaseCFM(L.LightningModule):
 
         # Velocity network for bridging
         d_in = self.embed_dim + self.len_flow_feats + 1
-        d_hidden = cfm_args['dim_hidden']
+        d_hidden = cfm_args['dim_feedforward']
         activation_fn = cfm_args['activation']
         cfm_layers = []
         for _ in range(cfm_args['num_layers']):
