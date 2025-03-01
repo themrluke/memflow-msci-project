@@ -143,7 +143,7 @@ class SamplingCallback(Callback):
             return np.linspace(lower, upper, self.bins)
 
     # Helper function to plot 2D + marginals in a sub-grid
-    def plot_particle(self, sample, reco, features, title):
+    def plot_particle(self, sample, reco, features, title, cmap='BuGn'):
         """
         sample: shape (N, F)   (N = number of samples, F = #features)
         reco:   shape (F,)     (#features)
@@ -216,7 +216,7 @@ class SamplingCallback(Callback):
                     extent=extent,
                     norm=matplotlib.colors.LogNorm(),
                     mincnt=1,  # Only show hexagons with at least one count
-                    cmap='BuGn' # BuGn or RdPu
+                    cmap=cmap
                 )
             else:
                 hb = ax_main.hexbin(
@@ -224,11 +224,11 @@ class SamplingCallback(Callback):
                     gridsize=self.bins,
                     extent=extent,
                     mincnt=1,
-                    cmap='BuGn'
+                    cmap=cmap
                 )
 
             # Extract a color from the main hist to use for marginal hist
-            main_cmap = plt.get_cmap('BuGn')
+            main_cmap = plt.get_cmap(cmap)
             marginal_color = main_cmap(0.5)
 
             # Top marginal histogram
@@ -310,7 +310,7 @@ class SamplingCallback(Callback):
         return fig
 
 
-    def make_sampling_plots(self,model,show=False, external_samples=None):
+    def make_sampling_plots(self,model, external_samples=None, cmap='BuGn', save_dir='sampling_plots'):
         if self.device is None:
             device = model.device
         else:
@@ -318,7 +318,6 @@ class SamplingCallback(Callback):
         model = model.to(device)
 
         # Ensure the save directory exists
-        save_dir = 'Figures'
         os.makedirs(save_dir, exist_ok=True)
 
         # Sample
@@ -396,7 +395,8 @@ class SamplingCallback(Callback):
                             sample = samples[i][:, event, j, :],
                             reco   = reco_data[i][event,j, flow_indices],
                             features = flow_feats,
-                            title = f'{model.reco_particle_type_names[i]} #{j} (event #{event})'
+                            title = f'{model.reco_particle_type_names[i]} #{j} (event #{event})',
+                            cmap=cmap
                         )
                         fig_name = f'event_{event}_obj_{model.reco_particle_type_names[i]}_{j}'
                         if self.suffix:
