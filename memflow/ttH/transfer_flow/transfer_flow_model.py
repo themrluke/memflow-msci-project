@@ -293,5 +293,3 @@ class TransferFlow(AbsModel):
             )
             for data in samples
         ]
-
-

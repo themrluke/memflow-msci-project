@@ -189,7 +189,7 @@ class FeatureDistributions:
         plt.tight_layout()
         plt.show()
 
-    def compare_distributions_multiple(self, real_data, gen_data_1, gen_data_2, ptype_idx,
+    def compare_distributions_multiple(self, real_data, gen_data_1, gen_data_2, gen_data_3, ptype_idx,
                                          feat_idx=0, nbins=50, feat_name="Feature"):
         """
         Compare histograms of real vs. two generated datasets for a single feature,
@@ -199,6 +199,7 @@ class FeatureDistributions:
         real_mask = self.real_mask[ptype_idx]
         gen_data_1 = gen_data_1[ptype_idx]
         gen_data_2 = gen_data_2[ptype_idx]
+        gen_data_3 = gen_data_3[ptype_idx]
         real_fields = self.model.reco_input_features_per_type[ptype_idx]
         gen_fields = [real_fields[idx] for idx in self.model.flow_indices[ptype_idx]]
 
@@ -207,27 +208,37 @@ class FeatureDistributions:
             real_data = real_data.cpu()
             gen_data_1 = gen_data_1.cpu()
             gen_data_2 = gen_data_2.cpu()
+            gen_data_3 = gen_data_3.cpu()
             if gen_data_1.ndim == 4:
                 gen_data_1 = gen_data_1.reshape(gen_data_1.shape[0] * gen_data_1.shape[1],
                                                 gen_data_1.shape[2], gen_data_1.shape[3])
             if gen_data_2.ndim == 4:
                 gen_data_2 = gen_data_2.reshape(gen_data_2.shape[0] * gen_data_2.shape[1],
                                                 gen_data_2.shape[2], gen_data_2.shape[3])
+            if gen_data_3.ndim == 4:
+                gen_data_3 = gen_data_3.reshape(gen_data_3.shape[0] * gen_data_3.shape[1],
+                                                gen_data_3.shape[2], gen_data_3.shape[3])
             if real_mask is not None:
                 real_mask = real_mask.cpu()
             else:
                 real_mask = torch.ones(real_data.shape[0], real_data.shape[1], dtype=torch.bool)
             N_sample_1 = gen_data_1.shape[0] // real_data.shape[0]
             N_sample_2 = gen_data_2.shape[0] // real_data.shape[0]
+            N_sample_3 = gen_data_3.shape[0] // real_data.shape[0]
+
             gen_mask_1 = real_mask.repeat((N_sample_1, 1))
             gen_mask_2 = real_mask.repeat((N_sample_2, 1))
+            gen_mask_3 = real_mask.repeat((N_sample_3, 1))
+
             real_data, _ = self.preprocessing.inverse(name=name, x=real_data, mask=real_mask, fields=real_fields)
             gen_data_1, _ = self.preprocessing.inverse(name=name, x=gen_data_1, mask=gen_mask_1, fields=gen_fields)
             gen_data_2, _ = self.preprocessing.inverse(name=name, x=gen_data_2, mask=gen_mask_2, fields=gen_fields)
-
+            gen_data_3, _ = self.preprocessing.inverse(name=name, x=gen_data_3, mask=gen_mask_3, fields=gen_fields)
+    
         real_data = real_data[real_mask.bool()]
         gen_data_1 = gen_data_1[gen_mask_1.bool()]
         gen_data_2 = gen_data_2[gen_mask_2.bool()]
+        gen_data_3 = gen_data_3[gen_mask_3.bool()]
 
         if ptype_idx == 1 and feat_idx == 1:
             real_vals = real_data[..., feat_idx+1].cpu().numpy().ravel()
@@ -235,49 +246,128 @@ class FeatureDistributions:
             real_vals = real_data[..., feat_idx].cpu().numpy().ravel()
         gen_vals_1 = gen_data_1[..., feat_idx].cpu().numpy().ravel()
         gen_vals_2 = gen_data_2[..., feat_idx].cpu().numpy().ravel()
-
-        bins = np.linspace(min(real_vals.min(), gen_vals_1.min(), gen_vals_2.min()),
-                           max(real_vals.max(), gen_vals_1.max(), gen_vals_2.max()),
-                           nbins + 1)
-        hist_real, _ = np.histogram(real_vals, bins=bins, density=True)
-        hist_gen_1, _ = np.histogram(gen_vals_1, bins=bins, density=True)
-        hist_gen_2, _ = np.histogram(gen_vals_2, bins=bins, density=True)
-        real_counts, _ = np.histogram(real_vals, bins=bins)
-        gen_counts_1, _ = np.histogram(gen_vals_1, bins=bins)
-        gen_counts_2, _ = np.histogram(gen_vals_2, bins=bins)
-        bin_widths = np.diff(bins)
-        total_real = np.sum(real_counts)
-        total_gen_1 = np.sum(gen_counts_1)
-        total_gen_2 = np.sum(gen_counts_2)
-        real_errors = np.sqrt(real_counts) / (total_real * bin_widths)
-        gen_errors_1 = np.sqrt(gen_counts_1) / (total_gen_1 * bin_widths) * np.sqrt(N_sample_1)
-        gen_errors_2 = np.sqrt(gen_counts_2) / (total_gen_2 * bin_widths) * np.sqrt(N_sample_2)
-        ratio_1 = np.divide(hist_gen_1, hist_real, where=hist_real > 0)
-        ratio_2 = np.divide(hist_gen_2, hist_real, where=hist_real > 0)
-        ratio_error_1 = np.divide(gen_errors_1, hist_real, where=hist_real > 0)
-        ratio_error_2 = np.divide(gen_errors_2, hist_real, where=hist_real > 0)
+        gen_vals_3 = gen_data_3[..., feat_idx].cpu().numpy().ravel()
 
         fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1], 'hspace': 0},
                                 sharex=True, figsize=(6, 5), dpi=300)
-        axs[0].step(bins[:-1], hist_real, where="post", label="Truth", linewidth=1.5, color='#1f77b4')
-        axs[0].step(bins[:-1], hist_gen_1, where="post", label="Transfermer", linewidth=1.5, color='#d62728')
-        axs[0].step(bins[:-1], hist_gen_2, where="post", label="Parallel Transfusion", linewidth=1.5, color='#2ca02c')
+        
+        if ptype_idx == 0:
+            if feat_idx == 0:
+                axs[0].set_yscale("log")
+                axs[0].set_xlim(30, 1500)
+                axs[0].set_ylim(2e-8, 1e-2)
+                axs[1].set_ylim(0.4, 1.6)
+            elif feat_idx == 1:
+                axs[0].set_yscale("log")
+                axs[0].set_xlim(-5, 5)
+                axs[0].set_ylim(3e-4, 1e0)
+                axs[1].set_ylim(0.7, 1.3)
+            elif feat_idx == 2:
+                axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
+                axs[0].set_xlim(-math.pi, math.pi)
+                axs[0].set_ylim(0.135, 0.21)
+                axs[1].set_ylim(0.75, 1.25)
+            elif feat_idx == 3:
+                axs[0].set_yscale("log")
+                axs[0].set_xlim(0, 160)
+                axs[0].set_ylim(3e-7, 1e-1)
+                axs[1].set_ylim(0.4, 1.6)
+        if ptype_idx == 1:
+            if feat_idx == 0:
+                axs[0].set_yscale("log")
+                axs[0].set_xlim(200, 1200)
+                axs[0].set_ylim(3e-7, 1e-2)
+                axs[1].set_ylim(0.4, 1.6)
+            elif feat_idx == 1:
+                axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
+                axs[0].set_xlim(-math.pi, math.pi)
+                axs[0].set_ylim(0.095, 0.2)
+                axs[1].set_ylim(0.75, 1.25)
+
+        # 5) Binning
+        min_val = min(
+            real_vals.min(),
+            gen_vals_1.min(),
+            gen_vals_2.min(),
+            gen_vals_3.min()
+        )
+        max_val = max(
+            real_vals.max(),
+            gen_vals_1.max(),
+            gen_vals_2.max(),
+            gen_vals_3.max()
+        )
+
+        x_min, x_max = axs[0].get_xlim()
+        bin_width =  (x_max - x_min) / 50 # Change divisor here to make the number of visible bins
+        bins = np.arange(min_val, max_val + bin_width, bin_width)
+        bin_widths = np.diff(bins)
+
+        hist_real, _ = np.histogram(real_vals, bins=bins, density=True)
+        hist_gen_1, _ = np.histogram(gen_vals_1, bins=bins, density=True)
+        hist_gen_2, _ = np.histogram(gen_vals_2, bins=bins, density=True)
+        hist_gen_3, _ = np.histogram(gen_vals_3, bins=bins, density=True)
+
+        real_counts, _ = np.histogram(real_vals, bins=bins)
+        gen_counts_1, _ = np.histogram(gen_vals_1, bins=bins)
+        gen_counts_2, _ = np.histogram(gen_vals_2, bins=bins)
+        gen_counts_3, _ = np.histogram(gen_vals_3, bins=bins)
+
+        total_real = np.sum(real_counts)
+        total_gen_1 = np.sum(gen_counts_1)
+        total_gen_2 = np.sum(gen_counts_2)
+        total_gen_3 = np.sum(gen_counts_3)
+
+        real_errors = np.sqrt(real_counts) / (total_real * bin_widths)
+        gen_errors_1 = np.sqrt(gen_counts_1) / (total_gen_1 * bin_widths) * np.sqrt(N_sample_1)
+        gen_errors_2 = np.sqrt(gen_counts_2) / (total_gen_2 * bin_widths) * np.sqrt(N_sample_2)
+        gen_errors_3 = np.sqrt(gen_counts_3) / (total_gen_3 * bin_widths) * np.sqrt(N_sample_3)
+
+        ratio_1 = np.divide(hist_gen_1, hist_real, where=hist_real > 0)
+        ratio_2 = np.divide(hist_gen_2, hist_real, where=hist_real > 0)
+        ratio_3 = np.divide(hist_gen_3, hist_real, where=hist_real > 0)
+
+        ratio_error_1 = np.divide(gen_errors_1, hist_real, where=hist_real > 0)
+        ratio_error_2 = np.divide(gen_errors_2, hist_real, where=hist_real > 0)
+        ratio_error_3 = np.divide(gen_errors_3, hist_real, where=hist_real > 0)
+
+
+        axs[0].step(bins[:-1], hist_real, where="post", label="Truth", linewidth=1, color='#1f77b4')
+        axs[0].step(bins[:-1], hist_gen_1, where="post", label="Transfermer", linewidth=1, color='#d62728')
+        axs[0].step(bins[:-1], hist_gen_2, where="post", label="Parallel Transfusion", linewidth=1, color='#2ca02c')
+        axs[0].step(bins[:-1], hist_gen_3, where="post", label="CFM", linewidth=1, color='#9467bd')
+
         axs[0].fill_between(bins[:-1], hist_real - real_errors, hist_real + real_errors,
                             step="post", color='#1f77b4', alpha=0.3)
         axs[0].fill_between(bins[:-1], hist_gen_1 - gen_errors_1, hist_gen_1 + gen_errors_1,
                             step="post", color='#d62728', alpha=0.3)
         axs[0].fill_between(bins[:-1], hist_gen_2 - gen_errors_2, hist_gen_2 + gen_errors_2,
                             step="post", color='#2ca02c', alpha=0.3)
-        axs[0].set_ylabel("Density", fontsize=16)
-        axs[0].legend(fontsize=10)
+        axs[0].fill_between(bins[:-1], hist_gen_3 - gen_errors_3, hist_gen_3 + gen_errors_3,
+                            step="post", color='#9467bd', alpha=0.3)
 
+        axs[0].set_ylabel("Density", fontsize=16)
+        axs[0].legend(fontsize=14, frameon=False)
+
+        # Draw dashed and dotted lines
         axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
-        axs[1].step(bins[:-1], ratio_1, where="post", color='#d62728', linewidth=1.5, label="Gen 1 / Truth")
-        axs[1].step(bins[:-1], ratio_2, where="post", color='#2ca02c', linewidth=1.5, label="Gen 2 / Truth")
+        y_min, y_max = axs[1].get_ylim()
+        axs[1].axhline(y_min + 0.1, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+        axs[1].axhline(y_max - 0.1, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+        # Set y-ticks at the positions of the dotted lines
+        axs[1].set_yticks([y_min + 0.1, 1.0, y_max - 0.1])
+
+        axs[1].step(bins[:-1], ratio_1, where="post", color='#d62728', linewidth=1, label="Gen 1 / Truth")
+        axs[1].step(bins[:-1], ratio_2, where="post", color='#2ca02c', linewidth=1, label="Gen 2 / Truth")
+        axs[1].step(bins[:-1], ratio_3, where="post", color='#9467bd', linewidth=1, label="Gen 3 / Truth")
+
         axs[1].fill_between(bins[:-1], ratio_1 - ratio_error_1, ratio_1 + ratio_error_1,
                             step="post", color='#d62728', alpha=0.3)
         axs[1].fill_between(bins[:-1], ratio_2 - ratio_error_2, ratio_2 + ratio_error_2,
                             step="post", color='#2ca02c', alpha=0.3)
+        axs[1].fill_between(bins[:-1], ratio_3 - ratio_error_3, ratio_3 + ratio_error_3,
+                    step="post", color='#9467bd', alpha=0.3)
+
         axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
         axs[1].set_xlabel(feat_name, fontsize=16)
 
@@ -285,36 +375,6 @@ class FeatureDistributions:
         axs[1].tick_params(axis='both', which='major', labelsize=10)
         axs[0].tick_params(axis='y', which='minor', labelsize=10)
         axs[1].tick_params(axis='both', which='minor', labelsize=10)
-
-        if ptype_idx == 0:
-            if feat_idx == 0:
-                axs[0].set_yscale("log")
-                axs[0].set_xlim(30, 1500)
-                axs[0].set_ylim(2e-8, 1e-2)
-                axs[1].set_ylim(0.5, 1.5)
-            elif feat_idx == 1:
-                axs[0].set_yscale("log")
-                axs[0].set_xlim(-5, 5)
-                axs[0].set_ylim(3e-4, 1e0)
-                axs[1].set_ylim(0.8, 1.2)
-            elif feat_idx == 3:
-                axs[0].set_yscale("log")
-                axs[0].set_xlim(0, 160)
-                axs[0].set_ylim(3e-7, 1e-1)
-                axs[1].set_ylim(0.5, 1.5)
-        if ptype_idx == 1:
-            if feat_idx == 0:
-                axs[0].set_yscale("log")
-                axs[0].set_xlim(200, 1200)
-                axs[0].set_ylim(3e-7, 1e-2)
-                axs[1].set_ylim(0.5, 1.5)
-
-        if ptype_idx == 0 and feat_idx == 2:
-            axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
-            axs[0].set_xlim(-math.pi, math.pi)
-        if ptype_idx == 1 and feat_idx == 1:
-            axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
-            axs[0].set_xlim(-math.pi, math.pi)
 
         plt.tight_layout()
         plt.show()
@@ -858,7 +918,7 @@ class HighLevelDistributions:
             gridspec_kw={'height_ratios': [3,1], 'hspace': 0},
             sharex=True,
             figsize=(6,5),
-            dpi=150
+            dpi=300
         )
 
         # Set custom ranges for axes
