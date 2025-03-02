@@ -3,7 +3,7 @@
 import os
 import torch
 import torch.nn as nn
-from typing import Callable, List, Optional
+from typing import Callable, List, Dict, Optional
 
 
 def save_samples(
@@ -47,6 +47,34 @@ def load_samples(
         print(f"File {file_path} does not exist.")
         return None
 
+
+def move_batch_to_device(
+        batch: Dict[str, Dict[str, List[torch.Tensor]]],
+        device: torch.device
+) -> Dict[str, Dict[str, List[torch.Tensor]]]:
+    """
+    Moves all tensors in a nested batch dict to accelerated device.
+
+    Args:
+        - batch (Dict[str, Dict[str, List[torch.Tensor]]]): Dict containing lists of tensors.
+        - device (torch.device): Target device (e.g. 'cuda', 'cpu').
+
+    Returns:
+        - new_batch (Dict[str, Dict[str, List[torch.Tensor]]]): Dict where all tensors are now on device.
+    """
+    new_batch = {}
+    for top_key, top_val in batch.items():
+        new_top_dict = {}
+        for key, val in top_val.items():
+            if isinstance(val, list):
+                new_top_dict[key] = [item.to(device) for item in val]
+            elif isinstance(val, torch.Tensor):
+                new_top_dict[key] = val.to(device)
+            else:
+                new_top_dict[key] = val
+        new_batch[top_key] = new_top_dict
+
+    return new_batch
 
 
 def pad_t_like_x(

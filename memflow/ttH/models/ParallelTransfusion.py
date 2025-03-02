@@ -28,7 +28,9 @@ class BaseCFM(L.LightningModule):
     Base class for Conditional Flow Matching (CFM) models operating in 'global' mode.
     Serves as a parent class for other CFM methods with different bridging distributions & Optimal Transport plans.
     Handles:
-        - Transformer-based conditioning (HERE, talk about decoder hard level events, encoder time and current state).
+        - Transformer-based conditioning:
+            - Transformer encoder: self-attention hard level events
+            - Transformer decoder: self-attention current state and time value. Cross-attention hard-level events
         - Feature embeddings & transformations.
         - Learnable time-dependent velocity network for flow matching.
 

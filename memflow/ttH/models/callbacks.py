@@ -17,54 +17,67 @@ import matplotlib.gridspec as gridspec
 from lightning.pytorch.callbacks import Callback
 import torch
 from torch.utils.data import DataLoader
+from typing import List, Dict, Tuple, Optional
 
 
 
-def angle_diff(delta_phi):
+def angle_diff(
+        delta_phi: torch.Tensor
+) -> torch.Tensor:
     """
-    Maps any delta_phi into the interval [-pi, pi].
-    delta_phi can be a PyTorch tensor.
+    Maps delta_phi into the interval [-pi, pi].
+
+    Args:
+        - delta_phi (torch.Tensor): Angle difference in radians.
+
+    Returns:
+        - torch.Tensor: Angle diff.
     """
     return (delta_phi + math.pi) % (2 * math.pi) - math.pi
 
 
-class CFMSamplingCallback(Callback):
-    def __init__(self, dataset, freq=5, steps=10, show_sampling_distributions=False):
-        """
-        dataset: e.g. combined_dataset_valid
-        freq   : how often (epochs) to do sampling
-        steps  : bridging steps for Euler
-        """
-        super().__init__()
-        self.dataset = dataset
-        self.freq = freq
-        self.steps = steps
-        self.show_sampling_distributions = show_sampling_distributions
-
-    def move_batch_to_device(batch, device):
-        new_batch = {}
-        for top_key, top_val in batch.items():
-            new_top_dict = {}
-            for key, val in top_val.items():
-                if isinstance(val, list):
-                    new_top_dict[key] = [item.to(device) for item in val]
-                elif isinstance(val, torch.Tensor):
-                    new_top_dict[key] = val.to(device)
-                else:
-                    new_top_dict[key] = val
-            new_batch[top_key] = new_top_dict
-        return new_batch
-
-
 
 class SamplingCallback(Callback):
-    def __init__(self,dataset,idx_to_monitor,preprocessing=None,
-                 N_sample=1,steps=20,store_trajectories=False,
-                 frequency=1,bins=50,log_scale=False,suffix='',
-                 label_names={},device=None,pt_range=None):
+    """
+    Callback for the CFM model event-level sampling plots. During training,
+    performs inference and generates plots at custom epoch intervals.
+    After training, there is the option to pass in samples for faster plotting.
+    A single plot per object and event, showing samples in 2D feature space.
+    Includes marginal histograms for aesthetics.
+
+    Parameters:
+        - dataset (torch.utils.data.Dataset): The validation dataset used for sampling.
+        - idx_to_monitor (List[int]): The indices of events to use for sampling.
+        - preprocessing (Optional[object]): Preprocessing that was applied to the reco-level data.
+        - N_sample (int): Number of samples to generate per particle
+        - steps (int): Number of integration steps for CFM models
+        - store_trajectories (bool): Whether or not to store intermediate integration steps.
+        - frequency (int): Frequency to generate plots (in epochs).
+        - bins (int): Number of histogram bins.
+        - log_scale (bool): Whether to use log scale for histograms.
+        - suffix (str): Suffix for saved figures.
+        - label_names (Dict[str,str]): Dictionary mapping feature names to display labels.
+        - device (Optional[torch.device]): Device for model inference.
+        - pt_range (Optional[float]): Range for the pT values on histograms.
+    """
+    def __init__(
+            self,
+            dataset: torch.utils.data.Dataset,
+            idx_to_monitor: List[int],
+            preprocessing: Optional[object] = None,
+            N_sample: int = 1,
+            steps: int = 20,
+            store_trajectories: bool = False,
+            frequency: int = 1,
+            bins: int = 50,
+            log_scale: bool = False,
+            suffix: str = '',
+            label_names: Dict[str,str] = {},
+            device: Optional[torch.device] = None,
+            pt_range: Optional[float] = None
+    ):
         super().__init__()
 
-        # Attributes #
         self.dataset = dataset
         self.N_sample = N_sample
         self.steps = steps
@@ -78,18 +91,26 @@ class SamplingCallback(Callback):
         self.suffix = suffix
         self.label_names = label_names
         self.pt_range = pt_range
-
-        # Collate partial batch
         self.set_idx(idx_to_monitor)
 
 
-    def set_idx(self, idx_to_monitor):
+    def set_idx(
+            self,
+            idx_to_monitor: List[int]
+    ):
+        """
+        Processes indexes of events to plot.
+
+        Args:
+            - idx_to_monitor (List[int]): The indices of events to use for sampling.
+        """
         self.idx_to_monitor = idx_to_monitor
-        # Checks #
+
         if not torch.is_tensor(self.idx_to_monitor):
             self.idx_to_monitor = torch.tensor(self.idx_to_monitor)
         if self.idx_to_monitor.dim() < 1:
             self.idx_to_monitor = self.idx_to_monitor.reshape(-1)
+
         self.N_event = self.idx_to_monitor.shape[0]
 
         # Build partial batch
@@ -111,20 +132,31 @@ class SamplingCallback(Callback):
         self.batch['reco']['mask'] = default_collate(self.batch['reco']['mask'])
 
 
-    def get_bins(self, feature, sample_vals, reco_val):
+    def get_bins(
+            self,
+            feature: str,
+            sample_vals: torch.Tensor,
+            reco_val: float
+    ) -> np.ndarray:
         """
-        Defines the bin bounds for the histogram.
-        For phi and eta, fix the range:
-            phi -> [-pi, pi]
-            eta -> [-5,  5]
-        For pT, optionally fix a range around real value if pt_range is not None.
-        Otherwise fallback is min->max for sample & real.
+        Defines the bin bounds for the histogram. Ranges:
+            - phi = [-pi, pi].
+            - eta = [-5,  5].
+            - pT = Custom range OR [min value, max value].
+
+        Args:
+            - feature (str): Name of the particle feature ('pt', 'eta', 'phi', 'mass).
+            - sample_vals (torch.Tensor): The sampled values for feature.
+            - reco_val (float): The real value for that feature.
+
+        Returns:
+            - numpy.ndarray: Bin edges for histogram.
         """
         reco_val = float(reco_val)
 
         if feature == 'phi':
             return np.linspace(-math.pi, math.pi, self.bins)
-            #return np.linspace(sample_vals.min(), sample_vals.max(), self.bins)
+            #return np.linspace(sample_vals.min(), sample_vals.max(), self.bins) # To zoom in
         elif feature == 'eta':
             return np.linspace(-5.0, 5.0, self.bins)
         elif feature in ['pt', 'm', 'mass']:
@@ -148,20 +180,28 @@ class SamplingCallback(Callback):
                 upper = lower + 1.0
             return np.linspace(lower, upper, self.bins)
 
-    # Helper function to plot 2D + marginals in a sub-grid
-    def plot_particle(self, sample, reco, features, title, cmap='BuGn'):
-        """
-        sample: shape (N, F)   (N = number of samples, F = #features)
-        reco:   shape (F,)     (#features)
-        features: list of strings (like ["pt", "eta", "phi"])
-        title:   str
 
-        This function creates a 1-row, N-columns set of plots.
-        Ensures:
-          - pt is always on the y-axis.
-          - eta vs phi has phi on x-axis.
+    def plot_particle(
+            self,
+            sample: torch.Tensor,
+            reco: torch.Tensor,
+            features: List[str],
+            title: str,
+            cmap: str = 'BuGn'
+    ) -> plt.Figure:
         """
+        Creates plots for each pair of features.
 
+        Args:
+            - sample (torch.Tensor): Sampled feature values, shape (N_samples, N_features).
+            - reco (torch.Tensor): True feature values, shape (N_features,).
+            - features (List[str]): List containing the feature names ["pt", "eta", "phi"].
+            - title (str): Plot title.
+            - cmap (str, optional): Colormap for the hexbin plots.
+
+        Returns:
+            - plt.Figure: Generated plots.
+        """
         assert sample.shape[1] == reco.shape[0]
         N = len(features)
         pairs = []
@@ -246,7 +286,7 @@ class SamplingCallback(Callback):
             ax_right.hist(yvals, bins=bins_y, orientation="horizontal", color=marginal_color, edgecolor='white', linewidth=0.1)
             ax_right.axhline(realy, color='r', linestyle='dashed', linewidth=2)
             ax_right.set_xscale('log' if self.log_scale is True else 'linear')
-            
+
             remove_borders = True
             if remove_borders:
                 # Remove only the tick labels (and spines) for the marginal plots,
@@ -266,7 +306,7 @@ class SamplingCallback(Callback):
                 # Make ticks appear inside the plot
                 ax_top.tick_params(direction="in")
                 ax_right.tick_params(direction="in")
-                
+
             # Overplot real value
             ax_main.scatter(realx, realy, c='r', marker='x', s=75, linewidths=2)
 
@@ -279,7 +319,6 @@ class SamplingCallback(Callback):
             ])
             fig.colorbar(hb, cax=cbar_ax, orientation="horizontal")
 
-            
         # Fill each pair
         for c, (iF, jF) in enumerate(pairs):
             featX = features[iF]
@@ -316,7 +355,25 @@ class SamplingCallback(Callback):
         return fig
 
 
-    def make_sampling_plots(self,model, external_samples=None, cmap='BuGn', save_dir='sampling_plots'):
+    def make_sampling_plots(
+            self,
+            model: torch.nn.Module,
+            external_samples: Optional[List[torch.Tensor]] = None,
+            cmap: str = 'BuGn',
+            save_dir: str = 'sampling_plots'
+    )-> Dict[str, plt.Figure]:
+        """
+        Generates the event-level sampling plots.
+
+        Args:
+        - model (torch.nn.Module): The trained model used for inference (only works with CFM models).
+        - external_samples (Optional[List[torch.Tensor]]): Pre-made samples to save time.
+        - cmap (str, optional): Colormap for plots.
+        - save_dir (str, optional): Directory to save the plots to.
+
+        Returns:
+            - Dict[str, plt.Figure]: Dictionary mapping plot names to matplotlib figures.
+        """
         if self.device is None:
             device = model.device
         else:
@@ -332,6 +389,7 @@ class SamplingCallback(Callback):
         reco_data = [d.to(device) for d in self.batch['reco']['data']]
         reco_mask_exist = [m.to(device) for m in self.batch['reco']['mask']]
 
+        # If pre-made samples are not passed in (e.g. during training), they can be made here
         if external_samples is None:
             with torch.no_grad():
                 samples = model.sample(
@@ -342,13 +400,13 @@ class SamplingCallback(Callback):
                     self.store_trajectories
                 )
         else:
-            samples = external_samples # User-provided samples
+            samples = external_samples # pre-made samples
 
         samples = [s.cpu() for s in samples] # Move all to CPU
         reco_data = [r.cpu() for r in reco_data]
         reco_mask_exist = [m.cpu() for m in reco_mask_exist]
 
-        # Inverse preprocessing
+        # Inverse the preprocessing
         if self.preprocessing is not None:
             for i in range(len(reco_data)):
                 name = model.reco_particle_type_names[i]
@@ -414,6 +472,7 @@ class SamplingCallback(Callback):
                         plt.close(fig)  # Close to free memory
                         figs[fig_name] = fig
                         print(f"Saved: {fig_path}")
+
         return figs
 
     def on_validation_epoch_end(self,trainer,pl_module):
@@ -437,10 +496,46 @@ class SamplingCallback(Callback):
 
 
 class BiasCallback(Callback):
-    def __init__(self,dataset,preprocessing=None,N_sample=1,steps=20,store_trajectories=False,frequency=1,raw=False,bins=50,points=20,log_scale=False,device=None,suffix='',label_names={},N_batch=math.inf,batch_size=1024):
+    """
+    Callback for evaluating bias in the generated samples compared to real data.
+    It computes coverage, mean, and mode statistics, and generates bias plots
+    and quantile-quantile plots.
+
+    Parameters:
+        - dataset (torch.utils.data.Dataset): Validation dataset.
+        - preprocessing (Optional[object]): Preprocessing applied to the reco-level data.
+        - N_sample (int): Number of samples to draw per event.
+        - steps (int): Number of integration steps for CFM models.
+        - store_trajectories (bool): Whether to store intermediate integration steps.
+        - frequency (int): Frequency of logging bias plots (in epochs).
+        - bins (int): Number of bins for histograms.
+        - points (int): Number of points for quantile comparisons.
+        - log_scale (bool): Whether the plots should use log scale.
+        - device (Optional[torch.device]): Device for model inference.
+        - suffix (str): Suffix for saved figures.
+        - label_names (Dict[str, str]): Mapping of feature names to display labels.
+        - N_batch (int): Maximum number of batches to process.
+        - batch_size (int): Number of events per batch in the DataLoader.
+    """
+    def __init__(
+            self,
+            dataset: torch.utils.data.Dataset,
+            preprocessing: Optional[object] = None,
+            N_sample: int = 1,
+            steps: int = 20,
+            store_trajectories: bool = False,
+            frequency: int = 1,
+            bins: int = 50,
+            points: int = 20,
+            log_scale: bool = False,
+            device: Optional[torch.device] = None,
+            suffix: str = '',
+            label_names: Dict[str, str] = {},
+            N_batch: int = math.inf,
+            batch_size: int = 1024
+):
         super().__init__()
 
-        # Attributes #
         self.dataset = dataset
         self.loader = DataLoader(dataset,batch_size=batch_size,shuffle=False)
         self.preprocessing = preprocessing
@@ -457,7 +552,25 @@ class BiasCallback(Callback):
         self.suffix = suffix
 
 
-    def compute_coverage(self,truth,diff,bins,relative=False):
+    def compute_coverage(
+            self,
+            truth: torch.Tensor,
+            diff: torch.Tensor,
+            bins: torch.Tensor,
+            relative: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Computes quantile coverage of the sampled data.
+
+        Args:
+            - truth (torch.Tensor): Truth values.
+            - diff (torch.Tensor): Difference between sampled and true reco-level data.
+            - bins (torch.Tensor): Bin edges.
+            - relative (bool, optional): Whether to compute relative errors.
+
+        Returns:
+            - Tuple[torch.Tensor, torch.Tensor]: Centers of bins and quantile values.
+        """
         centers = []
         quantiles = []
         for x_min,x_max in zip(bins[:-1],bins[1:]):
@@ -474,9 +587,29 @@ class BiasCallback(Callback):
                 ).unsqueeze(0)
             )
             centers.append((x_max+x_min)/2)
+
         return torch.tensor(centers),torch.cat(quantiles,dim=0)
 
-    def compute_means(self,truth,diff,bins,relative=False):
+
+    def compute_means(
+            self,
+            truth: torch.Tensor,
+            diff: torch.Tensor,
+            bins: torch.Tensor,
+            relative: bool = False
+    ) -> torch.Tensor:
+        """
+        Computes the mean error within bins.
+
+        Args:
+            - truth (torch.Tensor): Truth values.
+            - diff (torch.Tensor): Difference between sampled and true reco-level data.
+            - bins (torch.Tensor): Bin edges.
+            - relative (bool, optional): Whether or not to compute relative errors.
+
+        Returns:
+            - torch.Tensor: Mean error for each bin.
+        """
         means = []
         for x_min,x_max in zip(bins[:-1],bins[1:]):
             mask = torch.logical_and(truth<=x_max,truth>=x_min)
@@ -486,9 +619,29 @@ class BiasCallback(Callback):
             if y.sum() == 0:
                 continue
             means.append(y.mean())
+
         return torch.tensor(means)
 
-    def compute_modes(self,truth,diff,bins,relative=False):
+
+    def compute_modes(
+            self,
+            truth: torch.Tensor,
+            diff: torch.Tensor,
+            bins: torch.Tensor,
+            relative: bool = False
+    ) -> torch.Tensor:
+        """
+        Computes the modes within bins.
+
+        Args:
+            - truth (torch.Tensor): Truth values.
+            - diff (torch.Tensor): Difference between sampled and true reco-level data.
+            - bins (torch.Tensor): Bin edges.
+            - relative (bool, optional): Whether or not to compute relative errors.
+
+        Returns:
+            - torch.Tensor: Mode for each bin.
+        """
         modes = []
         for x_min,x_max in zip(bins[:-1],bins[1:]):
             mask = torch.logical_and(truth<=x_max,truth>=x_min)
@@ -506,10 +659,34 @@ class BiasCallback(Callback):
             h = y_bins[1]-y_bins[0]
             L = y_bins[y_idxmax]
             modes.append(L + (f1-f0)/(2*f1-f0-f2) * h)
+
         return torch.tensor(modes)
 
 
-    def plot_particle(self,truth,mask,samples,features,title):
+    def plot_particle(
+            self,
+            truth: torch.Tensor,
+            mask: torch.Tensor,
+            samples: torch.Tensor,
+            features: List[str],
+            title: str
+    ) -> plt.Figure:
+        """
+        Creates:
+            - 1D histograms of the differences between the true and samled values for each feature across all events.
+            - 2D scatter plot comparing the true vs sampled values.
+            - Bias plot showing quantiles.
+
+        Args:
+            - truth (torch.Tensor): True vals.
+            - mask (torch.Tensor): Mask tensor indicating valid events.
+            - samples (torch.Tensor): Sampled values.
+            - features (List[str]): List of feature names in true data.
+            - title (str): Title of the plot.
+
+        Returns:
+            - plt.Figure: The generated Figure. 
+        """
         # truth shape [N,F]
         # mask shape [N]
         # samples shape [S,N,F]
@@ -518,6 +695,7 @@ class BiasCallback(Callback):
         # F = number of features
         assert samples.shape[1] == truth.shape[0]
         assert truth.shape[1] == len(features)
+
         N = len(features)
         fig,axs = plt.subplots(ncols=N,nrows=3,figsize=(5*N,12))
         fig.suptitle(title)
@@ -525,12 +703,14 @@ class BiasCallback(Callback):
 
         if not mask.dtype == torch.bool:
             mask = mask > 0
+
         truth = truth[mask,:]
         samples = samples[:,mask,:]
         truth = truth.unsqueeze(0).repeat_interleave(repeats=samples.shape[0],dim=0)
         diff = samples-truth
+
         for j, feat in enumerate(features):
-            # Getting feature name #
+            # Getting feature name
             if features[j] in self.label_names.keys():
                 feature_name = self.label_names[features[j]]
             else:
@@ -541,7 +721,7 @@ class BiasCallback(Callback):
                 truth[..., j]   = angle_diff(truth[..., j])
                 diff[..., j]    = angle_diff(diff[..., j])
 
-            # 1D plot #
+            # 1D plot
             diff_max = abs(diff[...,j]).max()
             diff_bins = np.linspace(-diff_max,diff_max,self.bins)
             axs[0, j].hist(
@@ -564,7 +744,7 @@ class BiasCallback(Callback):
             if self.log_scale:
                 axs[0,j].set_yscale('log')
 
-            # 2D plot #
+            # 2D plot
             if features[j] in ['pt']:
                 scale_bins = np.linspace(
                     0,
@@ -597,7 +777,7 @@ class BiasCallback(Callback):
             axs[1,j].set_ylabel(f'${feature_name}$ (sampled)', fontsize=15)
             plt.colorbar(h[3],ax=axs[1,j])
 
-            # Bias plot #
+            # Bias plot
             relative = features[j] in ['pt']
             quant_bins = torch.quantile(truth[0,:,j],q=torch.linspace(0.,1.,self.points+1))
             centers,coverages = self.compute_coverage(
@@ -675,8 +855,28 @@ class BiasCallback(Callback):
         return fig
 
 
-    def plot_quantiles(self,truth,mask,samples,features,title):
-        # Quantile-quantile plot #
+    def plot_quantiles(
+            self,
+            truth: torch.Tensor,
+            mask: torch.Tensor,
+            samples: torch.Tensor,
+            features: List[str],
+            title: str
+    ) -> plt.Figure:
+        """
+        Generates a quantile-quantile (QQ) plot comparing the distribution of sampled and true data.
+
+        Args:
+            - truth (torch.Tensor): True vals.
+            - mask (torch.Tensor): Mask tensor of shape indicating valid events.
+            - samples (torch.Tensor): Sampled values.
+            - features (List[str]): List of feature names in true data.
+            - title (str): Title of the plot.
+
+
+        Returns:
+            - plt.Figure: The QQ plot figure.
+        """
         if not mask.dtype == torch.bool:
             mask = mask > 0
 
@@ -686,19 +886,20 @@ class BiasCallback(Callback):
 
         fig,ax = plt.subplots(1,1,figsize=(6,5))
         colors = plt.cm.rainbow(np.linspace(0, 1, len(features)))
+
         for j in range(len(features)):
-            # Getting feature name #
+            # Get feature name
             if features[j] in self.label_names.keys():
                 feature_name = self.label_names[features[j]]
             else:
                 feature_name = features[j]
-            # Calculate qq plot #
+            # Calculate qq
             true_quantiles = torch.linspace(0,1,21)
             true_cuts = torch.quantile(truth[:,j],true_quantiles)
             sampled_quantiles = torch.zeros_like(true_quantiles)
             for k,cut in enumerate(true_cuts):
                 sampled_quantiles[k] = (samples[:,j].ravel() <= cut).sum() / samples.shape[0]
-            # Plot #
+
             ax.plot(
                 true_quantiles,
                 sampled_quantiles,
@@ -707,12 +908,14 @@ class BiasCallback(Callback):
                 color = colors[j],
                 label = f'${feature_name}$',
             )
+
         ax.plot(
             [0,1],
             [0,1],
             linestyle = '--',
             color = 'k',
         )
+
         ax.set_xlabel('Quantile')
         ax.set_ylabel('Fraction sampled events')
         plt.suptitle(title)
@@ -720,8 +923,27 @@ class BiasCallback(Callback):
 
         return fig
 
-    def make_bias_plots(self,model,show=False,disable_tqdm=False,external_samples=None):
-       # Get samples for whole dataset #
+
+    def make_bias_plots(
+            self,
+            model,
+            show: bool = False,
+            disable_tqdm: bool = False,
+            external_samples: Optional[List[torch.Tensor]] = None
+    ) -> Dict[str, plt.Figure]:
+        """
+        Generates all the bias plots including: QQ plot, bias plot, true vs gen scatter, differences histogram.
+
+        Args:
+            - model: The generative model that was used for sampling.
+            - show (bool, optional): Whether to display plots interactively.
+            - disable_tqdm (bool, optional): To disable progress bar.
+            - external_samples (Optional[List[torch.Tensor]], optional): Pre-made samples to use instead of generating new ones.
+
+        Returns:
+            - Dict[str, plt.Figure]: A dictionary of figures.
+        """
+        # Get samples for whole dataset
         if self.device is None:
             device = model.device
         else:
@@ -732,18 +954,18 @@ class BiasCallback(Callback):
         samples = [[] for _ in range(N_reco)]
         truth   = [[] for _ in range(N_reco)]
         mask    = [[] for _ in range(N_reco)]
+
         for batch_idx, batch in tqdm(enumerate(self.loader),desc='Predict',disable=disable_tqdm,leave=True,total=min(self.N_batch,len(self.loader)),position=0):
             if batch_idx >= self.N_batch:
                 break
 
-            # Get parts #
             hard_data = [data.to(device) for data in batch['hard']['data']]
             hard_mask_exist = [mask.to(device) for mask in batch['hard']['mask']]
             reco_data = [data.to(device) for data in batch['reco']['data']]
             reco_mask_exist = [mask.to(device) for mask in batch['reco']['mask']]
 
             if external_samples is None:
-                # Sample #
+                # Sample
                 with torch.no_grad():
                     batch_samples = model.sample(
                         hard_data, hard_mask_exist,
@@ -753,15 +975,13 @@ class BiasCallback(Callback):
                         self.store_trajectories,
                     )
             else:
-                batch_samples = external_samples # User-provided samples
+                batch_samples = external_samples # Pre-made samples
 
-            # Record #
             for i in range(N_reco):
                 samples[i].append(batch_samples[i].cpu())
                 truth[i].append(reco_data[i][...,model.flow_indices[i]].cpu())
                 mask[i].append(reco_mask_exist[i].cpu())
 
-        # Concat the whole samples list #
         samples = [torch.cat(sample,dim=1) for sample in samples]
         truth   = [torch.cat(t,dim=0) for t in truth]
         mask    = [torch.cat(m,dim=0) for m in mask]
@@ -772,7 +992,7 @@ class BiasCallback(Callback):
                     samples[i][..., j] = angle_diff(samples[i][..., j])
                     truth[i][..., j] = angle_diff(truth[i][..., j])
 
-        # Inverse preprocessing if raw #
+        # Inverse preprocessing
         if self.preprocessing is not None:
             for i in range(len(truth)):
                 name = model.reco_particle_type_names[i]
@@ -784,11 +1004,7 @@ class BiasCallback(Callback):
                     mask = mask[i],
                     fields = flow_fields,
                 )
-                # preprocessing expects :
-                #   data = [events, particles, features]
-                #   mask = [events, particles]
-                # samples dims = [samples, events, particles, features]
-                # will merge samples*event and unmerge later
+
                 samples[i] = self.preprocessing.inverse(
                     name = name,
                     x = samples[i].reshape(self.N_sample*samples[i].shape[1],samples[i].shape[2],samples[i].shape[3]),
@@ -796,7 +1012,7 @@ class BiasCallback(Callback):
                     fields = flow_fields,
                 )[0].reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
 
-        # Make figure plots #
+        # Make the different plots
         figs = {}
         for i,(truth_type,mask_type,samples_type) in enumerate(zip(truth,mask,samples)):
             for j in range(truth_type.shape[1]):
@@ -830,17 +1046,17 @@ class BiasCallback(Callback):
 
 
     def on_validation_epoch_end(self,trainer,pl_module):
-        if trainer.sanity_checking:  # optional skip
+        if trainer.sanity_checking:
             return
         if trainer.current_epoch == 0:
             return
         if trainer.current_epoch % self.frequency != 0:
            return
 
-        # Get figures #
+        # Get figures
         figs = self.make_bias_plots(pl_module,disable_tqdm=True,show=False)
 
-        # Log them #
+        # Log them
         for figure_name,figure in figs.items():
             trainer.logger.experiment.log_figure(
                 figure_name = figure_name,
@@ -853,13 +1069,27 @@ class BiasCallback(Callback):
 
 
 class ModelCheckpoint(L.Callback):
-    def __init__(self, save_every_n_epochs=10, save_dir="model_checkpoints"):
+    """
+    Callback during training to save the model's hyperparameters and weights.
+    Can resume training from a checkpoint or use the checkpoint file for inference.
+    Avoids having to rerun the model training every time log back in.
+
+    Parameters:
+     - save_every_n_epochs (int): How frequently during training to save a checkpoint.
+     - save_dir (str): Directory to save all the model .ckpt files.
+    """
+    def __init__(
+            self,
+            save_every_n_epochs: int = 10,
+            save_dir: str = "model_checkpoints"
+    ):
         super().__init__()
         self.save_every_n_epochs = save_every_n_epochs
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
 
-    def on_train_epoch_end(self, trainer, pl_module):
+
+    def on_train_epoch_end(self,trainer, pl_module):
         epoch = trainer.current_epoch  # Zero-indexed epoch
         # Save after every save_every_n_epochs (adjusting for zero-indexing)
         if (epoch + 1) % self.save_every_n_epochs == 0:
