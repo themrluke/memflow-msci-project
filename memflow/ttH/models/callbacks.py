@@ -687,6 +687,20 @@ class BiasCallback(Callback):
         Returns:
             - plt.Figure: The generated Figure. 
         """
+        # Mapping of feature names to LaTeX labels
+        feature_name_map = {
+            "pt": r"p_T",
+            "eta": r"\eta",
+            "phi": r"\phi",
+            "mass": r"\text{Mass}"
+        }
+
+        feature_units = {
+            "p_T": "[GeV]",
+            "\eta": "",
+            "\phi": "[rad]",
+            "mass": "[GeV]"
+        }
         # truth shape [N,F]
         # mask shape [N]
         # samples shape [S,N,F]
@@ -727,6 +741,7 @@ class BiasCallback(Callback):
             axs[0, j].hist(
                 diff[..., j].ravel(),
                 bins=diff_bins,
+                density=True,
                 color='#7fb3d5',
                 edgecolor='none',  # Remove the default edges
                 #linewidth=0.1
@@ -734,15 +749,18 @@ class BiasCallback(Callback):
             axs[0, j].hist(
                 diff[..., j].ravel(),
                 bins=diff_bins,
+                density=True,
                 histtype='step',  # Step outline
                 color='#1f618d',
                 linewidth=1.5
             )
 
-            axs[0,j].set_xlabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$', fontsize=15)
-            axs[0,j].set_ylabel('Frequency', fontsize=15)
-            if self.log_scale:
-                axs[0,j].set_yscale('log')
+            # Use the mapped name if available, otherwise keep as-is
+            feature_name_axis = feature_name_map.get(feature_name, feature_name)
+            unit_str = f"\\text{{ {feature_units.get(feature_name, '')} }}" if feature_name in feature_units else ""
+            axs[0,j].set_xlabel(fr'${feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}} {unit_str}$', fontsize=15)
+            axs[0,j].set_ylabel('Density', fontsize=15)
+            axs[0,j].set_yscale('log' if self.log_scale is True else 'linear')
 
             # 2D plot
             if features[j] in ['pt']:
@@ -773,8 +791,9 @@ class BiasCallback(Callback):
                 norm = matplotlib.colors.LogNorm() if self.log_scale else None,
                 cmap='viridis'
             )
-            axs[1,j].set_xlabel(f'${feature_name}$ (true)', fontsize=15)
-            axs[1,j].set_ylabel(f'${feature_name}$ (sampled)', fontsize=15)
+
+            axs[1,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=15)
+            axs[1,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}}{unit_str}$', fontsize=15)
             plt.colorbar(h[3],ax=axs[1,j])
 
             # Bias plot
@@ -846,11 +865,13 @@ class BiasCallback(Callback):
             cov_max = abs(coverages).max()
             axs[2,j].set_ylim(-cov_max,cov_max)
             axs[2,j].legend(loc='upper right',facecolor='white',framealpha=1)
-            axs[2,j].set_xlabel(f'${feature_name}$ (true)', fontsize=15)
+
+            axs[2,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=15)
+
             if relative:
-                axs[2,j].set_ylabel(fr'$\frac{{{feature_name} \text{{ (sampled)}} - {feature_name}(true)}}{{{feature_name} \text{{ (true)}}}}$', fontsize=15)
+                axs[2,j].set_ylabel(fr'$\frac{{{feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}}}{{{feature_name_axis}^{{\text{{true}}}}}}$', fontsize=15)
             else:
-                axs[2,j].set_ylabel(fr'${feature_name} \text{{ (sampled)}} - {feature_name} \text{{ (true)}}$', fontsize=15)
+                axs[2,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=15)
 
         return fig
 
@@ -955,17 +976,24 @@ class BiasCallback(Callback):
         truth   = [[] for _ in range(N_reco)]
         mask    = [[] for _ in range(N_reco)]
 
-        for batch_idx, batch in tqdm(enumerate(self.loader),desc='Predict',disable=disable_tqdm,leave=True,total=min(self.N_batch,len(self.loader)),position=0):
-            if batch_idx >= self.N_batch:
-                break
-
-            hard_data = [data.to(device) for data in batch['hard']['data']]
-            hard_mask_exist = [mask.to(device) for mask in batch['hard']['mask']]
-            reco_data = [data.to(device) for data in batch['reco']['data']]
-            reco_mask_exist = [mask.to(device) for mask in batch['reco']['mask']]
-
-            if external_samples is None:
-                # Sample
+        if external_samples is not None:
+            samples = external_samples  # Already batched samples
+            # Accumulate truth and mask over all batches, NOT just the first batch
+            for batch in self.loader:
+                hard_data = [data.to(device) for data in batch['hard']['data']]
+                reco_data = [data.to(device) for data in batch['reco']['data']]
+                reco_mask_exist = [mask.to(device) for mask in batch['reco']['mask']]
+                for i in range(N_reco):
+                    truth[i].append(reco_data[i][..., model.flow_indices[i]].cpu())
+                    mask[i].append(reco_mask_exist[i].cpu())
+            truth = [torch.cat(t, dim=0) for t in truth]
+            mask = [torch.cat(m, dim=0) for m in mask]
+        else:
+            for batch_idx, batch in tqdm(enumerate(self.loader), ...):
+                hard_data = [data.to(device) for data in batch['hard']['data']]
+                hard_mask_exist = [mask.to(device) for mask in batch['hard']['mask']]
+                reco_data = [data.to(device) for data in batch['reco']['data']]
+                reco_mask_exist = [mask.to(device) for mask in batch['reco']['mask']]
                 with torch.no_grad():
                     batch_samples = model.sample(
                         hard_data, hard_mask_exist,
@@ -974,17 +1002,14 @@ class BiasCallback(Callback):
                         self.steps,
                         self.store_trajectories,
                     )
-            else:
-                batch_samples = external_samples # Pre-made samples
+                for i in range(N_reco):
+                    samples[i].append(batch_samples[i].cpu())
+                    truth[i].append(reco_data[i][..., model.flow_indices[i]].cpu())
+                    mask[i].append(reco_mask_exist[i].cpu())
+            samples = [torch.cat(sample, dim=1) for sample in samples]
+            truth   = [torch.cat(t, dim=0) for t in truth]
+            mask    = [torch.cat(m, dim=0) for m in mask]
 
-            for i in range(N_reco):
-                samples[i].append(batch_samples[i].cpu())
-                truth[i].append(reco_data[i][...,model.flow_indices[i]].cpu())
-                mask[i].append(reco_mask_exist[i].cpu())
-
-        samples = [torch.cat(sample,dim=1) for sample in samples]
-        truth   = [torch.cat(t,dim=0) for t in truth]
-        mask    = [torch.cat(m,dim=0) for m in mask]
 
         for i in range(len(truth)):  # Loop over reco particle types
             for j, feat in enumerate(model.flow_input_features[i]):
@@ -1005,12 +1030,33 @@ class BiasCallback(Callback):
                     mask = mask[i],
                     fields = flow_fields,
                 )
-                samples[i] = self.preprocessing.inverse(
+
+                samples_reshaped = samples[i].permute(1, 0, 2, 3).reshape(
+                    -1,  # Flatten batch and event dimensions
+                    samples[i].shape[2],  # Keep number of particles
+                    samples[i].shape[3]   # Keep number of features
+                ).cpu()
+
+                mask_reshaped = mask[i].unsqueeze(0).repeat_interleave(
+                    self.N_sample, dim=0
+                ).reshape(
+                    self.N_sample * mask[i].shape[0],
+                    mask[i].shape[1]
+                ).cpu()
+
+                samples_inversed, _ = self.preprocessing.inverse(
                     name = name,
-                    x = samples[i].reshape(self.N_sample*samples[i].shape[1],samples[i].shape[2],samples[i].shape[3]),
-                    mask = mask[i].unsqueeze(0).repeat_interleave(self.N_sample,dim=0).reshape(self.N_sample*mask[i].shape[0],mask[i].shape[1]),
+                    x = samples_reshaped,
+                    mask = mask_reshaped,
                     fields = flow_fields,
-                )[0].reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
+                )
+                samples[i] = samples_inversed.reshape(
+                    self.N_sample,
+                    samples[i].shape[1],
+                    reco_data[i].shape[1],
+                    len(flow_fields),
+                )
+
 
         # Make the different plots
         figs = {}
