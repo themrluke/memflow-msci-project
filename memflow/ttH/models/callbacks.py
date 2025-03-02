@@ -1,4 +1,10 @@
-# callbacks.py
+# Script Name: callbacks.py
+# Author: Luke Johnson
+# Description:
+#    Callbacks for the models to produce bias plots and event level sampling plots during training and inference.
+#    If samples are not provided, (e.g. during training), then inference happens in the sampling callback.
+#    This only works for CFM based models though (not transfermer).
+
 
 import os
 import math
