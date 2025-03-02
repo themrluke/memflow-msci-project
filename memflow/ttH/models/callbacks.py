@@ -998,13 +998,13 @@ class BiasCallback(Callback):
                 name = model.reco_particle_type_names[i]
                 fields = model.reco_input_features_per_type[i]
                 flow_fields = [fields[idx] for idx in model.flow_indices[i]]
+
                 truth[i], _ = self.preprocessing.inverse(
                     name = name,
                     x = truth[i],
                     mask = mask[i],
                     fields = flow_fields,
                 )
-
                 samples[i] = self.preprocessing.inverse(
                     name = name,
                     x = samples[i].reshape(self.N_sample*samples[i].shape[1],samples[i].shape[2],samples[i].shape[3]),
