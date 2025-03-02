@@ -14,6 +14,7 @@ import lightning as L
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import scipy.stats as stats
 from lightning.pytorch.callbacks import Callback
 import torch
 from torch.utils.data import DataLoader
@@ -736,31 +737,43 @@ class BiasCallback(Callback):
                 diff[..., j]    = angle_diff(diff[..., j])
 
             # 1D plot
-            diff_max = abs(diff[...,j]).max()
-            diff_bins = np.linspace(-diff_max,diff_max,self.bins)
+            # Compute mean and std
+            mu, sigma = diff[..., j].mean().item(), diff[..., j].std().item()
+            # Normalize the x-axis: Keep mean but scale by σ
+            normalized_diff = diff[..., j] / sigma  # Do NOT subtract mu!
+            # Define bins for normalized histogram
+            normalized_bins = np.linspace(-5, 5, 41)
+            # diff_max = abs(diff[...,j]).max()
+            # diff_bins = np.linspace(-diff_max,diff_max,self.bins)
             axs[0, j].hist(
-                diff[..., j].ravel(),
-                bins=diff_bins,
+                normalized_diff.ravel(),
+                bins=normalized_bins,
                 density=True,
                 color='#7fb3d5',
                 edgecolor='none',  # Remove the default edges
-                #linewidth=0.1
             )
             axs[0, j].hist(
-                diff[..., j].ravel(),
-                bins=diff_bins,
+                normalized_diff.ravel(),
+                bins=normalized_bins,
                 density=True,
                 histtype='step',  # Step outline
                 color='#1f618d',
                 linewidth=1.5
             )
+            # Generate x values for standard normal distribution
+            normal_dist_x = np.linspace(-4, 4, 100)  # Standard range for N(0,1)
+            # Compute the standard normal PDF
+            standard_normal = stats.norm.pdf(normal_dist_x, 0, 1)  # Mean = 0, Std = 1
+            # Overlay the normal distribution in red
+            axs[0, j].plot(normal_dist_x, standard_normal, 'r-', linewidth=2, label="Standard Normal")
 
             # Use the mapped name if available, otherwise keep as-is
             feature_name_axis = feature_name_map.get(feature_name, feature_name)
             unit_str = f"\\text{{ {feature_units.get(feature_name, '')} }}" if feature_name in feature_units else ""
-            axs[0,j].set_xlabel(fr'${feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}} {unit_str}$', fontsize=15)
+            axs[0,j].set_xlabel(fr'$({feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}) \, / \, \sigma $', fontsize=15)
             axs[0,j].set_ylabel('Density', fontsize=15)
             axs[0,j].set_yscale('log' if self.log_scale is True else 'linear')
+            axs[0,j].set_xlim(-5, 5)
 
             # 2D plot
             if features[j] in ['pt']:
