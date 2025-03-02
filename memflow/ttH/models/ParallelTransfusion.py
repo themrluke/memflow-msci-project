@@ -1,4 +1,3 @@
-
 # Script Name: ParallelTransfusion.py
 # Author: Luke Johnson
 # Description:
@@ -25,14 +24,14 @@ from memflow.models.utils import lowercase_recursive
 
 def pad_t_like_x(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
-    Reshapes time vector t so it can be broadcasted with with the tensor x.
+    Reshapes time vector t so it can be broadcast with with the tensor x.
 
     Args:
         - t (torch.Tensor): Current time value during interpolation.
         - x (torch.Tensor): Distribution of particles and features.
 
     Returns:
-        - torch.Tensor: Reshaped time tensor
+        - torch.Tensor: Reshaped time tensor.
     """
     return t.reshape(-1, *([1] * (x.dim() - 1)))
 
@@ -41,7 +40,7 @@ def pad_t_like_x(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 class CircularEmbedding(nn.Module):
     """
     Responsible for correcting for circular nature of φ. Replaces raw φ field with two fields: [sin(φ), cos(φ)].
-    These get their own embedding before being fed to a linear layerIt expects the indices of the raw φ columns in the input.
+    These get their own embedding before being fed to a linear layer. Expects the indices of the raw φ columns in the input.
 
     Parameters:
         - in_features (int): Number of input features to model.
@@ -391,7 +390,7 @@ class BaseCFM(L.LightningModule):
 
 
     def configure_optimizers(self):
-        """Returns the optimizer and the scheduler config"""
+        """Returns the optimizer and the scheduler config."""
         if self._optimizer is None:
             raise RuntimeError('Optimizer not set')
         if self._scheduler_config is None:
@@ -423,7 +422,7 @@ class BaseCFM(L.LightningModule):
             - t (torch.Tensor): Timesteps for each batch element.
 
         Returns:
-            - condition (torch.Tensor): Conditioning context from Transformer, shape [B, total_particles + 1, d_model]
+            - condition (torch.Tensor): Conditioning context from Transformer, shape [B, total_particles + 1, d_model].
         """
         B = x_t.shape[0]
 
