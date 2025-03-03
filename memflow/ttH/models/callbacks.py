@@ -801,7 +801,7 @@ class BiasCallback(Callback):
                 truth[...,j].ravel(),
                 samples[...,j].ravel(),
                 bins = (scale_bins,scale_bins),
-                norm = matplotlib.colors.LogNorm() if self.log_scale else None,
+                norm = matplotlib.colors.LogNorm(),
                 cmap='viridis'
             )
 
