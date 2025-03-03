@@ -680,7 +680,7 @@ class HighLevelDistributions:
         gen_data: torch.Tensor,
         feat_idx_map: dict,
         gen_data2: torch.Tensor = None,
-        gen_data3: torch.Tensor = None,  # <--- 3rd dataset
+        gen_data3: torch.Tensor = None,
         jet_ordering="btag"
     ):
         self.feat_idx_map = feat_idx_map

@@ -14,6 +14,7 @@ import lightning as L
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.lines import Line2D
 import scipy.stats as stats
 from lightning.pytorch.callbacks import Callback
 import torch
@@ -1133,7 +1134,6 @@ class BiasCallback(Callback):
             plt.close(figure)
 
 
-
 class MultiModelHistogramPlotter:
     """
     Callback for evaluating bias in the generated samples compared to real data.
@@ -1146,15 +1146,17 @@ class MultiModelHistogramPlotter:
         - N_sample (int): Number of samples to draw per event.
         - steps (int): Number of integration steps for CFM models.
         - store_trajectories (bool): Whether to store intermediate integration steps.
-        - frequency (int): Frequency of logging bias plots (in epochs).
         - bins (int): Number of bins for histograms.
-        - points (int): Number of points for quantile comparisons.
         - log_scale (bool): Whether the plots should use log scale.
         - device (Optional[torch.device]): Device for model inference.
         - suffix (str): Suffix for saved figures.
         - label_names (Dict[str, str]): Mapping of feature names to display labels.
         - N_batch (int): Maximum number of batches to process.
         - batch_size (int): Number of events per batch in the DataLoader.
+
+    Note:
+        The external samples provided to `make_bias_plots` should be a list (of length up to 3)
+        where each element is a list of torch.Tensors corresponding to each reco particle type.
     """
     def __init__(
             self,
@@ -1163,18 +1165,18 @@ class MultiModelHistogramPlotter:
             N_sample: int = 1,
             steps: int = 20,
             store_trajectories: bool = False,
-            bins: int = 50,
+            bins: int = 41,
             log_scale: bool = False,
             device: Optional[torch.device] = None,
             suffix: str = '',
             label_names: Dict[str, str] = {},
             N_batch: int = math.inf,
             batch_size: int = 1024
-):
+    ):
         super().__init__()
 
         self.dataset = dataset
-        self.loader = DataLoader(dataset,batch_size=batch_size,shuffle=False)
+        self.loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
         self.preprocessing = preprocessing
         self.N_sample = N_sample
         self.steps = steps
@@ -1190,24 +1192,25 @@ class MultiModelHistogramPlotter:
             self,
             truth: torch.Tensor,
             mask: torch.Tensor,
-            samples: torch.Tensor,
+            samples_list: List[torch.Tensor],
             features: List[str],
             title: str
     ) -> plt.Figure:
         """
-        Creates:
-            - 1D histograms of the differences between the true and samled values for each feature across all events.
+        Creates 1D histograms of the differences between the true and model-sampled values
+        for each feature across all events. Overlays histograms from multiple models.
 
         Args:
-            - truth (torch.Tensor): True vals.
-            - mask (torch.Tensor): Mask tensor indicating valid events.
-            - samples (torch.Tensor): Sampled values.
-            - features (List[str]): List of feature names in true data.
+            - truth (torch.Tensor): True values with shape [N, F].
+            - mask (torch.Tensor): Boolean mask tensor of shape [N].
+            - samples_list (List[torch.Tensor]): List of sample tensors (one per model) each with shape [S, N, F].
+            - features (List[str]): List of feature names.
             - title (str): Title of the plot.
 
         Returns:
-            - plt.Figure: The generated Figure. 
+            - plt.Figure: The generated Figure.
         """
+        # Define feature-specific display information
         feature_info = {
             "pt": {
                 "latex": r"p_T",
@@ -1234,174 +1237,191 @@ class MultiModelHistogramPlotter:
             }
         }
 
-        # truth shape [N,F]
-        # mask shape [N]
-        # samples shape [S,N,F]
-        # S = samples size
-        # N = number of events
-        # F = number of features
-        assert samples.shape[1] == truth.shape[0]
-        assert truth.shape[1] == len(features)
-
         N = len(features)
-        fig,axs = plt.subplots(ncols=N,nrows=1,figsize=(5*N,5))
+        fig, axs = plt.subplots(ncols=N, nrows=1, figsize=(6 * N, 5), dpi=300)
         fig.suptitle(title)
-        plt.subplots_adjust(left=0.1,bottom=0.1,right=0.9,top=0.9,hspace=0.3,wspace=0.3)
+        plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.9, hspace=0.3, wspace=0.2)
 
         if not mask.dtype == torch.bool:
             mask = mask > 0
 
-        truth = truth[mask,:]
-        samples = samples[:,mask,:]
-        truth = truth.unsqueeze(0).repeat_interleave(repeats=samples.shape[0],dim=0)
-        diff = samples-truth
+        # Apply the mask to the truth tensor once
+        masked_truth = truth[mask, :]  # shape: [N_mask, F]
 
+        # Define colors and labels for up to three models.
+        line_colors = ['#d62728', '#2ca02c', '#9467bd']
+        model_labels = ['Transfermer', 'Parallel Transfusion', 'TransferCFM']
+
+        # Loop over each feature
         for j, feat in enumerate(features):
-
-            if feat == "phi": # Circular nature of phi demands different error calc
-                samples[..., j] = angle_diff(samples[..., j])
-                truth[..., j]   = angle_diff(truth[..., j])
-                diff[..., j]    = angle_diff(diff[..., j])
-
-            # 1D plot
-            # Compute mean and std
-            mu, sigma = diff[..., j].mean().item(), diff[..., j].std().item()
-            # Normalize the x-axis: Keep mean but scale by σ
-            normalized_diff = diff[..., j] / sigma  # Do NOT subtract mu!
             # Define bins for normalized histogram
-            normalized_bins = np.linspace(-5, 5, 41)
-            # diff_max = abs(diff[...,j]).max()
-            # diff_bins = np.linspace(-diff_max,diff_max,self.bins)
-            axs[j].hist(
-                normalized_diff.ravel(),
-                bins=normalized_bins,
-                density=True,
-                color='#7fb3d5',
-                edgecolor='none',  # Remove the default edges
-            )
-            axs[j].hist(
-                normalized_diff.ravel(),
-                bins=normalized_bins,
-                density=True,
-                histtype='step',  # Step outline
-                color='#1f618d',
-                linewidth=1.5
-            )
+            normalized_bins = np.linspace(-5, 5, self.bins)
+            # For each model, compute and plot the histogram
+            for m, samples in enumerate(samples_list):
+                # samples assumed shape: [S, N, F]; apply mask along the event (N) dimension
+                masked_samples = samples[:, mask, :]  # shape: [S, N_mask, F]
+                # Repeat truth along sample dimension to match shape
+                repeated_truth = masked_truth.unsqueeze(0).repeat(masked_samples.shape[0], 1, 1)
+                diff = masked_samples - repeated_truth  # shape: [S, N_mask, F]
 
-            # Generate x values for standard normal distribution
-            normal_dist_x = np.linspace(-5, 5, 100)  # Standard range for N(0,1)
-            # Compute the standard normal PDF
-            standard_normal = stats.norm.pdf(normal_dist_x, 0, 1)  # Mean = 0, Std = 1
-            # Overlay the normal distribution in red
-            axs[j].plot(normal_dist_x, standard_normal, 'r-', linewidth=2, label="Standard Normal")
+                # If the feature is 'phi', account for its circular nature
+                if feat == "phi":
+                    # Use the angle_diff function on the appropriate slices
+                    diff_feature = angle_diff(diff[..., j])
+                else:
+                    diff_feature = diff[..., j]
 
-            # Use the mapped name if available, otherwise keep as-is
-            feature_name_axis = feature_info[feat]["latex"]  # Get LaTeX label from dictionary
-            axs[j].set_xlabel(fr'$({feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}) \, / \, \sigma $', fontsize=15)
-            axs[j].set_ylabel('Density', fontsize=15)
-            axs[j].set_yscale('log' if self.log_scale is True else 'linear')
-            axs[j].set_xlim(-5, 5)
+                # Compute mean and standard deviation for the differences
+                mu = diff_feature.mean().item()
+                sigma = diff_feature.std().item()
+                if sigma == 0:
+                    sigma = 1.0  # Avoid division by zero
+                normalized_diff = diff_feature / sigma
+
+                # Plot the histogram for this model on the same axes
+                axs[j].hist(
+                    normalized_diff.ravel(),
+                    bins=normalized_bins,
+                    density=True,
+                    histtype='step',
+                    linewidth=2,
+                    color=line_colors[m],
+                    label=model_labels[m]
+                )
+
+            # Overlay the standard normal distribution for reference
+            normal_dist_x = np.linspace(-4.5, 5.5, 1000)
+            standard_normal = stats.norm.pdf(normal_dist_x, 0, 1)
+            axs[j].plot(normal_dist_x, standard_normal, 'k', linewidth=2, label="Normal")
+
+            # Define custom legend handles
+            legend_handles = [
+                Line2D([0], [0], color='k', linewidth=2, linestyle='-', label='Normal'),
+                Line2D([0], [0], color=line_colors[0], linewidth=2, linestyle='-', label=model_labels[0]),
+                Line2D([0], [0], color=line_colors[1], linewidth=2, linestyle='-', label=model_labels[1]),
+                Line2D([0], [0], color=line_colors[2], linewidth=2, linestyle='-', label=model_labels[2]),
+            ]
+
+            # Use mapped LaTeX name if available
+            feature_name_axis = feature_info[feat]["latex"]
+            axs[j].set_xlabel(
+                fr'$({feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}) \, / \, \sigma $',
+                fontsize=18
+            )
+            axs[j].set_ylabel('Density', fontsize=18)
+            axs[j].tick_params(axis='both', which='major', labelsize=14)
+            axs[j].set_yscale('log' if self.log_scale else 'linear')
+            axs[j].set_xlim(-4.5, 5.5)
+            axs[j].legend(frameon=False, handles=legend_handles, handlelength=1.5, loc='upper right', fontsize=12)
 
         return fig
-
 
     def make_bias_plots(
             self,
             model,
             show: bool = False,
             disable_tqdm: bool = False,
-            external_samples: Optional[List[torch.Tensor]] = None
+            external_samples: Optional[List[List[torch.Tensor]]] = None
     ) -> Dict[str, plt.Figure]:
         """
-        Generates all the bias plots including: QQ plot, bias plot, true vs gen scatter, differences histogram.
+        Generates bias plots (including QQ plot, bias plot, true vs gen scatter, and difference histograms)
+        for each reco particle type and particle index by comparing the true data to external samples generated
+        by up to three different models. If fewer than three sample sets are provided, it falls back to the available ones.
 
         Args:
-            - model: The generative model that was used for sampling.
+            - model: The generative model used for sampling.
             - show (bool, optional): Whether to display plots interactively.
-            - disable_tqdm (bool, optional): To disable progress bar.
-            - external_samples (Optional[List[torch.Tensor]], optional): Pre-made samples to use instead of generating new ones.
+            - disable_tqdm (bool, optional): To disable progress bars.
+            - external_samples (Optional[List[List[torch.Tensor]]], optional): Pre-made samples from up to 3 models.
+              Each element of the outer list should be a list of torch.Tensors corresponding to each reco particle type.
 
         Returns:
-            - Dict[str, plt.Figure]: A dictionary of figures.
+            - Dict[str, plt.Figure]: A dictionary mapping figure names to their corresponding figures.
         """
-        # Get samples for whole dataset
-        if self.device is None:
-            device = model.device
-        else:
-            device = self.device
+        # Get the device
+        device = self.device if self.device is not None else model.device
         model = model.to(device)
 
         N_reco = len(model.n_reco_particles_per_type)
-        samples = [[] for _ in range(N_reco)]
-        truth   = [[] for _ in range(N_reco)]
-        mask    = [[] for _ in range(N_reco)]
+        truth = [[] for _ in range(N_reco)]
+        mask = [[] for _ in range(N_reco)]
 
         if external_samples is not None:
-            samples = external_samples  # Already batched samples
-            # Accumulate truth and mask over all batches, NOT just the first batch
-            for batch_idx, batch in enumerate (self.loader):
+            # external_samples is assumed to be a list (for each model) of sample lists (one per reco type)
+            n_models = len(external_samples)
+            # Accumulate truth and mask over all batches
+            for batch_idx, batch in enumerate(self.loader):
                 if batch_idx >= self.N_batch:
                     break
+                # Get the reco-level data and masks, moving them to the proper device
                 reco_data = [data.to(device) for data in batch['reco']['data']]
-                reco_mask_exist = [mask.to(device) for mask in batch['reco']['mask']]
+                reco_mask_exist = [mask_tensor.to(device) for mask_tensor in batch['reco']['mask']]
                 for i in range(N_reco):
                     truth[i].append(reco_data[i][..., model.flow_indices[i]].cpu())
                     mask[i].append(reco_mask_exist[i].cpu())
             truth = [torch.cat(t, dim=0) for t in truth]
             mask = [torch.cat(m, dim=0) for m in mask]
         else:
-            raise ValueError(f'Must provide pre-made samples from model')
+            raise ValueError('Must provide pre-made external samples from model(s)')
 
+        # Adjust phi values for each model's samples per reco type
+        for m in range(len(external_samples)):
+            for i in range(len(external_samples[m])):
+                for j, feat in enumerate(model.flow_input_features[i]):
+                    if feat == "phi":
+                        external_samples[m][i][..., j] = angle_diff(external_samples[m][i][..., j])
 
-        for i in range(len(truth)):  # Loop over reco particle types
-            for j, feat in enumerate(model.flow_input_features[i]):
-                if feat == "phi":
-                    samples[i][..., j] = angle_diff(samples[i][..., j])
-                    truth[i][..., j] = angle_diff(truth[i][..., j])
-
+        # Apply preprocessing if provided, to both truth and each model's external samples
         if self.preprocessing is not None:
             for i in range(len(truth)):
                 name = model.reco_particle_type_names[i]
                 fields = model.reco_input_features_per_type[i]
                 flow_fields = [fields[idx] for idx in model.flow_indices[i]]
                 truth[i], _ = self.preprocessing.inverse(
-                    name = name,
-                    x = truth[i],
-                    mask = mask[i],
-                    fields = flow_fields,
+                    name=name,
+                    x=truth[i],
+                    mask=mask[i],
+                    fields=flow_fields,
                 )
-                # preprocessing expects :
-                #   data = [events, particles, features]
-                #   mask = [events, particles]
-                # samples dims = [samples, events, particles, features]
-                # will merge samples*event and unmerge later
-                samples[i] = self.preprocessing.inverse(
-                    name = name,
-                    x = samples[i].reshape(self.N_sample*samples[i].shape[1],samples[i].shape[2],samples[i].shape[3]).cpu(),
-                    mask = mask[i].unsqueeze(0).repeat_interleave(self.N_sample,dim=0).reshape(self.N_sample*mask[i].shape[0],mask[i].shape[1]).cpu(),
-                    fields = flow_fields,
-                )[0].reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
+                for m in range(len(external_samples)):
+                    samples_tensor = external_samples[m][i]
+                    processed_samples = self.preprocessing.inverse(
+                        name=name,
+                        x=samples_tensor.reshape(self.N_sample * samples_tensor.shape[1],
+                                                 samples_tensor.shape[2],
+                                                 samples_tensor.shape[3]).cpu(),
+                        mask=mask[i].unsqueeze(0).repeat_interleave(self.N_sample, dim=0)
+                              .reshape(self.N_sample * mask[i].shape[0], mask[i].shape[1]).cpu(),
+                        fields=flow_fields,
+                    )[0].reshape(self.N_sample,
+                                 samples_tensor.shape[1],
+                                 samples_tensor.shape[2],
+                                 samples_tensor.shape[3])
+                    external_samples[m][i] = processed_samples
 
-        # Make the different plots
+        # Make the bias plots
         figs = {}
-        for i,(truth_type,mask_type,samples_type) in enumerate(zip(truth,mask,samples)):
+        # Loop over reco particle types
+        for i, (truth_type, mask_type) in enumerate(zip(truth, mask)):
+            # For each reco type, collect the corresponding sample tensors from all models
+            samples_list_for_type = [external_samples[m][i] for m in range(len(external_samples))]
+            # Loop over particles within this reco type (e.g., different jets)
             for j in range(truth_type.shape[1]):
                 fig = self.plot_particle(
-                    truth = truth_type[:,j,:],
-                    mask = mask_type[:,j],
-                    samples = samples_type[:,:,j,:],
-                    features = model.flow_input_features[i],
-                    title = f'{model.reco_particle_type_names[i]} #{j}',
+                    truth=truth_type[:, j, :],
+                    mask=mask_type[:, j],
+                    samples_list=[s[:, :, j, :] for s in samples_list_for_type],
+                    features=model.flow_input_features[i],
+                    title=f'{model.reco_particle_type_names[i]} #{j}',
                 )
-                if show:
-                    plt.show()
                 figure_name = f'{model.reco_particle_type_names[i]}_{j}_bias'
-                if len(self.suffix) > 0:
+                if self.suffix:
                     figure_name += f'_{self.suffix}'
                 figs[figure_name] = fig
+                if show:
+                    plt.show()
 
         return figs
-
 
 
 
