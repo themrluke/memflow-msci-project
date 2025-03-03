@@ -992,7 +992,9 @@ class BiasCallback(Callback):
         if external_samples is not None:
             samples = external_samples  # Already batched samples
             # Accumulate truth and mask over all batches, NOT just the first batch
-            for batch in self.loader:
+            for batch_idx, batch in enumerate (self.loader):
+                if batch_idx >= self.N_batch:
+                    break
                 hard_data = [data.to(device) for data in batch['hard']['data']]
                 reco_data = [data.to(device) for data in batch['reco']['data']]
                 reco_mask_exist = [mask.to(device) for mask in batch['reco']['mask']]
@@ -1003,6 +1005,8 @@ class BiasCallback(Callback):
             mask = [torch.cat(m, dim=0) for m in mask]
         else:
             for batch_idx, batch in tqdm(enumerate(self.loader), ...):
+                if batch_idx >= self.N_batch:
+                    break
                 hard_data = [data.to(device) for data in batch['hard']['data']]
                 hard_mask_exist = [mask.to(device) for mask in batch['hard']['mask']]
                 reco_data = [data.to(device) for data in batch['reco']['data']]
@@ -1030,46 +1034,28 @@ class BiasCallback(Callback):
                     samples[i][..., j] = angle_diff(samples[i][..., j])
                     truth[i][..., j] = angle_diff(truth[i][..., j])
 
-        # Inverse preprocessing
         if self.preprocessing is not None:
             for i in range(len(truth)):
                 name = model.reco_particle_type_names[i]
                 fields = model.reco_input_features_per_type[i]
                 flow_fields = [fields[idx] for idx in model.flow_indices[i]]
-
                 truth[i], _ = self.preprocessing.inverse(
                     name = name,
                     x = truth[i],
                     mask = mask[i],
                     fields = flow_fields,
                 )
-
-                samples_reshaped = samples[i].permute(1, 0, 2, 3).reshape(
-                    -1,  # Flatten batch and event dimensions
-                    samples[i].shape[2],  # Keep number of particles
-                    samples[i].shape[3]   # Keep number of features
-                ).cpu()
-
-                mask_reshaped = mask[i].unsqueeze(0).repeat_interleave(
-                    self.N_sample, dim=0
-                ).reshape(
-                    self.N_sample * mask[i].shape[0],
-                    mask[i].shape[1]
-                ).cpu()
-
-                samples_inversed, _ = self.preprocessing.inverse(
+                # preprocessing expects :
+                #   data = [events, particles, features]
+                #   mask = [events, particles]
+                # samples dims = [samples, events, particles, features]
+                # will merge samples*event and unmerge later
+                samples[i] = self.preprocessing.inverse(
                     name = name,
-                    x = samples_reshaped,
-                    mask = mask_reshaped,
+                    x = samples[i].reshape(self.N_sample*samples[i].shape[1],samples[i].shape[2],samples[i].shape[3]).cpu(),
+                    mask = mask[i].unsqueeze(0).repeat_interleave(self.N_sample,dim=0).reshape(self.N_sample*mask[i].shape[0],mask[i].shape[1]).cpu(),
                     fields = flow_fields,
-                )
-                samples[i] = samples_inversed.reshape(
-                    self.N_sample,
-                    samples[i].shape[1],
-                    reco_data[i].shape[1],
-                    len(flow_fields),
-                )
-
+                )[0].reshape(self.N_sample,samples[i].shape[1],samples[i].shape[2],samples[i].shape[3])
 
         # Make the different plots
         figs = {}
