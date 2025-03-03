@@ -688,20 +688,32 @@ class BiasCallback(Callback):
         Returns:
             - plt.Figure: The generated Figure. 
         """
-        # Mapping of feature names to LaTeX labels
-        feature_name_map = {
-            "pt": r"p_T",
-            "eta": r"\eta",
-            "phi": r"\phi",
-            "mass": r"\text{Mass}"
+        feature_info = {
+            "pt": {
+                "latex": r"p_T",
+                "units": "[GeV]",
+                "limits": {
+                    "jets": [30, 750],
+                    "MET": [200, 1000]
+                }
+            },
+            "eta": {
+                "latex": r"\eta",
+                "units": "",
+                "limits": [-5, 5]
+            },
+            "phi": {
+                "latex": r"\phi",
+                "units": "[rad]",
+                "limits": [-math.pi, math.pi]
+            },
+            "mass": {
+                "latex": r"\text{Mass}",
+                "units": "[GeV]",
+                "limits": [0, 150]
+            }
         }
 
-        feature_units = {
-            "p_T": "[GeV]",
-            "\eta": "",
-            "\phi": "[rad]",
-            "mass": "[GeV]"
-        }
         # truth shape [N,F]
         # mask shape [N]
         # samples shape [S,N,F]
@@ -760,6 +772,7 @@ class BiasCallback(Callback):
                 color='#1f618d',
                 linewidth=1.5
             )
+
             # Generate x values for standard normal distribution
             normal_dist_x = np.linspace(-4, 4, 100)  # Standard range for N(0,1)
             # Compute the standard normal PDF
@@ -768,8 +781,8 @@ class BiasCallback(Callback):
             axs[0, j].plot(normal_dist_x, standard_normal, 'r-', linewidth=2, label="Standard Normal")
 
             # Use the mapped name if available, otherwise keep as-is
-            feature_name_axis = feature_name_map.get(feature_name, feature_name)
-            unit_str = f"\\text{{ {feature_units.get(feature_name, '')} }}" if feature_name in feature_units else ""
+            feature_name_axis = feature_info[feat]["latex"]  # Get LaTeX label from dictionary
+            unit_str = f"\\text{{ {feature_info[feat]['units']} }}" if feature_info[feat]["units"] else ""
             axs[0,j].set_xlabel(fr'$({feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}) \, / \, \sigma $', fontsize=15)
             axs[0,j].set_ylabel('Density', fontsize=15)
             axs[0,j].set_yscale('log' if self.log_scale is True else 'linear')
@@ -808,6 +821,19 @@ class BiasCallback(Callback):
             axs[1,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=15)
             axs[1,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}}{unit_str}$', fontsize=15)
             plt.colorbar(h[3],ax=axs[1,j])
+
+            # Set xy limits based on feature-specific ranges
+            if feat in feature_info:
+                if feat == "pt":  # Special case for pt (need to distinguish between jets and MET)
+                    if "met" in title:
+                        axs[1, j].set_xlim(feature_info["pt"]["limits"]["MET"])
+                        axs[1, j].set_ylim(feature_info["pt"]["limits"]["MET"])
+                    elif "jets" in title:
+                        axs[1, j].set_xlim(feature_info["pt"]["limits"]["jets"])
+                        axs[1, j].set_ylim(feature_info["pt"]["limits"]["jets"])
+                else:
+                    axs[1, j].set_xlim(feature_info[feat]["limits"])
+                    axs[1, j].set_ylim(feature_info[feat]["limits"])
 
             # Bias plot
             relative = features[j] in ['pt']
