@@ -774,7 +774,7 @@ class BiasCallback(Callback):
             )
 
             # Generate x values for standard normal distribution
-            normal_dist_x = np.linspace(-4, 4, 100)  # Standard range for N(0,1)
+            normal_dist_x = np.linspace(-5, 5, 100)  # Standard range for N(0,1)
             # Compute the standard normal PDF
             standard_normal = stats.norm.pdf(normal_dist_x, 0, 1)  # Mean = 0, Std = 1
             # Overlay the normal distribution in red
@@ -789,31 +789,35 @@ class BiasCallback(Callback):
             axs[0,j].set_xlim(-5, 5)
 
             # 2D plot
-            if features[j] in ['pt']:
-                scale_bins = np.linspace(
-                    0,
-                    max(
-                        torch.quantile(truth[0,:,j].ravel(),q=0.9999,interpolation='higher'),
-                        torch.quantile(samples[...,j].ravel(),q=0.9999,interpolation='higher'),
-                    ),
-                    self.bins,
-                )
+            # Set xy limits based on feature-specific ranges
+            if feat in feature_info:
+                if feat == "pt":  # Special case for pt (need to distinguish between jets and MET)
+                    if "met" in title:
+                        xlim = feature_info["pt"]["limits"]["MET"]
+                        ylim = feature_info["pt"]["limits"]["MET"]
+                    elif "jets" in title:
+                        xlim = feature_info["pt"]["limits"]["jets"]
+                        ylim = feature_info["pt"]["limits"]["jets"]
+                    else:
+                        raise ValueError(f"Particle type not found in the title string.")
+                else:
+                    xlim = feature_info[feat]["limits"]
+                    ylim= feature_info[feat]["limits"]
             else:
-                scale_bins = np.linspace(
-                    min(
-                        truth[0,:,j].min(),
-                        samples[...,j].min(),
-                    ),
-                    max(
-                        truth[0,:,j].max(),
-                        samples[...,j].max(),
-                    ),
-                    self.bins,
-                )
+                raise ValueError(f"Feature '{feat}' is not in feature_info dictionary.")
+
+            # Define the number of bins to remain fixed
+            num_visible_bins = 51 #self.bins  # Adjust as needed for resolution
+            bin_width_x = (xlim[1] - xlim[0]) / num_visible_bins
+            bin_width_y = (ylim[1] - ylim[0]) / num_visible_bins
+            # Generate bins based on fixed bin width
+            scale_bins_x = np.arange(xlim[0], xlim[1] + bin_width_x, bin_width_x)
+            scale_bins_y = np.arange(ylim[0], ylim[1] + bin_width_y, bin_width_y)
+
             h = axs[1,j].hist2d(
                 truth[...,j].ravel(),
                 samples[...,j].ravel(),
-                bins = (scale_bins,scale_bins),
+                bins = (scale_bins_x,scale_bins_y),
                 norm = matplotlib.colors.LogNorm(),
                 cmap='viridis'
             )
@@ -822,21 +826,8 @@ class BiasCallback(Callback):
             axs[1,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}}{unit_str}$', fontsize=15)
             plt.colorbar(h[3],ax=axs[1,j])
 
-            # Set xy limits based on feature-specific ranges
-            if feat in feature_info:
-                if feat == "pt":  # Special case for pt (need to distinguish between jets and MET)
-                    if "met" in title:
-                        axs[1, j].set_xlim(feature_info["pt"]["limits"]["MET"])
-                        axs[1, j].set_ylim(feature_info["pt"]["limits"]["MET"])
-                    elif "jets" in title:
-                        axs[1, j].set_xlim(feature_info["pt"]["limits"]["jets"])
-                        axs[1, j].set_ylim(feature_info["pt"]["limits"]["jets"])
-                else:
-                    axs[1, j].set_xlim(feature_info[feat]["limits"])
-                    axs[1, j].set_ylim(feature_info[feat]["limits"])
-
             # Bias plot
-            relative = features[j] in ['pt']
+            relative = features[j] in ['pt', 'mass']
             quant_bins = torch.quantile(truth[0,:,j],q=torch.linspace(0.,1.,self.points+1))
             centers,coverages = self.compute_coverage(
                 truth = truth[...,j].ravel(),
@@ -903,12 +894,16 @@ class BiasCallback(Callback):
             )
             cov_max = abs(coverages).max()
             axs[2,j].set_ylim(-cov_max,cov_max)
+            axs[2, j].set_xlim(min(centers), max(centers))
+
             axs[2,j].legend(loc='upper right',facecolor='white',framealpha=1)
 
             axs[2,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=15)
 
             if relative:
                 axs[2,j].set_ylabel(fr'$\frac{{{feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}}}{{{feature_name_axis}^{{\text{{true}}}}}}$', fontsize=15)
+                if 'jets' in title:
+                    axs[2,j].set_ylim(-2, 2)
             else:
                 axs[2,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=15)
 
