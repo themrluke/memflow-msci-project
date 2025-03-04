@@ -1155,7 +1155,7 @@ class MultiModelHistogramPlotter:
         - batch_size (int): Number of events per batch in the DataLoader.
 
     Note:
-        The external samples provided to `make_bias_plots` should be a list (of length up to 3)
+        The external samples provided to `make_error_plots` should be a list (of length up to 3)
         where each element is a list of torch.Tensors corresponding to each reco particle type.
     """
     def __init__(
@@ -1194,7 +1194,8 @@ class MultiModelHistogramPlotter:
             mask: torch.Tensor,
             samples_list: List[torch.Tensor],
             features: List[str],
-            title: str
+            title: str,
+            normalize_global: bool = False
     ) -> plt.Figure:
         """
         Creates 1D histograms of the differences between the true and model-sampled values
@@ -1206,6 +1207,7 @@ class MultiModelHistogramPlotter:
             - samples_list (List[torch.Tensor]): List of sample tensors (one per model) each with shape [S, N, F].
             - features (List[str]): List of feature names.
             - title (str): Title of the plot.
+            - normalize_global (bool): Normalize by individual std (False) or by Parallel Transfusion std (True).
 
         Returns:
             - plt.Figure: The generated Figure.
@@ -1252,6 +1254,16 @@ class MultiModelHistogramPlotter:
         line_colors = ['#d62728', '#2ca02c', '#9467bd']
         model_labels = ['Transfermer', 'Parallel Transfusion', 'Transfer CFM']
 
+        # Compute global standard deviations if normalize_global is True
+        if normalize_global:
+            reference_samples = samples_list[1]  # "Parallel Transfusion" samples
+            masked_ref_samples = reference_samples[:, mask, :]  # shape: [S, N_mask, F]
+            repeated_truth = masked_truth.unsqueeze(0).repeat(masked_ref_samples.shape[0], 1, 1)
+            diff_ref = masked_ref_samples - repeated_truth  # shape: [S, N_mask, F]
+            global_stds = diff_ref.std(dim=(0, 1), keepdim=False)  # shape: [F]
+        else:
+            global_stds = None  # Will be computed per model instead
+
         # Loop over each feature
         for j, feat in enumerate(features):
             # Define bins for normalized histogram
@@ -1271,11 +1283,14 @@ class MultiModelHistogramPlotter:
                 else:
                     diff_feature = diff[..., j]
 
-                # Compute mean and standard deviation for the differences
-                mu = diff_feature.mean().item()
-                sigma = diff_feature.std().item()
+                # Choose normalization strategy
+                if normalize_global:
+                    sigma = global_stds[j].item()  # Use the fixed standard deviation
+                else:
+                    sigma = diff_feature.std().item()  # Compute per model
                 if sigma == 0:
                     sigma = 1.0  # Avoid division by zero
+
                 normalized_diff = diff_feature / sigma
 
                 # Plot the histogram for this model on the same axes
@@ -1301,6 +1316,8 @@ class MultiModelHistogramPlotter:
                 Line2D([0], [0], color=line_colors[1], linewidth=2, linestyle='-', label=model_labels[1]),
                 Line2D([0], [0], color=line_colors[2], linewidth=2, linestyle='-', label=model_labels[2]),
             ]
+            if normalize_global:
+                legend_handles.append(Line2D([0], [0], color='none', label=fr'$\sigma \, = \, {sigma:.2f}$'))
 
             # Use mapped LaTeX name if available
             feature_name_axis = feature_info[feat]["latex"]
@@ -1316,12 +1333,13 @@ class MultiModelHistogramPlotter:
 
         return fig
 
-    def make_bias_plots(
+    def make_error_plots(
             self,
             model,
             show: bool = False,
             disable_tqdm: bool = False,
-            external_samples: Optional[List[List[torch.Tensor]]] = None
+            external_samples: Optional[List[List[torch.Tensor]]] = None,
+            normalize_global: bool = False
     ) -> Dict[str, plt.Figure]:
         """
         Generates difference histograms for each reco particle type and particle index by comparing the true data to
@@ -1413,6 +1431,7 @@ class MultiModelHistogramPlotter:
                     samples_list=[s[:, :, j, :] for s in samples_list_for_type],
                     features=model.flow_input_features[i],
                     title=f'{model.reco_particle_type_names[i]} #{j}',
+                    normalize_global=normalize_global
                 )
                 figure_name = f'{model.reco_particle_type_names[i]}_{j}_bias'
                 if self.suffix:
