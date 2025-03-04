@@ -335,7 +335,7 @@ class FeatureDistributions:
         axs[0].step(bins[:-1], hist_real, where="post", label="Truth", linewidth=1, color='#1f77b4')
         axs[0].step(bins[:-1], hist_gen_1, where="post", label="Transfermer", linewidth=1, color='#d62728')
         axs[0].step(bins[:-1], hist_gen_2, where="post", label="Parallel Transfusion", linewidth=1, color='#2ca02c')
-        axs[0].step(bins[:-1], hist_gen_3, where="post", label="CFM", linewidth=1, color='#9467bd')
+        axs[0].step(bins[:-1], hist_gen_3, where="post", label="Transfer CFM", linewidth=1, color='#9467bd')
 
         axs[0].fill_between(bins[:-1], hist_real - real_errors, hist_real + real_errors,
                             step="post", color='#1f77b4', alpha=0.3)
@@ -1065,7 +1065,7 @@ class HighLevelDistributions:
         axs[0].fill_between(bins[:-1], hist_gen2 - gen_errors2, hist_gen2 + gen_errors2,
                             step='post', color='#2ca02c', alpha=0.3)
 
-        axs[0].step(bins[:-1], hist_gen3, where='post', label="CFM", linewidth=1, color='#9467bd')
+        axs[0].step(bins[:-1], hist_gen3, where='post', label="Transfer CFM", linewidth=1, color='#9467bd')
         axs[0].fill_between(bins[:-1], hist_gen3 - gen_errors3, hist_gen3 + gen_errors3,
                             step='post', color='#9467bd', alpha=0.3)
 
