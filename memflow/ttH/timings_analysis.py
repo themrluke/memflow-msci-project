@@ -16,7 +16,7 @@ def plot_inference_time(csv_file_paths, labels, colors=None):
     if colors and len(colors) < len(csv_file_paths):
         raise ValueError("Number of colors must be at least equal to the number of CSV files.")
 
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(8, 6), dpi=300)
 
     for i, csv_file_path in enumerate(csv_file_paths):
         try:
@@ -41,8 +41,8 @@ def plot_inference_time(csv_file_paths, labels, colors=None):
             print(f"An error occurred with file {csv_file_path}: {e}")
 
     # Plot formatting
-    plt.xlabel("Batch Size")
-    plt.ylabel("Time Taken (seconds)")
+    plt.xlabel("Batch Size [events]")
+    plt.ylabel("Time [s]")
     plt.xscale('log')
     plt.yscale('log')
     plt.title("Inference Time vs Batch Size (Multiple Models)")
