@@ -250,7 +250,7 @@ class FeatureDistributions:
 
         fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1], 'hspace': 0},
                                 sharex=True, figsize=(6, 5), dpi=300)
-        
+
         if ptype_idx == 0:
             if feat_idx == 0:
                 axs[0].set_yscale("log")

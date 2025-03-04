@@ -1,13 +1,13 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# plt.rcParams['font.family'] = 'serif'
-# plt.rcParams['font.serif'] = ['Nimbus Roman']
-# plt.rcParams['mathtext.fontset'] = 'custom'
-# plt.rcParams['mathtext.rm'] = 'Nimbus Roman'
-# plt.rcParams['mathtext.it'] = 'Nimbus Roman:italic'
-# plt.rcParams['mathtext.bf'] = 'Nimbus Roman:bold'
-# plt.rcParams["text.usetex"] = False
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Nimbus Roman']
+plt.rcParams['mathtext.fontset'] = 'custom'
+plt.rcParams['mathtext.rm'] = 'Nimbus Roman'
+plt.rcParams['mathtext.it'] = 'Nimbus Roman:italic'
+plt.rcParams['mathtext.bf'] = 'Nimbus Roman:bold'
+plt.rcParams["text.usetex"] = False
 
 def plot_inference_time(csv_file_paths, labels, colors=None):
     """
@@ -41,7 +41,7 @@ def plot_inference_time(csv_file_paths, labels, colors=None):
 
             # Plot results with error bars
             plt.errorbar(avg_times.index, avg_times.values, yerr=std_dev.values, 
-                         fmt='o-', label=labels[i], capsize=5, color=color, markersize=4)
+                         fmt='o-', label=labels[i], capsize=3.5, color=color, markersize=2, linewidth=1.5)
 
         except FileNotFoundError:
             print(f"Error: File '{csv_file_path}' not found.")
@@ -49,12 +49,13 @@ def plot_inference_time(csv_file_paths, labels, colors=None):
             print(f"An error occurred with file {csv_file_path}: {e}")
 
     # Plot formatting
-    plt.xlabel("Batch Size [events]")
-    plt.ylabel("Time [s]")
+    plt.xlabel("Batch Size [Events]", fontsize = 17)
+    plt.ylabel("Time [s]", fontsize = 17)
     plt.xscale('log')
     plt.yscale('log')
-    plt.title("Inference Time vs Batch Size (Multiple Models)")
     plt.grid(True, which='major', axis='y', linestyle='-', linewidth=0.7, alpha=0.5)
+    plt.tick_params(axis='both', which='major', length=3, width=1, labelsize=14)  # Increase major tick labels
+    plt.tick_params(axis='both', which='minor', length=2, width=1)  # Increase minor tick labels
     plt.legend(frameon=False, fontsize=15)
     plt.show()
 
