@@ -1,6 +1,14 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# plt.rcParams['font.family'] = 'serif'
+# plt.rcParams['font.serif'] = ['Nimbus Roman']
+# plt.rcParams['mathtext.fontset'] = 'custom'
+# plt.rcParams['mathtext.rm'] = 'Nimbus Roman'
+# plt.rcParams['mathtext.it'] = 'Nimbus Roman:italic'
+# plt.rcParams['mathtext.bf'] = 'Nimbus Roman:bold'
+# plt.rcParams["text.usetex"] = False
+
 def plot_inference_time(csv_file_paths, labels, colors=None):
     """
     Reads inference timing data from multiple CSV files and plots inference time vs batch size with error bars.
@@ -33,7 +41,7 @@ def plot_inference_time(csv_file_paths, labels, colors=None):
 
             # Plot results with error bars
             plt.errorbar(avg_times.index, avg_times.values, yerr=std_dev.values, 
-                         fmt='o-', label=labels[i], capsize=5, color=color)
+                         fmt='o-', label=labels[i], capsize=5, color=color, markersize=4)
 
         except FileNotFoundError:
             print(f"Error: File '{csv_file_path}' not found.")
@@ -46,8 +54,8 @@ def plot_inference_time(csv_file_paths, labels, colors=None):
     plt.xscale('log')
     plt.yscale('log')
     plt.title("Inference Time vs Batch Size (Multiple Models)")
-    plt.grid(True)
-    plt.legend()
+    plt.grid(True, which='major', axis='y', linestyle='-', linewidth=0.7, alpha=0.5)
+    plt.legend(frameon=False, fontsize=15)
     plt.show()
 
 # For standalone execution
