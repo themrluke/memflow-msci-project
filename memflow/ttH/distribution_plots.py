@@ -234,7 +234,7 @@ class FeatureDistributions:
             gen_data_1, _ = self.preprocessing.inverse(name=name, x=gen_data_1, mask=gen_mask_1, fields=gen_fields)
             gen_data_2, _ = self.preprocessing.inverse(name=name, x=gen_data_2, mask=gen_mask_2, fields=gen_fields)
             gen_data_3, _ = self.preprocessing.inverse(name=name, x=gen_data_3, mask=gen_mask_3, fields=gen_fields)
-    
+
         real_data = real_data[real_mask.bool()]
         gen_data_1 = gen_data_1[gen_mask_1.bool()]
         gen_data_2 = gen_data_2[gen_mask_2.bool()]
@@ -264,9 +264,10 @@ class FeatureDistributions:
                 axs[1].set_ylim(0.7, 1.3)
             elif feat_idx == 2:
                 axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
+                axs[0].yaxis.get_offset_text().set_size(16)  # Exponent font size
                 axs[0].set_xlim(-math.pi, math.pi)
                 axs[0].set_ylim(0.135, 0.21)
-                axs[1].set_ylim(0.75, 1.25)
+                axs[1].set_ylim(0.7, 1.3)
             elif feat_idx == 3:
                 axs[0].set_yscale("log")
                 axs[0].set_xlim(0, 160)
@@ -280,9 +281,10 @@ class FeatureDistributions:
                 axs[1].set_ylim(0.4, 1.6)
             elif feat_idx == 1:
                 axs[0].ticklabel_format(style='sci', axis='y', scilimits=(-1,1))
+                axs[0].yaxis.get_offset_text().set_size(16)  # Exponent font size
                 axs[0].set_xlim(-math.pi, math.pi)
                 axs[0].set_ylim(0.095, 0.2)
-                axs[1].set_ylim(0.75, 1.25)
+                axs[1].set_ylim(0.7, 1.3)
 
         # 5) Binning
         min_val = min(
@@ -346,8 +348,12 @@ class FeatureDistributions:
         axs[0].fill_between(bins[:-1], hist_gen_3 - gen_errors_3, hist_gen_3 + gen_errors_3,
                             step="post", color='#9467bd', alpha=0.3)
 
-        axs[0].set_ylabel("Density", fontsize=16)
-        axs[0].legend(fontsize=14, frameon=False)
+        axs[0].set_ylabel("Density", fontsize=20)
+
+        if ptype_idx == 0 and feat_idx == 2:
+            axs[0].legend(fontsize=15, frameon=False, loc='upper left', handlelength=1.3, bbox_to_anchor=(-0.01, 1.02))
+        else:
+            axs[0].legend(fontsize=16, frameon=False)
 
         # Draw dashed and dotted lines
         axs[1].axhline(1.0, color='black', linestyle='dashed', linewidth=1)
@@ -368,13 +374,13 @@ class FeatureDistributions:
         axs[1].fill_between(bins[:-1], ratio_3 - ratio_error_3, ratio_3 + ratio_error_3,
                     step="post", color='#9467bd', alpha=0.3)
 
-        axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
-        axs[1].set_xlabel(feat_name, fontsize=16)
+        axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=20)
+        axs[1].set_xlabel(feat_name, fontsize=20)
 
-        axs[0].tick_params(axis='y', which='major', labelsize=10)
-        axs[1].tick_params(axis='both', which='major', labelsize=10)
-        axs[0].tick_params(axis='y', which='minor', labelsize=10)
-        axs[1].tick_params(axis='both', which='minor', labelsize=10)
+        axs[0].tick_params(axis='y', which='major', labelsize=16)
+        axs[1].tick_params(axis='both', which='major', labelsize=16)
+        axs[0].tick_params(axis='y', which='minor', labelsize=16)
+        axs[1].tick_params(axis='both', which='minor', labelsize=16)
 
         plt.tight_layout()
         plt.show()
@@ -1069,8 +1075,13 @@ class HighLevelDistributions:
         axs[0].fill_between(bins[:-1], hist_gen3 - gen_errors3, hist_gen3 + gen_errors3,
                             step='post', color='#9467bd', alpha=0.3)
 
-        axs[0].set_ylabel("Density", fontsize=16)
-        axs[0].legend(fontsize=14, frameon=False)
+        axs[0].set_ylabel("Density", fontsize=20)
+        if observable_name == "dphi_j1j2":
+            axs[0].legend(fontsize=15.5, frameon=False, loc='upper left', handlelength=1.3, handletextpad=0.3, bbox_to_anchor=(-0.02, 1))
+        elif observable_name in["dR_met_jj", "min_mass_jj"]:
+            axs[0].legend(fontsize=16, frameon=False, loc='lower left', bbox_to_anchor=(0.07, 0))
+        else:
+            axs[0].legend(fontsize=16, frameon=False)
         if log_scale:
             axs[0].set_yscale("log")
 
@@ -1096,13 +1107,18 @@ class HighLevelDistributions:
         axs[1].fill_between(bins[:-1], ratio3 - ratio_error3, ratio3 + ratio_error3,
                             step='post', color='#9467bd', alpha=0.3)
 
-        axs[1].set_xlabel(xlabel, fontsize=16)
-        axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=16)
+        axs[1].set_xlabel(xlabel, fontsize=20)
+        axs[1].set_ylabel(r"$\frac{\text{Gen}}{\text{Truth}}$", fontsize=20)
 
 
         print(f"Truth values: Min={real_vals.min()}, Max={real_vals.max()}, Size={real_vals.shape}")
         print(f"Transfermer values: Min={gen_vals.min()}, Max={gen_vals.max()}, Size={gen_vals.shape}")
         print(f"Parallel Transfusion values: Min={gen_vals2.min()}, Max={gen_vals2.max()}, Size={gen_vals2.shape}")
+
+        axs[0].tick_params(axis='y', which='major', labelsize=16)
+        axs[1].tick_params(axis='both', which='major', labelsize=16)
+        axs[0].tick_params(axis='y', which='minor', labelsize=16)
+        axs[1].tick_params(axis='both', which='minor', labelsize=16)
 
         plt.tight_layout()
         plt.show()
