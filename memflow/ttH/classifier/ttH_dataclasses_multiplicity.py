@@ -85,7 +85,7 @@ class ttHHardDataset(ttHBase, HardDataset):
     def processed_path(self):
         # return path of where to store the tensors in case build=True
         # Directory to save processed ttH data
-        return os.path.join(os.getcwd(), 'ttH_hard')
+        return os.path.join(os.getcwd(), 'ttH_hard_multiplicity')
 
     @property
     def intersection_branch(self):
@@ -458,7 +458,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
     def processed_path(self):
         # return path of where to store the tensors in case build=True
         # Directory to save processed ttH data
-        return os.path.join(os.getcwd(), 'ttH_reco')
+        return os.path.join(os.getcwd(), 'ttH_reco_multiplicity')
 
     @property
     def intersection_branch(self):

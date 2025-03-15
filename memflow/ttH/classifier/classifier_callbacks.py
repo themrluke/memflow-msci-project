@@ -11,6 +11,14 @@ from lightning.pytorch.callbacks import Callback
 
 from abc import ABCMeta, abstractmethod
 
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Nimbus Roman']
+plt.rcParams['mathtext.fontset'] = 'custom'
+plt.rcParams['mathtext.rm'] = 'Nimbus Roman'
+plt.rcParams['mathtext.it'] = 'Nimbus Roman:italic'
+plt.rcParams['mathtext.bf'] = 'Nimbus Roman:bold'
+plt.rcParams["text.usetex"] = False
+
 EPS = 1e-12
 
 class BaseCallback(Callback,metaclass=ABCMeta):
@@ -506,7 +514,7 @@ class MultiplicityCallback(BaseCallback):
     def make_prediction_plots(self,targets,preds,title):
         figs = {}
 
-        fig,axs = plt.subplots(ncols=1,nrows=2,figsize=(12,5),height_ratios=[1.0,0.2], sharex=True, dpi=400)
+        fig,axs = plt.subplots(ncols=1,nrows=2,figsize=(8,5),height_ratios=[1.0,0.2], sharex=True, dpi=400)
         plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.1,hspace=0.0)
         plt.suptitle(title)
 
@@ -514,23 +522,29 @@ class MultiplicityCallback(BaseCallback):
 
         bins = torch.arange(self.N_min,self.N_max+2,1)
 
-        target_sum = targets.sum(dim=0)
-        preds_sum  = preds.sum(dim=0)
+        target_sum = targets.sum(dim=0).numpy()
+        preds_sum = preds.sum(dim=0).numpy()
 
-        target_var  = np.sqrt(target_sum)
-        target_down = target_sum-target_var
-        target_up   = target_sum+target_var
+        # Normalize to sum to 1 (density=True)
+        target_sum = target_sum / target_sum.sum()
+        preds_sum = preds_sum / preds_sum.sum()
 
-        ratio      = preds_sum / target_sum
+        # Compute errors for normalized histogram
+        target_var = np.sqrt(targets.sum(dim=0).numpy()) / targets.sum().item()  # Normalize errors
+        target_down = target_sum - target_var
+        target_up = target_sum + target_var
+
+        # Ratio
+        ratio = preds_sum / target_sum
         ratio_down = target_down / target_sum
-        ratio_up   = target_up / target_sum
+        ratio_up = target_up / target_sum
 
         axs[0].stairs(
             values = target_sum,
             edges = bins,
             color = 'royalblue',
             label = 'Truth',
-            linewidth = 2.5,
+            linewidth = 2,
         )
         axs[0].fill_between(
             x = bins,
@@ -545,7 +559,7 @@ class MultiplicityCallback(BaseCallback):
             edges = bins,
             color = 'orange',
             label = 'Classifier',
-            linewidth = 2.5,
+            linewidth = 2,
         )
         axs[1].step(
             x = bins,
@@ -566,27 +580,33 @@ class MultiplicityCallback(BaseCallback):
             axs[0].set_yscale('log')
         axs[0].set_xticklabels([])
         axs[0].set_xlim(5, 13)
-        axs[0].legend(fontsize=15)
-        axs[1].set_xlabel('Multiplicity',fontsize=16)
+        axs[0].set_ylim(0.002)
+        axs[0].legend(fontsize=20, frameon=False)
+        axs[1].set_xlabel('Multiplicity',fontsize=20)
         ratio_maxvar = max(
             [
-
                 abs(1-ratio).max(),
                 abs(1-ratio_down).max(),
                 abs(1-ratio_up).max(),
             ]
         ) * 1.1
-        axs[1].set_ylim(
-            1 - ratio_maxvar,
-            1 + ratio_maxvar,
-        )
-        axs[1].set_ylabel(r'$\frac{\text{Model}}{\text{Truth}}$',fontsize=16)
-        axs[1].grid(visible=True,which='major',axis='y')
+
+        axs[1].set_ylabel(r'$\frac{\text{Model}}{\text{Truth}}$',fontsize=20)
+        axs[1].set_ylim(0.8, 1.2)
+        y_min, y_max = axs[1].get_ylim()
+        axs[1].axhline(y_min + 0.15, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+        axs[1].axhline(y_max - 0.15, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+        axs[1].set_yticks([y_min + 0.15, 1.0, y_max - 0.15])
 
         # Set ticks to include all bin edges
         axs[1].tick_params(axis='x', which='both', bottom=True, labelbottom=True)
         axs[1].set_xticks(bins)  # Use all bin edges including the last one
         axs[1].set_xticklabels([int(b) for b in bins])  # All labels as integers
+
+        axs[0].set_ylabel('Density', fontsize=20)
+
+        axs[0].tick_params(axis='y', which='major', labelsize=14)
+        axs[1].tick_params(axis='both', which='major', labelsize=14)
 
         figname = 'multiplicity'
         if title is not None:
