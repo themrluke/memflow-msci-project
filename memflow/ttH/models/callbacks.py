@@ -15,6 +15,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 import scipy.stats as stats
 from lightning.pytorch.callbacks import Callback
 import torch
@@ -91,7 +92,6 @@ class SamplingCallback(Callback):
         self.label_names = label_names
         self.device = device
         self.suffix = suffix
-        self.label_names = label_names
         self.pt_range = pt_range
         self.set_idx(idx_to_monitor)
 
@@ -225,7 +225,7 @@ class SamplingCallback(Callback):
 
         fig = plt.figure(figsize=(6 * num_pairs, 5), dpi=300)
         fig.suptitle(title)
-        gs_row = fig.add_gridspec(1, num_pairs, wspace=0.3)
+        gs_row = fig.add_gridspec(1, num_pairs, wspace=0.25) # Adjust the horizontal separation
 
         # Helper function to plot 2D + marginals in a sub-grid
         def plot_2d_marginals(fig, parent_spec, xvals, yvals, bins_x, bins_y,
@@ -247,8 +247,15 @@ class SamplingCallback(Callback):
             ax_main.xaxis.set_tick_params(labelbottom=True)
             ax_main.yaxis.set_tick_params(labelleft=True)
             ax_main.tick_params(direction="in")
-            ax_main.set_xlabel(label_x, fontsize=15)
-            ax_main.set_ylabel(label_y, fontsize=15)
+
+            ax_main.xaxis.set_major_locator(MaxNLocator(nbins=4))  # Increase or decrease nbins as needed
+            ax_main.tick_params(axis='both', which='major', labelsize=18)  # Increases font size without affecting frequency
+
+            ax_top.tick_params(axis='both', labelsize=12)   # Adjust the fontsize for top marginal ticks
+            ax_right.tick_params(axis='both', labelsize=12) # Adjust the fontsize for right marginal ticks
+
+            ax_main.set_xlabel(label_x, fontsize=24)
+            ax_main.set_ylabel(label_y, fontsize=24)
 
             # Hide tick labels for top & right
             plt.setp(ax_top.get_xticklabels(), visible=False)
@@ -281,12 +288,12 @@ class SamplingCallback(Callback):
 
             # Top marginal histogram
             ax_top.hist(xvals, bins=bins_x, color=marginal_color, edgecolor='white', linewidth=0.1)
-            ax_top.axvline(realx, color='r', linestyle='dashed', linewidth=2)  # Add vertical red line
+            ax_top.axvline(realx, color='lime' if cmap=='RdPu' else 'r', linestyle='dashed', linewidth=2)  # Add vertical red line
             ax_top.set_yscale('log' if self.log_scale is True else 'linear')
 
             # Right marginal histogram
             ax_right.hist(yvals, bins=bins_y, orientation="horizontal", color=marginal_color, edgecolor='white', linewidth=0.1)
-            ax_right.axhline(realy, color='r', linestyle='dashed', linewidth=2)
+            ax_right.axhline(realy, color='lime' if cmap=='RdPu' else 'r', linestyle='dashed', linewidth=2)
             ax_right.set_xscale('log' if self.log_scale is True else 'linear')
 
             remove_borders = True
@@ -310,17 +317,17 @@ class SamplingCallback(Callback):
                 ax_right.tick_params(direction="in")
 
             # Overplot real value
-            ax_main.scatter(realx, realy, c='r', marker='x', s=75, linewidths=2)
+            ax_main.scatter(realx, realy, c='lime' if cmap=='RdPu' else 'r', marker='x', s=75, linewidths=2)
 
             # Add a colorbar BELOW the main plot
             cbar_ax = fig.add_axes([
                 ax_main.get_position().x0,                    # Left align with main plot
-                ax_main.get_position().y0 - 0.15,               # Place slightly below main plot
+                ax_main.get_position().y0 - 0.2,               # Place slightly below main plot
                 ax_main.get_position().width,                 # Same width as main plot
                 0.02                                          # Height of the colorbar
             ])
-            fig.colorbar(hb, cax=cbar_ax, orientation="horizontal")
-
+            cbar = fig.colorbar(hb, cax=cbar_ax, orientation="horizontal")
+            cbar.ax.tick_params(labelsize=18)  # Increase font size of colorbar tick labels
         # Fill each pair
         for c, (iF, jF) in enumerate(pairs):
             featX = features[iF]
