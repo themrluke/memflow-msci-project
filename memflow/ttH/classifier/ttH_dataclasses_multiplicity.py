@@ -6,7 +6,7 @@ from hepunits.units import MeV, GeV
 from sklearn import preprocessing
 import vector
 
-from memflow.dataset.dataset import HardDataset, RecoDataset
+from dataset2 import HardDataset, RecoDataset
 from memflow.dataset.preprocessing import *
 
 
@@ -479,11 +479,11 @@ class ttHRecoDataset(ttHBase, RecoDataset):
     # Objects from the awkward arrays are registered
     def process(self):
 
-        # For now only consider events in SR
-        mask = self.data['region'] == 0
-        print('Before cut', self.data.events)
-        self.data.cut(mask) # Don't cut for multiplicity
-        print('After cut', self.data.events)
+        # # For now only consider events in SR
+        # mask = self.data['region'] == 0
+        # print('Before cut', self.data.events)
+        # self.data.cut(mask) # Don't cut for multiplicity
+        # print('After cut', self.data.events)
 
         # boost = self.make_boost(jets,electrons,muons,met)
 
@@ -549,7 +549,7 @@ class ttHRecoDataset(ttHBase, RecoDataset):
         jets_padded, jets_mask = self.reshape(
             input = sorted_jets,
             value = 0.,
-            max_no = 6, # Make max 12 for multiplicity 6 for acceptance network
+            max_no = 12, # Make max 12 for multiplicity 6 for acceptance network
         )
 
         if self.apply_boost:

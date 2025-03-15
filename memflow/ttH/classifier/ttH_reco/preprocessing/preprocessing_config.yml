@@ -1,0 +1,49 @@
+- fields_select:
+  - - pt
+  names:
+  - jets
+  scaler_dict:
+    pt:
+      class: lowercutshift
+      lower_cut: 30
+- fields_select:
+  - - pt
+  names:
+  - met
+  scaler_dict:
+    pt:
+      class: lowercutshift
+      lower_cut: 200
+- fields_select:
+  - - pt
+    - mass
+  - - pt
+    - mass
+  names:
+  - jets
+  - met
+  scaler_dict:
+    mass:
+      class: logmodulus
+    pt:
+      class: logmodulus
+- fields_select:
+  - - pt
+    - eta
+    - mass
+  - - pt
+    - eta
+    - mass
+  names:
+  - jets
+  - met
+  scaler_dict:
+    eta:
+      class: SklearnScaler
+      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/classifier/ttH_reco/preprocessing/step_3/eta.bin
+    mass:
+      class: SklearnScaler
+      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/classifier/ttH_reco/preprocessing/step_3/mass.bin
+    pt:
+      class: SklearnScaler
+      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/classifier/ttH_reco/preprocessing/step_3/pt.bin

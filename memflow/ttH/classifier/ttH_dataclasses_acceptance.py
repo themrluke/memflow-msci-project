@@ -6,7 +6,7 @@ from hepunits.units import MeV, GeV
 from sklearn import preprocessing
 import vector
 
-from memflow.dataset.dataset import HardDataset, RecoDataset
+from dataset2 import HardDataset, RecoDataset
 from memflow.dataset.preprocessing import *
 
 
