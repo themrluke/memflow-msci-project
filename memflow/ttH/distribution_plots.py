@@ -555,7 +555,7 @@ class TrajectoriesPlots:
         global_y_min = traj[:, :, 1].min().item()
         global_y_max = traj[:, :, 1].max().item()
         n_cols = len(custom_timesteps)
-        fig, axes = plt.subplots(3, n_cols, figsize=(5 * n_cols, 15))
+        fig, axes = plt.subplots(3, n_cols, figsize=(5 * n_cols, 15), dpi=300)
         if n_cols == 1:
             axes = axes[:, None]
 
@@ -607,14 +607,14 @@ class TrajectoriesPlots:
             if t < 0 or t >= steps_plus_1:
                 print(f"Skipping timestep {t} (out of range)")
                 continue
-            fontsize = 20
+            fontsize = 30
             points = traj[t].cpu().numpy()
             axes[0, col].hist2d(points[:, 0], points[:, 1],
                                 bins=50,
                                 density=True,
                                 cmap="viridis",
                                 range=[[global_x_min, global_x_max], [global_y_min, global_y_max]])
-            axes[0, col].set_title(f"T = {t / (steps_plus_1 - 1)}", fontsize=25)
+            axes[0, col].set_title(f"T = {t / (steps_plus_1 - 1)}", fontsize=36)
             axes[0, col].set_xlabel(x_label, fontsize=fontsize)
             axes[0, col].set_ylabel(y_label, fontsize=fontsize)
             axes[0, col].set_xlim(global_x_min, global_x_max)
@@ -655,6 +655,23 @@ class TrajectoriesPlots:
             axes[2, col].set_ylabel(y_label, fontsize=fontsize)
             axes[2, col].set_xlim(global_x_min, global_x_max)
             axes[2, col].set_ylim(global_y_min, global_y_max)
+
+            # Remove ticks and labels
+            axes[0, col].set_xticks([])  
+            axes[0, col].set_yticks([])
+            axes[0, col].set_xticklabels([])
+            axes[0, col].set_yticklabels([])
+
+            axes[1, col].set_xticks([])  
+            axes[1, col].set_yticks([])
+            axes[1, col].set_xticklabels([])
+            axes[1, col].set_yticklabels([])
+
+            axes[2, col].set_xticks([])  
+            axes[2, col].set_yticks([])
+            axes[2, col].set_xticklabels([])
+            axes[2, col].set_yticklabels([])
+
 
         plt.tight_layout()
         plt.show()
