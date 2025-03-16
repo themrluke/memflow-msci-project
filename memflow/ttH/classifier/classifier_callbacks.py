@@ -237,7 +237,7 @@ class AcceptanceCallback(BaseCallback):
         # make figure #
         N = len(features)
         fig,axs = plt.subplots(ncols=N,nrows=2,figsize=(6*N,5),height_ratios=[1.0,0.2], dpi=400)
-        plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.4,hspace=0.0)
+        plt.subplots_adjust(left=0.1,right=0.9,bottom=0.1,top=0.9,wspace=0.3,hspace=0.0)
         plt.suptitle(title,fontsize=16)
 
         # Make mask of selected particles #
@@ -316,9 +316,9 @@ class AcceptanceCallback(BaseCallback):
                 step = 'post',
             )
             # Esthetic #
-            axs[0,i].set_ylabel('Acceptance',fontsize=16,labelpad=12)
+            axs[0,i].set_ylabel('Acceptance',fontsize=24,labelpad=10)
             axs[0,i].set_xticklabels([])
-            axs[0,i].legend(loc='upper right',fontsize=15)
+            axs[0,i].legend(loc='upper right',fontsize=20,frameon=False)
 
             axs[0,i].tick_params(labelbottom=False, bottom=True)
             #yticks = axs[0,i].get_yticks()
@@ -328,15 +328,14 @@ class AcceptanceCallback(BaseCallback):
             axs[0,i].sharex(axs[1,i])
 
             if features[i] == 'pt':
-                axs[1,i].set_xlabel(f"{self.label_names[features[i]]} [GeV]",fontsize=16)
+                axs[1,i].set_xlabel(f"{self.label_names[features[i]]} [GeV]",fontsize=24)
             elif features[i] == 'phi':
-                axs[1,i].set_xlabel(f"{self.label_names[features[i]]} [rad]",fontsize=16)
-                
+                axs[1,i].set_xlabel(f"{self.label_names[features[i]]} [rad]",fontsize=24)
             else:
-                axs[1,i].set_xlabel(self.label_names[features[i]],fontsize=16)
-            axs[1,i].set_ylabel(r'$\frac{\text{Model}}{\text{Truth}}$',fontsize=16)
-            axs[1,i].set_ylim(0.8,1.2)  # changed limits from 0.5 to 1.5 to be able to see features better
-            axs[1,i].grid(visible=True,which='major',axis='y')
+                axs[1,i].set_xlabel(self.label_names[features[i]],fontsize=24)
+
+            axs[1,i].set_ylabel(r'$\frac{\text{Model}}{\text{Truth}}$',fontsize=24,labelpad=10)
+            axs[1,i].set_ylim(0.75,1.25)  # changed limits from 0.5 to 1.5 to be able to see features better
 
             feature_name = features[i].lower()
             if feature_name == 'pt':
@@ -348,14 +347,25 @@ class AcceptanceCallback(BaseCallback):
                 axs[0,i].set_ylim(0.001, max(content_acc.max(), content_pred_avg.max()) * 1.4)
             elif feature_name == 'eta':
                 axs[0,i].set_xlim(-5,5)
-                axs[0,i].set_ylim(0.01, max(content_acc.max(), content_pred_avg.max()) * 1.4)
+                axs[0,i].set_ylim(0.03, max(content_acc.max(), content_pred_avg.max()) * 1.5)
             elif feature_name == 'phi':
                 axs[0,i].set_xlim(-math.pi, math.pi)
-                axs[0,i].set_ylim(0.095, 0.14)
-                axs[1,i].set_ylim(0.9,1.1)
-                
+                axs[0,i].set_ylim(0.101, 0.16)
+                axs[1,i].set_ylim(0.85,1.15)
+
             else:
                 print("Invalid feature name")
+
+            axs[0, i].tick_params(axis='y', which='major', labelsize=16)
+            axs[1, i].tick_params(axis='both', which='major', labelsize=16)
+
+            # Draw dashed lines at y_min and y_max
+            y_min, y_max = axs[1, i].get_ylim()
+            axs[1, i].axhline(y_min + 0.05, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+            axs[1, i].axhline(y_max - 0.05, color='black', linestyle='dotted', linewidth=1, alpha=0.5)
+            # Set y-ticks at the positions of the dotted lines
+            axs[1, i].set_yticks([y_min + 0.05, 1.0, y_max - 0.05])
+
         return fig
 
     def make_prediction_plots(self,targets,preds,title):
@@ -392,7 +402,7 @@ class AcceptanceCallback(BaseCallback):
         ax.text(
             x = 0.7,
             y = 0.6,
-            s = f'Pref eff = {preds.mean()*100:5.2f}%',
+            s = f'Pred eff = {preds.mean()*100:5.2f}%',
             horizontalalignment='center',
             verticalalignment='center',
             transform = ax.transAxes,
