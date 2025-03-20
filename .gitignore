@@ -146,5 +146,7 @@ src/*/_version.py
 *.png
 
 memflow/comet_logs/*
+memflow/ttH/comet_logs/*
+memflow/ttH/lightning_logs/*
 
 *.ckpt
