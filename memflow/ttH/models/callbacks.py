@@ -15,6 +15,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 import scipy.stats as stats
 from lightning.pytorch.callbacks import Callback
 import torch
@@ -91,7 +92,6 @@ class SamplingCallback(Callback):
         self.label_names = label_names
         self.device = device
         self.suffix = suffix
-        self.label_names = label_names
         self.pt_range = pt_range
         self.set_idx(idx_to_monitor)
 
@@ -225,7 +225,7 @@ class SamplingCallback(Callback):
 
         fig = plt.figure(figsize=(6 * num_pairs, 5), dpi=300)
         fig.suptitle(title)
-        gs_row = fig.add_gridspec(1, num_pairs, wspace=0.3)
+        gs_row = fig.add_gridspec(1, num_pairs, wspace=0.25) # Adjust the horizontal separation
 
         # Helper function to plot 2D + marginals in a sub-grid
         def plot_2d_marginals(fig, parent_spec, xvals, yvals, bins_x, bins_y,
@@ -247,8 +247,15 @@ class SamplingCallback(Callback):
             ax_main.xaxis.set_tick_params(labelbottom=True)
             ax_main.yaxis.set_tick_params(labelleft=True)
             ax_main.tick_params(direction="in")
-            ax_main.set_xlabel(label_x, fontsize=15)
-            ax_main.set_ylabel(label_y, fontsize=15)
+
+            ax_main.xaxis.set_major_locator(MaxNLocator(nbins=4))  # Increase or decrease nbins as needed
+            ax_main.tick_params(axis='both', which='major', labelsize=18)  # Increases font size without affecting frequency
+
+            ax_top.tick_params(axis='both', labelsize=12)   # Adjust the fontsize for top marginal ticks
+            ax_right.tick_params(axis='both', labelsize=12) # Adjust the fontsize for right marginal ticks
+
+            ax_main.set_xlabel(label_x, fontsize=24)
+            ax_main.set_ylabel(label_y, fontsize=24)
 
             # Hide tick labels for top & right
             plt.setp(ax_top.get_xticklabels(), visible=False)
@@ -281,12 +288,12 @@ class SamplingCallback(Callback):
 
             # Top marginal histogram
             ax_top.hist(xvals, bins=bins_x, color=marginal_color, edgecolor='white', linewidth=0.1)
-            ax_top.axvline(realx, color='r', linestyle='dashed', linewidth=2)  # Add vertical red line
+            ax_top.axvline(realx, color='lime' if cmap=='RdPu' else 'r', linestyle='dashed', linewidth=2)  # Add vertical red line
             ax_top.set_yscale('log' if self.log_scale is True else 'linear')
 
             # Right marginal histogram
             ax_right.hist(yvals, bins=bins_y, orientation="horizontal", color=marginal_color, edgecolor='white', linewidth=0.1)
-            ax_right.axhline(realy, color='r', linestyle='dashed', linewidth=2)
+            ax_right.axhline(realy, color='lime' if cmap=='RdPu' else 'r', linestyle='dashed', linewidth=2)
             ax_right.set_xscale('log' if self.log_scale is True else 'linear')
 
             remove_borders = True
@@ -310,17 +317,17 @@ class SamplingCallback(Callback):
                 ax_right.tick_params(direction="in")
 
             # Overplot real value
-            ax_main.scatter(realx, realy, c='r', marker='x', s=75, linewidths=2)
+            ax_main.scatter(realx, realy, c='lime' if cmap=='RdPu' else 'r', marker='x', s=75, linewidths=2)
 
             # Add a colorbar BELOW the main plot
             cbar_ax = fig.add_axes([
                 ax_main.get_position().x0,                    # Left align with main plot
-                ax_main.get_position().y0 - 0.15,               # Place slightly below main plot
+                ax_main.get_position().y0 - 0.2,               # Place slightly below main plot
                 ax_main.get_position().width,                 # Same width as main plot
                 0.02                                          # Height of the colorbar
             ])
-            fig.colorbar(hb, cax=cbar_ax, orientation="horizontal")
-
+            cbar = fig.colorbar(hb, cax=cbar_ax, orientation="horizontal")
+            cbar.ax.tick_params(labelsize=18)  # Increase font size of colorbar tick labels
         # Fill each pair
         for c, (iF, jF) in enumerate(pairs):
             featX = features[iF]
@@ -725,9 +732,9 @@ class BiasCallback(Callback):
         assert truth.shape[1] == len(features)
 
         N = len(features)
-        fig,axs = plt.subplots(ncols=N,nrows=3,figsize=(5*N,12))
+        fig,axs = plt.subplots(ncols=N,nrows=3,figsize=(5*N,12), dpi=300)
         fig.suptitle(title)
-        plt.subplots_adjust(left=0.1,bottom=0.1,right=0.9,top=0.9,hspace=0.3,wspace=0.3)
+        plt.subplots_adjust(left=0.1,bottom=0.1,right=0.9,top=0.9,hspace=0.3,wspace=0.35)
 
         if not mask.dtype == torch.bool:
             mask = mask > 0
@@ -823,9 +830,10 @@ class BiasCallback(Callback):
                 cmap='viridis'
             )
 
-            axs[1,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=18)
-            axs[1,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}}{unit_str}$', fontsize=18)
-            plt.colorbar(h[3],ax=axs[1,j])
+            axs[1,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=22)
+            axs[1,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}}{unit_str}$', fontsize=22)
+            cbar = plt.colorbar(h[3],ax=axs[1,j])
+            cbar.ax.tick_params(labelsize=18)  # Increase font size of colorbar tick labels
 
             # Bias plot
             relative = features[j] in ['pt', 'mass']
@@ -856,7 +864,7 @@ class BiasCallback(Callback):
                 marker='o',
                 markersize = 2,
                 color='k',
-                label="mean",
+                label="Mean",
             )
             #axs[2,j].plot(
             #    centers,
@@ -875,7 +883,7 @@ class BiasCallback(Callback):
                 marker='o',
                 markersize = 2,
                 color='k',
-                label="median",
+                label="Median",
             )
             axs[2,j].fill_between(
                 x = centers,
@@ -897,16 +905,20 @@ class BiasCallback(Callback):
             axs[2,j].set_ylim(-cov_max,cov_max)
             axs[2, j].set_xlim(min(centers), max(centers))
 
-            axs[2,j].legend(loc='upper right',facecolor='white',framealpha=1)
+            axs[2,j].legend(loc='upper right',facecolor='white',framealpha=0.9,fontsize=14)
 
-            axs[2,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=18)
+            axs[2,j].set_xlabel(fr'${feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=22)
 
             if relative:
-                axs[2,j].set_ylabel(fr'$\frac{{{feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}}}{{{feature_name_axis}^{{\text{{true}}}}}}$', fontsize=18)
+                axs[2,j].set_ylabel(fr'$\frac{{{feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}}}{{{feature_name_axis}^{{\text{{true}}}}}}$', fontsize=24)
                 if 'jets' in title:
                     axs[2,j].set_ylim(-2, 2)
             else:
-                axs[2,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=18)
+                axs[2,j].set_ylabel(fr'${feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}{unit_str}$', fontsize=22)
+
+            axs[0, j].tick_params(axis='both', which='both', labelsize=16)  # Top row
+            axs[1, j].tick_params(axis='both', which='both', labelsize=16)  # Middle row
+            axs[2, j].tick_params(axis='both', which='both', labelsize=16)  # Bottom row
 
         return fig
 
@@ -1155,7 +1167,7 @@ class MultiModelHistogramPlotter:
         - batch_size (int): Number of events per batch in the DataLoader.
 
     Note:
-        The external samples provided to `make_bias_plots` should be a list (of length up to 3)
+        The external samples provided to `make_error_plots` should be a list (of length up to 3)
         where each element is a list of torch.Tensors corresponding to each reco particle type.
     """
     def __init__(
@@ -1188,16 +1200,163 @@ class MultiModelHistogramPlotter:
         self.device = device
         self.suffix = suffix
 
-    def plot_particle(
+    # def plot_particle(
+    #         self,
+    #         truth: torch.Tensor,
+    #         mask: torch.Tensor,
+    #         samples_list: List[torch.Tensor],
+    #         features: List[str],
+    #         title: str,
+    #         normalize_global: bool = False
+    # ) -> plt.Figure:
+    #     """
+    #     Creates 1D histograms of the differences between the true and model-sampled values
+    #     for each feature across all events. Overlays histograms from multiple models.
+
+    #     Args:
+    #         - truth (torch.Tensor): True values with shape [N, F].
+    #         - mask (torch.Tensor): Boolean mask tensor of shape [N].
+    #         - samples_list (List[torch.Tensor]): List of sample tensors (one per model) each with shape [S, N, F].
+    #         - features (List[str]): List of feature names.
+    #         - title (str): Title of the plot.
+    #         - normalize_global (bool): Normalize by individual std (False) or by Parallel Transfusion std (True).
+
+    #     Returns:
+    #         - plt.Figure: The generated Figure.
+    #     """
+    #     # Define feature-specific display information
+    #     feature_info = {
+    #         "pt": {
+    #             "latex": r"p_T",
+    #             "units": "[GeV]",
+    #             "limits": {
+    #                 "jets": [30, 750],
+    #                 "MET": [200, 1000]
+    #             }
+    #         },
+    #         "eta": {
+    #             "latex": r"\eta",
+    #             "units": "",
+    #             "limits": [-5, 5]
+    #         },
+    #         "phi": {
+    #             "latex": r"\phi",
+    #             "units": "[rad]",
+    #             "limits": [-math.pi, math.pi]
+    #         },
+    #         "mass": {
+    #             "latex": r"\text{Mass}",
+    #             "units": "[GeV]",
+    #             "limits": [0, 150]
+    #         }
+    #     }
+
+    #     N = len(features)
+    #     fig, axs = plt.subplots(ncols=N, nrows=1, figsize=(6 * N, 5), dpi=300)
+    #     fig.suptitle(title)
+    #     plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.9, hspace=0.3, wspace=0.2)
+
+    #     if not mask.dtype == torch.bool:
+    #         mask = mask > 0
+
+    #     # Apply the mask to the truth tensor once
+    #     masked_truth = truth[mask, :]  # shape: [N_mask, F]
+
+    #     # Define colors and labels for up to three models.
+    #     line_colors = ['#d62728', '#2ca02c', '#9467bd']
+    #     model_labels = ['Transfermer', 'Parallel Transfusion', 'Transfer CFM']
+
+    #     # Compute global standard deviations if normalize_global is True
+    #     if normalize_global:
+    #         reference_samples = samples_list[1]  # "Parallel Transfusion" samples
+    #         masked_ref_samples = reference_samples[:, mask, :]  # shape: [S, N_mask, F]
+    #         repeated_truth = masked_truth.unsqueeze(0).repeat(masked_ref_samples.shape[0], 1, 1)
+    #         diff_ref = masked_ref_samples - repeated_truth  # shape: [S, N_mask, F]
+    #         global_stds = diff_ref.std(dim=(0, 1), keepdim=False)  # shape: [F]
+    #     else:
+    #         global_stds = None  # Will be computed per model instead
+
+    #     # Loop over each feature
+    #     for j, feat in enumerate(features):
+    #         # Define bins for normalized histogram
+    #         normalized_bins = np.linspace(-5, 5, self.bins)
+    #         # For each model, compute and plot the histogram
+    #         for m, samples in enumerate(samples_list):
+    #             # samples assumed shape: [S, N, F]; apply mask along the event (N) dimension
+    #             masked_samples = samples[:, mask, :]  # shape: [S, N_mask, F]
+    #             # Repeat truth along sample dimension to match shape
+    #             repeated_truth = masked_truth.unsqueeze(0).repeat(masked_samples.shape[0], 1, 1)
+    #             diff = masked_samples - repeated_truth  # shape: [S, N_mask, F]
+
+    #             # If the feature is 'phi', account for its circular nature
+    #             if feat == "phi":
+    #                 # Use the angle_diff function on the appropriate slices
+    #                 diff_feature = angle_diff(diff[..., j])
+    #             else:
+    #                 diff_feature = diff[..., j]
+
+    #             # Choose normalization strategy
+    #             if normalize_global:
+    #                 sigma = global_stds[j].item()  # Use the fixed standard deviation
+    #             else:
+    #                 sigma = diff_feature.std().item()  # Compute per model
+    #             if sigma == 0:
+    #                 sigma = 1.0  # Avoid division by zero
+
+    #             normalized_diff = diff_feature / sigma
+
+    #             # Plot the histogram for this model on the same axes
+    #             axs[j].hist(
+    #                 normalized_diff.ravel(),
+    #                 bins=normalized_bins,
+    #                 density=True,
+    #                 histtype='step',
+    #                 linewidth=2,
+    #                 color=line_colors[m],
+    #                 label=model_labels[m]
+    #             )
+
+    #         # Overlay the standard normal distribution for reference
+    #         normal_dist_x = np.linspace(-4.5, 5.5, 1000)
+    #         standard_normal = stats.norm.pdf(normal_dist_x, 0, 1)
+    #         axs[j].plot(normal_dist_x, standard_normal, 'k', linewidth=2, label="Normal")
+
+    #         # Define custom legend handles
+    #         legend_handles = [
+    #             Line2D([0], [0], color='k', linewidth=2, linestyle='-', label='Normal'),
+    #             Line2D([0], [0], color=line_colors[0], linewidth=2, linestyle='-', label=model_labels[0]),
+    #             Line2D([0], [0], color=line_colors[1], linewidth=2, linestyle='-', label=model_labels[1]),
+    #             Line2D([0], [0], color=line_colors[2], linewidth=2, linestyle='-', label=model_labels[2]),
+    #         ]
+    #         if normalize_global:
+    #             legend_handles.append(Line2D([0], [0], color='none', label=fr'$\sigma \, = \, {sigma:.2f}$'))
+
+    #         # Use mapped LaTeX name if available
+    #         feature_name_axis = feature_info[feat]["latex"]
+    #         axs[j].set_xlabel(
+    #             fr'$({feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}) \, / \, \sigma $',
+    #             fontsize=18
+    #         )
+    #         axs[j].set_ylabel('Density', fontsize=18)
+    #         axs[j].tick_params(axis='both', which='major', labelsize=14)
+    #         axs[j].set_yscale('log' if self.log_scale else 'linear')
+    #         axs[j].set_xlim(-4.5, 5.5)
+    #         axs[j].legend(frameon=False, handles=legend_handles, handlelength=1.5, loc='upper right', fontsize=12)
+
+    #     return fig
+
+
+    def plot_particle( # Same as above but outputs figures seperately
             self,
             truth: torch.Tensor,
             mask: torch.Tensor,
             samples_list: List[torch.Tensor],
             features: List[str],
-            title: str
-    ) -> plt.Figure:
+            title: str,
+            normalize_global: bool = False
+    ) -> dict:
         """
-        Creates 1D histograms of the differences between the true and model-sampled values
+        Creates individual 1D histograms of the differences between the true and model-sampled values
         for each feature across all events. Overlays histograms from multiple models.
 
         Args:
@@ -1205,12 +1364,12 @@ class MultiModelHistogramPlotter:
             - mask (torch.Tensor): Boolean mask tensor of shape [N].
             - samples_list (List[torch.Tensor]): List of sample tensors (one per model) each with shape [S, N, F].
             - features (List[str]): List of feature names.
-            - title (str): Title of the plot.
+            - title (str): Title prefix for each plot.
+            - normalize_global (bool): Normalize by individual std (False) or by Parallel Transfusion std (True).
 
         Returns:
-            - plt.Figure: The generated Figure.
+            - dict: A dictionary of Matplotlib Figures, keyed by feature names.
         """
-        # Define feature-specific display information
         feature_info = {
             "pt": {
                 "latex": r"p_T",
@@ -1237,11 +1396,6 @@ class MultiModelHistogramPlotter:
             }
         }
 
-        N = len(features)
-        fig, axs = plt.subplots(ncols=N, nrows=1, figsize=(6 * N, 5), dpi=300)
-        fig.suptitle(title)
-        plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.9, hspace=0.3, wspace=0.2)
-
         if not mask.dtype == torch.bool:
             mask = mask > 0
 
@@ -1252,34 +1406,48 @@ class MultiModelHistogramPlotter:
         line_colors = ['#d62728', '#2ca02c', '#9467bd']
         model_labels = ['Transfermer', 'Parallel Transfusion', 'Transfer CFM']
 
-        # Loop over each feature
+        # Compute global standard deviations if normalize_global is True
+        if normalize_global:
+            reference_samples = samples_list[1]  # "Parallel Transfusion" samples
+            masked_ref_samples = reference_samples[:, mask, :]  # shape: [S, N_mask, F]
+            repeated_truth = masked_truth.unsqueeze(0).repeat(masked_ref_samples.shape[0], 1, 1)
+            diff_ref = masked_ref_samples - repeated_truth  # shape: [S, N_mask, F]
+            global_stds = diff_ref.std(dim=(0, 1), keepdim=False)  # shape: [F]
+        else:
+            global_stds = None  # Will be computed per model instead
+
+        figures = {}  # Store individual plots
+
         for j, feat in enumerate(features):
+            fig, ax = plt.subplots(figsize=(6, 5), dpi=300)  # Create a separate figure for each feature
+            fig.suptitle(f"{title} - {feat}")
+
             # Define bins for normalized histogram
             normalized_bins = np.linspace(-5, 5, self.bins)
+
             # For each model, compute and plot the histogram
             for m, samples in enumerate(samples_list):
-                # samples assumed shape: [S, N, F]; apply mask along the event (N) dimension
                 masked_samples = samples[:, mask, :]  # shape: [S, N_mask, F]
-                # Repeat truth along sample dimension to match shape
                 repeated_truth = masked_truth.unsqueeze(0).repeat(masked_samples.shape[0], 1, 1)
                 diff = masked_samples - repeated_truth  # shape: [S, N_mask, F]
 
-                # If the feature is 'phi', account for its circular nature
                 if feat == "phi":
-                    # Use the angle_diff function on the appropriate slices
                     diff_feature = angle_diff(diff[..., j])
                 else:
                     diff_feature = diff[..., j]
 
-                # Compute mean and standard deviation for the differences
-                mu = diff_feature.mean().item()
-                sigma = diff_feature.std().item()
+                # Choose normalization strategy
+                if normalize_global:
+                    sigma = global_stds[j].item()  
+                else:
+                    sigma = diff_feature.std().item()  
                 if sigma == 0:
-                    sigma = 1.0  # Avoid division by zero
+                    sigma = 1.0  
+
                 normalized_diff = diff_feature / sigma
 
-                # Plot the histogram for this model on the same axes
-                axs[j].hist(
+                # Plot the histogram for this model
+                ax.hist(
                     normalized_diff.ravel(),
                     bins=normalized_bins,
                     density=True,
@@ -1292,7 +1460,7 @@ class MultiModelHistogramPlotter:
             # Overlay the standard normal distribution for reference
             normal_dist_x = np.linspace(-4.5, 5.5, 1000)
             standard_normal = stats.norm.pdf(normal_dist_x, 0, 1)
-            axs[j].plot(normal_dist_x, standard_normal, 'k', linewidth=2, label="Normal")
+            ax.plot(normal_dist_x, standard_normal, 'k', linewidth=2, label="Normal")
 
             # Define custom legend handles
             legend_handles = [
@@ -1301,27 +1469,34 @@ class MultiModelHistogramPlotter:
                 Line2D([0], [0], color=line_colors[1], linewidth=2, linestyle='-', label=model_labels[1]),
                 Line2D([0], [0], color=line_colors[2], linewidth=2, linestyle='-', label=model_labels[2]),
             ]
+            if normalize_global:
+                legend_handles.append(Line2D([0], [0], color='none', label=fr'$\sigma \, = \, {sigma:.2f}$'))
 
             # Use mapped LaTeX name if available
             feature_name_axis = feature_info[feat]["latex"]
-            axs[j].set_xlabel(
+            ax.set_xlabel(
                 fr'$({feature_name_axis}^{{\text{{model}}}} - {feature_name_axis}^{{\text{{true}}}}) \, / \, \sigma $',
-                fontsize=18
+                fontsize=22
             )
-            axs[j].set_ylabel('Density', fontsize=18)
-            axs[j].tick_params(axis='both', which='major', labelsize=14)
-            axs[j].set_yscale('log' if self.log_scale else 'linear')
-            axs[j].set_xlim(-4.5, 5.5)
-            axs[j].legend(frameon=False, handles=legend_handles, handlelength=1.5, loc='upper right', fontsize=12)
+            ax.set_ylabel('Density', fontsize=22)
+            ax.tick_params(axis='both', which='major', labelsize=16)
+            ax.set_yscale('log' if self.log_scale else 'linear')
+            ax.set_xlim(-4.5, 5.5)
+            ax.legend(frameon=False, handles=legend_handles, handlelength=1.5, loc='upper right', fontsize=14)
 
-        return fig
+            # Store the figure
+            figures[feat] = fig
 
-    def make_bias_plots(
+        return figures
+
+
+    def make_error_plots(
             self,
             model,
             show: bool = False,
             disable_tqdm: bool = False,
-            external_samples: Optional[List[List[torch.Tensor]]] = None
+            external_samples: Optional[List[List[torch.Tensor]]] = None,
+            normalize_global: bool = False
     ) -> Dict[str, plt.Figure]:
         """
         Generates difference histograms for each reco particle type and particle index by comparing the true data to
@@ -1413,13 +1588,27 @@ class MultiModelHistogramPlotter:
                     samples_list=[s[:, :, j, :] for s in samples_list_for_type],
                     features=model.flow_input_features[i],
                     title=f'{model.reco_particle_type_names[i]} #{j}',
+                    normalize_global=normalize_global
                 )
                 figure_name = f'{model.reco_particle_type_names[i]}_{j}_bias'
                 if self.suffix:
                     figure_name += f'_{self.suffix}'
-                figs[figure_name] = fig
-                if show:
-                    plt.show()
+                print(figure_name)
+
+                # Save each figure in the dictionary separately
+                for feature_name, fig in fig.items():
+                    figure_name = f'{model.reco_particle_type_names[i]}_{j}_{feature_name}_bias'
+                    if self.suffix:
+                        figure_name += f'_{self.suffix}'
+
+                    save_path = f'sampling_plots/histogram_errors_{figure_name}.png'
+                    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+                    plt.close(fig)  # Close to free memory
+                    figs[figure_name] = fig  # Store the figure in the dictionary
+                    print(f"Saved: {save_path}")
+
+                    if show:
+                        fig.show()  # Show each figure individually
 
         return figs
 

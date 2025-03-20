@@ -1,4 +1,6 @@
-# utils.py
+# Script Name: utils.py
+# Author: Luke Johnson
+
 
 import os
 import torch
