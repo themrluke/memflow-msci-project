@@ -59,10 +59,10 @@
   scaler_dict:
     eta:
       class: SklearnScaler
-      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/eta.bin
+      obj: /home/themrluke/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/eta.bin
     mass:
       class: SklearnScaler
-      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/mass.bin
+      obj: /home/themrluke/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/mass.bin
     pt:
       class: SklearnScaler
-      obj: /cephfs/dice/users/sa21722/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/pt.bin
+      obj: /home/themrluke/projects/MEM/memflow/ttH/ttH_hard/preprocessing/step_1/pt.bin
